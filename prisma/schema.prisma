@@ -1,0 +1,125 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+/// Fila persistente de importações OcioStock (background — UI faz polling).
+model BackgroundImportJob {
+  id              String    @id
+  shop            String
+  state           String    @default("queued")
+  progressPercent Float     @default(0)
+  processedRows   Int       @default(0)
+  totalRows       Int       @default(0)
+  currentSku      String?
+  dryRun          Boolean   @default(true)
+  payload         String
+  error           String?
+  resultsJobId    String
+  createdAt       DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+
+  @@index([shop, state])
+  @@index([createdAt])
+}
+
+/// Catálogo OcioStock indexado por loja (paginação server-side no painel de curadoria).
+model CatalogProduct {
+  shop             String
+  sku              String
+  title            String
+  categoryMain     String?
+  categorySegments String   @default("[]")
+  vendor           String?
+  vendorNorm       String   @default("")
+  stock            Int      @default(0)
+  franchises       String   @default("[]")
+  netPrice         Float?
+  grossPrice       Float?
+  imageUrl         String?
+  barcode          String?
+  indexedAt        DateTime @default(now())
+
+  @@id([shop, sku])
+  @@index([shop, vendorNorm])
+  @@index([shop, categoryMain])
+  @@index([shop, netPrice])
+  @@index([shop, barcode])
+}
+
+/// Tags de filtro sitemap (OR na UI — produto pode ter várias tags).
+model CatalogProductFilterTag {
+  shop     String
+  sku      String
+  filterId String
+
+  @@id([shop, sku, filterId])
+  @@index([shop, filterId])
+  @@index([shop, sku])
+}
+
+/// Erros de sincronização Shopify (dashboard — Logs de Erro).
+model SyncErrorLog {
+  id        String   @id @default(cuid())
+  shop      String
+  sku       String
+  errorType String
+  message   String
+  jobId     String?
+  createdAt DateTime @default(now())
+
+  @@index([shop, createdAt])
+  @@index([shop, sku])
+}
+
+/// Vendas últimos 30 dias (Radar de Curadoria).
+model ProductSalesSnapshot {
+  shop         String
+  sku          String
+  unitsSold30d Int      @default(0)
+  updatedAt    DateTime @default(now())
+
+  @@id([shop, sku])
+  @@index([shop, unitsSold30d])
+}
+
+/// Configuração dinâmica por mercado/loja (motor multitenant).
+model MarketSettings {
+  shop          String   @id
+  vipBrands     String   @default("[]")
+  vipLicences   String   @default("[]")
+  vipCategories String   @default("[]")
+  blockedTerms  String   @default("[]")
+  updatedAt     DateTime @updatedAt
+}

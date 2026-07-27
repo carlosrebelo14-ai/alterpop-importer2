@@ -1,0 +1,21 @@
+{
+  "mappings": {
+    "HELLO KITTY": "Hello Kitty",
+    "HELLOKITTY": "Hello Kitty",
+    "DRAGON BALL": "Dragon Ball",
+    "POKEMON": "Pokémon",
+    "POKÉMON": "Pokémon",
+    "HARRY POTTER": "Harry Potter",
+    "MARVEL": "Marvel",
+    "DISNEY": "Disney",
+    "SPIDER-MAN": "Spider-Man",
+    "REAL MADRID": "Real Madrid",
+    "SONIC": "Sonic",
+    "STAR WARS": "Star Wars",
+    "NINTENDO": "Nintendo"
+  },
+  "settings": {
+    "fallback": "original",
+    "caseSensitive": false
+  }
+}

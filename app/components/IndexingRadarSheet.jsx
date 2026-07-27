@@ -1,0 +1,196 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Text, BlockStack, InlineStack, Box, Button } from "@shopify/polaris";
+import { CatalogProductThumbnail } from "./CatalogProductThumbnail.jsx";
+import { IndexingAuditReport } from "./IndexingAuditReport.jsx";
+
+const MAX_ITEMS = 20;
+const PANEL_WIDTH = 320;
+
+/**
+ * Painel fixo à direita — radar de indexação (SSE), sem backdrop (dashboard interactivo).
+ */
+export function IndexingRadarSheet({
+  open,
+  onClose,
+  indexing,
+  onIndexingChange,
+  onIndexingComplete,
+}) {
+  const [items, setItems] = useState([]);
+  const [indexed, setIndexed] = useState(0);
+  const [scanned, setScanned] = useState(0);
+  const [phase, setPhase] = useState("idle");
+  const [connected, setConnected] = useState(false);
+  const [auditReport, setAuditReport] = useState(null);
+  const esRef = useRef(null);
+
+  const connectStream = useCallback(() => {
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+
+    const es = new EventSource("/api/indexing-stream", { withCredentials: true });
+    esRef.current = es;
+
+    es.onopen = () => setConnected(true);
+    es.onerror = () => setConnected(false);
+
+    es.onmessage = (ev) => {
+      let data;
+      try {
+        data = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+
+      if (data.type === "status") {
+        onIndexingChange?.(Boolean(data.rebuilding));
+        if (data.audit && data.state === "completed") {
+          setAuditReport(data.audit);
+          setPhase("done");
+        }
+      }
+
+      if (data.type === "started") {
+        setAuditReport(null);
+      }
+
+      if (data.type === "started" || data.type === "progress") {
+        onIndexingChange?.(true);
+        if (data.phase) setPhase(data.phase);
+        if (data.indexed != null) setIndexed(data.indexed);
+        if (data.scanned != null) setScanned(data.scanned);
+        if (data.resumedFrom != null && data.resumedFrom > 0) {
+          setScanned((prev) => Math.max(prev, data.resumedFrom));
+        }
+      }
+
+      if (data.type === "product" && data.product) {
+        const p = data.product;
+        setItems((prev) => {
+          const next = [{ ...p, at: Date.now() }, ...prev.filter((x) => x.sku !== p.sku)];
+          return next.slice(0, MAX_ITEMS);
+        });
+      }
+
+      if (data.type === "done") {
+        setPhase("done");
+        onIndexingChange?.(false);
+        if (data.indexed != null) setIndexed(data.indexed);
+        if (data.scanned != null) setScanned(data.scanned);
+        setAuditReport({
+          totalLinesRead: data.totalLinesRead ?? data.scanned ?? 0,
+          totalImported: data.totalImported ?? data.indexed ?? 0,
+          totalRejected: data.totalRejected ?? 0,
+          rejectionReasons: data.rejectionReasons ?? data.audit?.rejectionReasons ?? {},
+        });
+        onIndexingComplete?.();
+      }
+
+      if (data.type === "error") {
+        setPhase("error");
+        onIndexingChange?.(false);
+      }
+
+      if (data.type === "closed") {
+        onIndexingChange?.(false);
+      }
+    };
+  }, [onIndexingChange, onIndexingComplete]);
+
+  useEffect(() => {
+    connectStream();
+    return () => {
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+    };
+  }, [connectStream]);
+
+  const visible = open || indexing;
+  if (!visible) return null;
+
+  const phaseLabel =
+    phase === "clearing"
+      ? "A limpar catálogo…"
+      : phase === "purge"
+        ? "Limpeza de regras…"
+      : phase === "csv-cache"
+        ? "A preparar CSV local…"
+      : phase === "resuming"
+        ? "A retomar indexação…"
+        : phase === "facets" || phase === "facets-refresh"
+          ? "A gerar facets…"
+          : phase === "done"
+            ? "Concluído"
+            : phase === "error"
+              ? "Erro"
+              : indexing
+                ? "A indexar…"
+                : "Em espera";
+
+  return (
+    <div
+      role="complementary"
+      aria-label="Radar de indexação"
+      className="alterpop-radar-panel"
+      style={{ width: PANEL_WIDTH }}
+    >
+      <Box padding="400" borderBlockEndWidth="025" borderColor="border">
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h2" variant="headingMd">
+            Radar de indexação
+          </Text>
+          <InlineStack gap="200" blockAlign="center">
+            {indexing && <span className="alterpop-indexing-dot" aria-hidden />}
+            <Text as="span" variant="bodySm" tone={indexing ? "caution" : connected ? "success" : "subdued"}>
+              {phaseLabel}
+            </Text>
+            <Button variant="plain" onClick={onClose}>
+              Fechar
+            </Button>
+          </InlineStack>
+        </InlineStack>
+      </Box>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "var(--p-space-400)" }}>
+        <BlockStack gap="400">
+          <Text as="p" tone="subdued" variant="bodySm">
+            {`${indexed.toLocaleString("pt-PT")} indexados · ${scanned.toLocaleString("pt-PT")} linhas lidas`}
+          </Text>
+
+          {phase === "done" && auditReport && <IndexingAuditReport audit={auditReport} />}
+
+          <BlockStack gap="200">
+            <Text as="p" variant="headingSm">
+              Últimos {MAX_ITEMS} produtos
+            </Text>
+            {items.length === 0 ? (
+              <Text as="p" tone="subdued">
+                {indexing ? "A aguardar primeiros produtos…" : "Sem actividade recente."}
+              </Text>
+            ) : (
+              items.map((p) => (
+                <InlineStack key={p.sku} gap="300" blockAlign="center" wrap={false}>
+                  <CatalogProductThumbnail imageUrl={p.imageUrl} title={p.title} size={50} />
+                  <BlockStack gap="050">
+                    <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
+                      {p.title}
+                    </Text>
+                    <Text as="span" tone="subdued" variant="bodySm">
+                      {`SKU ${p.sku}${p.vendor ? ` · ${p.vendor}` : ""}`}
+                    </Text>
+                  </BlockStack>
+                </InlineStack>
+              ))
+            )}
+          </BlockStack>
+        </BlockStack>
+      </div>
+    </div>
+  );
+}
+
+export const INDEXING_RADAR_PANEL_WIDTH = PANEL_WIDTH;

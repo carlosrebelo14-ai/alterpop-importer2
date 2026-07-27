@@ -1,0 +1,288 @@
+/* eslint-disable react/prop-types */
+import { useCallback, useMemo, useState } from "react";
+import { Card, TextField } from "@shopify/polaris";
+import "../styles/faceted-search.css";
+
+/**
+ * @param {{
+ *   licences: { id: string, label: string, count: number }[],
+ *   brands: { id: string, label: string, count: number }[],
+ *   productTypes: { id: string, label: string, count: number }[],
+ *   selectedLicenceIds: string[],
+ *   onLicenceIdsChange: (ids: string[]) => void,
+ *   selectedProductTypeIds: string[],
+ *   onProductTypeIdsChange: (ids: string[]) => void,
+ *   selectedBrand: string | null,
+ *   onBrandChange: (brand: string | null) => void,
+ *   minPrice: string,
+ *   maxPrice: string,
+ *   onMinPriceChange: (v: string) => void,
+ *   onMaxPriceChange: (v: string) => void,
+ *   inStockOnly: boolean,
+ *   onInStockOnlyChange: (v: boolean) => void,
+ *   searchQuery: string,
+ *   onSearchChange: (q: string) => void,
+ * }} props
+ */
+export function FacetedSearchSidebar({
+  licences = [],
+  brands = [],
+  productTypes = [],
+  selectedLicenceIds,
+  onLicenceIdsChange,
+  selectedProductTypeIds,
+  onProductTypeIdsChange,
+  selectedBrand,
+  onBrandChange,
+  minPrice = "",
+  maxPrice = "",
+  onMinPriceChange,
+  onMaxPriceChange,
+  inStockOnly = false,
+  onInStockOnlyChange,
+  searchQuery,
+  onSearchChange,
+}) {
+  const [open, setOpen] = useState({
+    licences: true,
+    brands: false,
+    productTypes: false,
+    price: false,
+  });
+  const [licenceQuery, setLicenceQuery] = useState("");
+  const [brandQuery, setBrandQuery] = useState("");
+
+  const toggleOpen = useCallback((key) => {
+    setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+
+  const toggleId = useCallback((list, id, onChange) => {
+    if (list.includes(id)) onChange(list.filter((x) => x !== id));
+    else onChange([...list, id]);
+  }, []);
+
+  const filteredLicences = useMemo(() => {
+    const q = licenceQuery.trim().toLowerCase();
+    if (!q) return licences;
+    return licences.filter((l) => l.label.toLowerCase().includes(q));
+  }, [licences, licenceQuery]);
+
+  const filteredBrands = useMemo(() => {
+    const q = brandQuery.trim().toLowerCase();
+    if (!q) return brands;
+    return brands.filter((b) => b.label.toLowerCase().includes(q));
+  }, [brands, brandQuery]);
+
+  const clearAll = useCallback(() => {
+    onLicenceIdsChange([]);
+    onProductTypeIdsChange([]);
+    onBrandChange(null);
+    onMinPriceChange("");
+    onMaxPriceChange("");
+    onInStockOnlyChange?.(false);
+    onSearchChange("");
+    setLicenceQuery("");
+    setBrandQuery("");
+  }, [
+    onLicenceIdsChange,
+    onProductTypeIdsChange,
+    onBrandChange,
+    onMinPriceChange,
+    onMaxPriceChange,
+    onInStockOnlyChange,
+    onSearchChange,
+  ]);
+
+  return (
+    <Card>
+      <div className="faceted-search">
+        <h2 className="faceted-search__title">Filters</h2>
+
+        <div className="faceted-search__search-product">
+          <TextField
+            label="Search product / SKU"
+            value={searchQuery}
+            onChange={onSearchChange}
+            placeholder="Title or SKU…"
+            autoComplete="off"
+            clearButton
+            onClearButtonClick={() => onSearchChange("")}
+          />
+        </div>
+
+        <label className="faceted-search__stock-toggle">
+          <input
+            type="checkbox"
+            checked={inStockOnly}
+            onChange={(e) => onInStockOnlyChange?.(e.target.checked)}
+          />
+          <span>Em stock</span>
+          <span className="faceted-search__stock-hint">Apenas stock fornecedor &gt; 0</span>
+        </label>
+
+        <div className="faceted-search__accordion">
+          <FacetSection
+            title="Licences / Franchises"
+            count={selectedLicenceIds.length || licences.length}
+            open={open.licences}
+            onToggle={() => toggleOpen("licences")}
+          >
+            <div className="faceted-search__mini-search">
+              <input
+                type="search"
+                placeholder="Search licence…"
+                value={licenceQuery}
+                onChange={(e) => setLicenceQuery(e.target.value)}
+                aria-label="Search licence"
+              />
+            </div>
+            <CheckboxList
+              options={filteredLicences}
+              selected={selectedLicenceIds}
+              onToggle={(id) => toggleId(selectedLicenceIds, id, onLicenceIdsChange)}
+            />
+          </FacetSection>
+
+          <FacetSection
+            title="Brands"
+            count={selectedBrand ? 1 : brands.length}
+            open={open.brands}
+            onToggle={() => toggleOpen("brands")}
+          >
+            <div className="faceted-search__mini-search">
+              <input
+                type="search"
+                placeholder="Search brand…"
+                value={brandQuery}
+                onChange={(e) => setBrandQuery(e.target.value)}
+                aria-label="Search brand"
+              />
+            </div>
+            <CheckboxList
+              options={filteredBrands}
+              selected={selectedBrand ? [selectedBrand] : []}
+              singleSelect
+              onToggle={(id) => onBrandChange(selectedBrand === id ? null : id)}
+            />
+          </FacetSection>
+
+          <FacetSection
+            title="Product Type"
+            count={selectedProductTypeIds.length || productTypes.length}
+            open={open.productTypes}
+            onToggle={() => toggleOpen("productTypes")}
+          >
+            <CheckboxList
+              options={productTypes}
+              selected={selectedProductTypeIds}
+              onToggle={(id) =>
+                toggleId(selectedProductTypeIds, id, onProductTypeIdsChange)
+              }
+            />
+          </FacetSection>
+
+          <FacetSection
+            title="Price Range"
+            count={minPrice || maxPrice ? 1 : 0}
+            open={open.price}
+            onToggle={() => toggleOpen("price")}
+          >
+            <p style={{ fontSize: 12, color: "#6d7175", margin: "0 0 8px" }}>
+              Net cost (€)
+            </p>
+            <div className="faceted-search__price-row">
+              <input
+                type="number"
+                min={0}
+                placeholder="Min"
+                value={minPrice}
+                onChange={(e) => onMinPriceChange(e.target.value)}
+                aria-label="Minimum price"
+              />
+              <input
+                type="number"
+                min={0}
+                placeholder="Max"
+                value={maxPrice}
+                onChange={(e) => onMaxPriceChange(e.target.value)}
+                aria-label="Maximum price"
+              />
+            </div>
+          </FacetSection>
+        </div>
+
+        <button type="button" className="faceted-search__clear" onClick={clearAll}>
+          Clear all filters
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+function FacetSection({ title, open, onToggle, children }) {
+  return (
+    <div className="faceted-search__section">
+      <button
+        type="button"
+        className="faceted-search__section-header"
+        onClick={onToggle}
+        aria-expanded={open}
+      >
+        <span>{title}</span>
+        <span className="faceted-search__section-count">{open ? "−" : "+"}</span>
+      </button>
+      {open && <div className="faceted-search__section-body">{children}</div>}
+    </div>
+  );
+}
+
+/**
+ * @param {{
+ *   options: { id: string, label: string, count: number }[],
+ *   selected: string[],
+ *   onToggle: (id: string) => void,
+ *   singleSelect?: boolean,
+ * }} props
+ */
+function CheckboxList({ options, selected, onToggle, singleSelect = false }) {
+  if (!options.length) {
+    return <p style={{ fontSize: 13, color: "#6d7175", margin: 0 }}>No options</p>;
+  }
+
+  return (
+    <div className="faceted-search__options" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {options.map((opt) => {
+        const safeCount = Number.isFinite(Number(opt?.count)) ? Number(opt.count) : 0;
+        return (
+        <label
+          key={opt.id}
+          className="faceted-search__option"
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            width: "100%",
+            cursor: "pointer",
+            lineHeight: 1.35,
+          }}
+        >
+          <input
+            type={singleSelect ? "radio" : "checkbox"}
+            name={singleSelect ? "facet-single" : undefined}
+            checked={selected.includes(opt.id)}
+            onChange={() => onToggle(opt.id)}
+          />
+          <span
+            className="faceted-search__option-label"
+            style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}
+          >
+            {String(opt?.label || "")}
+          </span>
+          <span className="faceted-search__option-count" style={{ whiteSpace: "nowrap", color: "#6d7175" }}>
+            {safeCount.toLocaleString("pt-PT")}
+          </span>
+        </label>
+      );})}
+    </div>
+  );
+}
