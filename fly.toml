@@ -1,0 +1,27 @@
+# fly.toml app configuration file for alterpop-importer
+# Learn more at https://fly.io/docs/reference/configuration/
+
+app = "alterpop-importer"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  DATABASE_URL = "file:/app/data/dev.sqlite"
+  SHOPIFY_SHOP_URL = "jyr17t-wr.myshopify.com"
+  DRY_RUN = "true"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[mounts]]
+  source = "sqlite_data"
+  destination = "/app/data"
+
