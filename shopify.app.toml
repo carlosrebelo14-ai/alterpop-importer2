@@ -1,6 +1,6 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "b8beed550d16a006068ca696bc4bf74f"
+client_id = "8a079f3e829fadae53513b5a8d9eea04"
 name = "alterpop-importer"
 application_url = "https://growth-duty-workflow-deposits.trycloudflare.com"
 embedded = true
