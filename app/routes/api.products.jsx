@@ -22,6 +22,9 @@ export const loader = async ({ request }) => {
   const maxPrice = url.searchParams.get("maxPrice") || null;
   const inStockOnly = url.searchParams.get("inStockOnly") === "1";
   const includeCounts = url.searchParams.get("counts") === "1";
+  const sortBy = url.searchParams.get("sortBy") || null;
+  const sortDir = url.searchParams.get("sortDir") || null;
+  const curationStatus = url.searchParams.get("curationStatus") || null;
 
   const filterIds = expandFilterIdsForQuery(
     filtersRaw
@@ -38,7 +41,27 @@ export const loader = async ({ request }) => {
     filtersRaw,
     filterIdsExpanded: filterIds,
     search: search || null,
+    sortBy,
+    sortDir,
+    curationStatus,
   });
+
+  let skuInclude = undefined;
+  let skuExclude = undefined;
+
+  if (curationStatus) {
+    const { loadCurationQueue } = await import("../../lib/curation/curationQueue.server.js");
+    const queue = await loadCurationQueue();
+    const items = queue.items || [];
+    
+    if (curationStatus === "NO_DECISION") {
+      skuExclude = items.map((item) => item.sku);
+    } else {
+      skuInclude = items
+        .filter((item) => item.status === curationStatus)
+        .map((item) => item.sku);
+    }
+  }
 
   let result = await queryCatalogProducts(session.shop, {
     page,
@@ -50,6 +73,10 @@ export const loader = async ({ request }) => {
     maxPrice,
     inStockOnly,
     includeCounts,
+    sortBy,
+    sortDir,
+    skuInclude,
+    skuExclude,
   });
 
   result = attachDebugMockIfEmpty(result, filterIds);

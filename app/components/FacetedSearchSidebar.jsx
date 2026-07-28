@@ -42,8 +42,11 @@ export function FacetedSearchSidebar({
   onInStockOnlyChange,
   searchQuery,
   onSearchChange,
+  curationStatus = "",
+  onCurationStatusChange,
 }) {
   const [open, setOpen] = useState({
+    curationStatus: true,
     licences: true,
     brands: false,
     productTypes: false,
@@ -91,6 +94,7 @@ export function FacetedSearchSidebar({
     onMaxPriceChange,
     onInStockOnlyChange,
     onSearchChange,
+    onCurationStatusChange,
   ]);
 
   return (
@@ -121,6 +125,39 @@ export function FacetedSearchSidebar({
         </label>
 
         <div className="faceted-search__accordion">
+          <FacetSection
+            title="Estado de Curadoria"
+            count={curationStatus ? 1 : 0}
+            open={open.curationStatus}
+            onToggle={() => toggleOpen("curationStatus")}
+          >
+            <div className="faceted-search__options" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {[
+                { value: "", label: "Todos" },
+                { value: "NO_DECISION", label: "Sem decisão" },
+                { value: "APPROVED", label: "Aprovados" },
+                { value: "REJECTED", label: "Rejeitados" },
+                { value: "PENDING", label: "Pendentes" },
+                { value: "PUBLISHED", label: "Publicados Shopify" },
+                { value: "SYNC_ERROR", label: "Erro de sync" },
+              ].map((opt) => (
+                <label
+                  key={opt.value}
+                  className="faceted-search__option"
+                  style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+                >
+                  <input
+                    type="radio"
+                    name="curation-status"
+                    checked={curationStatus === opt.value}
+                    onChange={() => onCurationStatusChange?.(opt.value)}
+                  />
+                  <span className="faceted-search__option-label">{opt.label}</span>
+                </label>
+              ))}
+            </div>
+          </FacetSection>
+
           <FacetSection
             title="Licences / Franchises"
             count={selectedLicenceIds.length || licences.length}

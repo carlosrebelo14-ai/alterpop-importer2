@@ -147,6 +147,9 @@ function buildProductsApiUrl({
   minPrice,
   maxPrice,
   inStockOnly,
+  sortBy,
+  sortDir,
+  curationStatus,
 }) {
   const params = new URLSearchParams({
     page: String(page),
@@ -158,6 +161,9 @@ function buildProductsApiUrl({
   if (minPrice) params.set("minPrice", minPrice);
   if (maxPrice) params.set("maxPrice", maxPrice);
   if (inStockOnly) params.set("inStockOnly", "1");
+  if (sortBy) params.set("sortBy", sortBy);
+  if (sortDir) params.set("sortDir", sortDir);
+  if (curationStatus) params.set("curationStatus", curationStatus);
   return `/api/products?${params.toString()}`;
 }
 
@@ -184,6 +190,9 @@ export default function CurationDashboard() {
     () => Boolean(loaderData.settings?.importInStockOnly)
   );
   const [page, setPage] = useState(1);
+  const [sortBy, setSortBy] = useState("");
+  const [sortDir, setSortDir] = useState("desc");
+  const [curationStatus, setCurationStatus] = useState("");
   const [decisions, setDecisions] = useState(() => ({ ...loaderData.decisions }));
 
   useEffect(() => {
@@ -397,6 +406,9 @@ export default function CurationDashboard() {
         minPrice: debouncedMinPrice,
         maxPrice: debouncedMaxPrice,
         inStockOnly,
+        sortBy,
+        sortDir,
+        curationStatus,
       });
 
       console.log("[debug:curation] fetch →", url, {
@@ -459,6 +471,9 @@ export default function CurationDashboard() {
     debouncedMinPrice,
     debouncedMaxPrice,
     inStockOnly,
+    sortBy,
+    sortDir,
+    curationStatus,
     dashboardStats.totalIndexed,
     indexingActive,
     listRefreshKey,
@@ -872,6 +887,9 @@ export default function CurationDashboard() {
           minPrice: debouncedMinPrice,
           maxPrice: debouncedMaxPrice,
           inStockOnly,
+          sortBy,
+          sortDir,
+          curationStatus,
         }), { credentials: "same-origin" })
           .then((r) => r.json())
           .then((data) => {
@@ -1097,6 +1115,56 @@ export default function CurationDashboard() {
               />
             </BlockStack>
           </Card>
+
+          <Card className="alterpop-fade-in">
+            <BlockStack gap="100">
+              <Text as="p" tone="subdued" variant="bodySm">
+                Sem Decisão
+              </Text>
+              <Text
+                as="p"
+                variant="headingLg"
+                tone={(dashboardStats.withoutDecision || 0) > 0 ? "caution" : "subdued"}
+              >
+                {(dashboardStats.withoutDecision || 0).toLocaleString("pt-PT")}
+              </Text>
+              <Text as="p" tone="subdued" variant="bodySm">
+                {dashboardStats.totalIndexed > 0
+                  ? `${Math.round(((dashboardStats.withoutDecision || 0) / dashboardStats.totalIndexed) * 100)}% do catálogo`
+                  : "—"}
+              </Text>
+            </BlockStack>
+          </Card>
+
+          <Card className="alterpop-fade-in">
+            <BlockStack gap="100">
+              <Text as="p" tone="subdued" variant="bodySm">
+                Taxa de Aprovação
+              </Text>
+              <Text as="p" variant="headingLg">
+                {`${Math.round((dashboardStats.approvalRate || 0) * 100)}%`}
+              </Text>
+              <ProgressBar
+                progress={Math.round((dashboardStats.approvalRate || 0) * 100)}
+                tone={(dashboardStats.approvalRate || 0) >= 0.3 ? "success" : "warning"}
+              />
+            </BlockStack>
+          </Card>
+
+          <Card className="alterpop-fade-in">
+            <BlockStack gap="100">
+              <Text as="p" tone="subdued" variant="bodySm">
+                Preço Médio Aprovados
+              </Text>
+              <Text
+                as="p"
+                variant="headingLg"
+                tone={(dashboardStats.avgApprovedNetPrice || 0) === 0 ? "subdued" : undefined}
+              >
+                {formatEur(dashboardStats.avgApprovedNetPrice || 0)}
+              </Text>
+            </BlockStack>
+          </Card>
         </div>
 
         {shopifyPublishBanner && (
@@ -1231,6 +1299,8 @@ export default function CurationDashboard() {
                 onInStockOnlyChange={handleInStockOnlyChange}
                 searchQuery={searchQuery}
                 onSearchChange={handleSearchChange}
+                curationStatus={curationStatus}
+                onCurationStatusChange={(v) => { setCurationStatus(v); setPage(1); }}
               />
             )}
           </Layout.Section>
@@ -1264,15 +1334,54 @@ export default function CurationDashboard() {
                         tone="success"
                         onClick={() => runBulkApproveFiltered("approve_filtered")}
                       >
-                        {`Aprovar Toda a Pesquisa (${totalCount.toLocaleString("pt-PT")} produtos)`}
+                        {`Aprovar Toda a Pesquisa (${totalCount.toLocaleString("pt-PT")})`}
+                      </Button>
+                    )}
+                    {totalCount > 0 && (
+                      <Button
+                        size="slim"
+                        tone="critical"
+                        onClick={() => runBulkApproveFiltered("reject_filtered")}
+                      >
+                        {`Rejeitar Toda a Pesquisa (${totalCount.toLocaleString("pt-PT")})`}
                       </Button>
                     )}
                   </InlineStack>
-                  <Text as="p" tone="subdued">
-                    {listLoading
-                      ? "A carregar…"
-                      : `Página ${safePage} de ${totalPages} · ${PAGE_SIZE} por pedido`}
-                  </Text>
+                  <InlineStack gap="200" blockAlign="center">
+                    <select
+                      value={sortBy ? `${sortBy}_${sortDir}` : ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (!val) { setSortBy(""); setSortDir("desc"); }
+                        else {
+                          const [field, dir] = val.split("_");
+                          setSortBy(field);
+                          setSortDir(dir);
+                        }
+                        setPage(1);
+                      }}
+                      style={{
+                        padding: "4px 8px",
+                        borderRadius: 6,
+                        border: "1px solid var(--p-color-border-secondary, #ccc)",
+                        fontSize: 13,
+                        background: "var(--p-color-bg-surface, #fff)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <option value="">Ordenar por…</option>
+                      <option value="netPrice_asc">Preço ↑ (barato → caro)</option>
+                      <option value="netPrice_desc">Preço ↓ (caro → barato)</option>
+                      <option value="stock_desc">Stock ↓ (mais stock)</option>
+                      <option value="title_asc">Título A → Z</option>
+                      <option value="title_desc">Título Z → A</option>
+                    </select>
+                    <Text as="p" tone="subdued">
+                      {listLoading
+                        ? "A carregar…"
+                        : `Pág. ${safePage}/${totalPages} · ${PAGE_SIZE}/pág.`}
+                    </Text>
+                  </InlineStack>
                 </InlineStack>
 
                 {dashboardStats.totalIndexed === 0 && !indexingActive ? (
@@ -1313,13 +1422,25 @@ export default function CurationDashboard() {
                           vendor,
                           stock,
                           netPrice,
+                          grossPrice,
                           targetRetailPrice,
                           syncError,
                           salesUnits30d,
+                          barcode,
+                          franchises,
                         } = item;
                         const status = decisions[sku];
                         const smartAction = smartFlags[sku];
                         const categoryLabel = translateCategoryLabel(categoryMain);
+                        const marginPct = grossPrice && netPrice && grossPrice > 0
+                          ? Math.round(((grossPrice - netPrice) / grossPrice) * 100)
+                          : null;
+                        const franchiseList = (() => {
+                          try {
+                            const parsed = typeof franchises === "string" ? JSON.parse(franchises) : franchises;
+                            return Array.isArray(parsed) ? parsed.filter(Boolean).slice(0, 3) : [];
+                          } catch { return []; }
+                        })();
 
                         return (
                           <ResourceItem
@@ -1341,11 +1462,33 @@ export default function CurationDashboard() {
                                     {title}
                                   </Text>
                                   <Text as="p" tone="subdued">
-                                    {`SKU ${sku} · ${categoryLabel} · ${vendor || "—"}`}
+                                    {`SKU ${sku} · ${categoryLabel} · ${vendor || "—"}${barcode ? ` · EAN ${barcode}` : ""}`}
                                   </Text>
-                                  <Text as="p" tone="subdued">
-                                    {`Cost: ${formatEur(netPrice)} · Target retail: ${formatEur(targetRetailPrice)}`}
-                                  </Text>
+                                  <InlineStack gap="200" blockAlign="center">
+                                    <Text as="span" tone="subdued">
+                                      {`Custo: ${formatEur(netPrice)}`}
+                                    </Text>
+                                    {grossPrice > 0 && (
+                                      <Text as="span" tone="subdued">
+                                        {`MSRP: ${formatEur(grossPrice)}`}
+                                      </Text>
+                                    )}
+                                    <Text as="span" tone="subdued">
+                                      {`Retail: ${formatEur(targetRetailPrice)}`}
+                                    </Text>
+                                    {marginPct !== null && (
+                                      <Badge tone={marginPct >= 50 ? "success" : marginPct >= 30 ? "info" : "warning"}>
+                                        {`Margem ${marginPct}%`}
+                                      </Badge>
+                                    )}
+                                  </InlineStack>
+                                  {franchiseList.length > 0 && (
+                                    <InlineStack gap="100">
+                                      {franchiseList.map((f) => (
+                                        <Badge key={f} tone="info">{f}</Badge>
+                                      ))}
+                                    </InlineStack>
+                                  )}
                                 </BlockStack>
                                 <InlineStack gap="200" blockAlign="center">
                                   <Checkbox
