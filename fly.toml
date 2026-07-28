@@ -12,6 +12,8 @@ primary_region = "fra"
   PORT = "3000"
   DATABASE_URL = "file:/app/data/dev.sqlite"
   SHOPIFY_SHOP_URL = "jyr17t-wr.myshopify.com"
+  SHOPIFY_APP_URL = "https://alterpop-importer-app.fly.dev"
+  APP_URL = "https://alterpop-importer-app.fly.dev"
   DRY_RUN = "true"
 
 [http_service]
