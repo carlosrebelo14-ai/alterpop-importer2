@@ -48,7 +48,30 @@ export const action = async ({ request }) => {
     );
   }
 
-  if (await isShopifySyncRunning(session.shop)) {
+  let customTags = [];
+  let force = false;
+  let clearLock = false;
+  const url = new URL(request.url);
+  if (url.searchParams.get("force") === "1") force = true;
+  if (url.searchParams.get("clearLock") === "1") clearLock = true;
+
+  try {
+    const json = await request.clone().json();
+    if (json.force) force = true;
+    if (json.clearLock) clearLock = true;
+    if (Array.isArray(json.customTags)) {
+      customTags = json.customTags.map(String).filter(Boolean);
+    }
+  } catch {
+    /* sem body customTags */
+  }
+
+  if (clearLock) {
+    await failShopifySyncJob(session.shop, "Bloqueio libertado manualmente pelo utilizador.");
+    return Response.json({ ok: true, message: "Trava de sincronização libertada." });
+  }
+
+  if (!force && (await isShopifySyncRunning(session.shop))) {
     const status = await readShopifySyncStatus(session.shop);
     return Response.json(
       {
@@ -78,15 +101,7 @@ export const action = async ({ request }) => {
     return Response.json({ ok: false, error: message, authError: true }, { status: 401 });
   }
 
-  let customTags = [];
-  try {
-    const json = await request.clone().json();
-    if (Array.isArray(json.customTags)) {
-      customTags = json.customTags.map(String).filter(Boolean);
-    }
-  } catch {
-    /* sem body customTags */
-  }
+
 
   await initShopifySyncJob(session.shop, approvedSkus.length);
   startApprovedShopifySyncInBackground(session, { customTags });
