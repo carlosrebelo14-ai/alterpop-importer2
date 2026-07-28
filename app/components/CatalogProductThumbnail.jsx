@@ -57,6 +57,7 @@ export function CatalogProductThumbnail({ imageUrl, title = "", size = 50 }) {
         transform: hovered ? "scale(1.04)" : "scale(1)",
         boxShadow: hovered ? "0 8px 18px rgba(0,0,0,0.12)" : "none",
       }}
+      referrerPolicy="no-referrer"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onError={() => setFailed(true)}
