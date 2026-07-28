@@ -657,6 +657,52 @@ export default function CurationDashboard() {
     [selectedSkus, clearSelection, refreshDashboardStats]
   );
 
+  const runBulkApproveFiltered = useCallback(
+    async (action = "approve_filtered") => {
+      try {
+        const res = await fetch("/api/curation/queue/bulk", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            filters: {
+              brand: debouncedBrand,
+              search: debouncedSearch,
+              minPrice: debouncedMinPrice,
+              maxPrice: debouncedMaxPrice,
+              inStockOnly,
+              filterIds: debouncedFilterIds,
+            },
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.ok) {
+          setToast({ content: data?.error || "Erro na ação em massa", error: true });
+          return;
+        }
+        setToast({
+          content: `${data.updated} produtos da pesquisa ${action.startsWith("approve") ? "aprovados" : "rejeitados"}!`,
+        });
+        clearSelection();
+        setListRefreshKey((k) => k + 1);
+        refreshDashboardStats();
+      } catch {
+        setToast({ content: "Falha de rede ao processar pesquisa em massa", error: true });
+      }
+    },
+    [
+      debouncedBrand,
+      debouncedSearch,
+      debouncedMinPrice,
+      debouncedMaxPrice,
+      inStockOnly,
+      debouncedFilterIds,
+      clearSelection,
+      refreshDashboardStats,
+    ]
+  );
+
   const runBulkMargin = useCallback(async () => {
     if (!selectedSkus.length) return;
     const multiplier = Number(bulkMargin);
@@ -768,15 +814,38 @@ export default function CurationDashboard() {
     [approvedSkus, importFetcher, settings, inStockOnly]
   );
 
-  const confirmStagingSync = useCallback(() => {
-    setStagingOpen(false);
-    startSyncJob(stagingLiveMode);
-    shopify.toast.show(
-      stagingLiveMode
-        ? `Envio Shopify iniciado (${approvedSkus.length} SKUs, lotes de 20)`
-        : `Simulação iniciada (${approvedSkus.length} SKUs)`
-    );
-  }, [startSyncJob, stagingLiveMode, approvedSkus.length, shopify]);
+  const confirmStagingSync = useCallback(
+    async (customTags = []) => {
+      setStagingOpen(false);
+      if (stagingLiveMode) {
+        setShopifyPublishBusy(true);
+        try {
+          const res = await fetch("/api/shopify-sync", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ customTags }),
+          });
+          const data = await res.json();
+          if (data?.ok) {
+            setShopifyPublishJobId(data.jobId || "current");
+            setShopifyPublishOpen(true);
+            shopify.toast.show(`Publicação Shopify iniciada (${approvedSkus.length} produtos)`);
+          } else {
+            shopify.toast.show(data?.error || "Erro ao publicar", { isError: true });
+          }
+        } catch {
+          shopify.toast.show("Falha de rede ao iniciar publicação", { isError: true });
+        } finally {
+          setShopifyPublishBusy(false);
+        }
+      } else {
+        startSyncJob(false);
+        shopify.toast.show(`Simulação iniciada (${approvedSkus.length} SKUs)`);
+      }
+    },
+    [stagingLiveMode, startSyncJob, approvedSkus.length, shopify]
+  );
 
   useEffect(() => {
     if (importFetcher.data?.jobId) {
@@ -1185,9 +1254,20 @@ export default function CurationDashboard() {
             <Card>
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingMd">
-                    Resultados
-                  </Text>
+                  <InlineStack gap="300" blockAlign="center">
+                    <Text as="h2" variant="headingMd">
+                      Resultados
+                    </Text>
+                    {totalCount > 0 && (
+                      <Button
+                        size="slim"
+                        tone="success"
+                        onClick={() => runBulkApproveFiltered("approve_filtered")}
+                      >
+                        {`Aprovar Toda a Pesquisa (${totalCount.toLocaleString("pt-PT")} produtos)`}
+                      </Button>
+                    )}
+                  </InlineStack>
                   <Text as="p" tone="subdued">
                     {listLoading
                       ? "A carregar…"

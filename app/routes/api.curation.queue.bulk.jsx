@@ -23,15 +23,30 @@ export const action = async ({ request }) => {
     return Response.json({ ok: false, error: "JSON inválido" }, { status: 400 });
   }
 
-  const skus = Array.isArray(body.skus) ? body.skus.map(String).filter(Boolean) : [];
-  if (!skus.length) {
-    return Response.json({ ok: false, error: "Lista de SKUs vazia." }, { status: 400 });
-  }
-
   const actionName = String(body.action || "");
   try {
-    if (actionName === "approve" || actionName === "reject") {
-      const targetStatus = actionName === "approve" ? "APPROVED" : "REJECTED";
+    let skus = Array.isArray(body.skus) ? body.skus.map(String).filter(Boolean) : [];
+
+    if (actionName === "approve_filtered" || actionName === "reject_filtered") {
+      const { getMatchingCatalogSkus } = await import("../../lib/importer/catalog/catalogProductsDb.server.js");
+      const session = await import("../shopify.server.js").then((m) => m.default.authenticate.admin(request));
+      const filters = body.filters || {};
+      skus = await getMatchingCatalogSkus(session.session.shop, {
+        brand: filters.brand || null,
+        search: filters.search || "",
+        minPrice: filters.minPrice || "",
+        maxPrice: filters.maxPrice || "",
+        inStockOnly: filters.inStockOnly,
+        filterIds: Array.isArray(filters.filterIds) ? filters.filterIds : [],
+      });
+    }
+
+    if (!skus.length) {
+      return Response.json({ ok: false, error: "Nenhum produto encontrado para esta ação." }, { status: 400 });
+    }
+
+    if (actionName === "approve" || actionName === "reject" || actionName === "approve_filtered" || actionName === "reject_filtered") {
+      const targetStatus = actionName.startsWith("approve") ? "APPROVED" : "REJECTED";
       const result = await bulkSetQueueStatus(skus, targetStatus);
       invalidateCurationQueueCache();
       return Response.json({

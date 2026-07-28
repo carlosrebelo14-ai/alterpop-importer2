@@ -78,8 +78,18 @@ export const action = async ({ request }) => {
     return Response.json({ ok: false, error: message, authError: true }, { status: 401 });
   }
 
+  let customTags = [];
+  try {
+    const json = await request.clone().json();
+    if (Array.isArray(json.customTags)) {
+      customTags = json.customTags.map(String).filter(Boolean);
+    }
+  } catch {
+    /* sem body customTags */
+  }
+
   await initShopifySyncJob(session.shop, approvedSkus.length);
-  startApprovedShopifySyncInBackground(session);
+  startApprovedShopifySyncInBackground(session, { customTags });
 
   const status = await readShopifySyncStatus(session.shop);
 
