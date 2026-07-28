@@ -1,7 +1,7 @@
 # fly.toml app configuration file for alterpop-importer
 # Learn more at https://fly.io/docs/reference/configuration/
 
-app = "alterpop-importer"
+app = "alterpop-importer-app"
 primary_region = "fra"
 
 [build]
