@@ -1329,7 +1329,7 @@ export default function CurationDashboard() {
                               <CatalogProductThumbnail
                                 imageUrl={imageUrl}
                                 title={title}
-                                size={50}
+                                size={120}
                               />
                             }
                             verticalAlignment="center"
