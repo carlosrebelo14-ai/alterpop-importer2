@@ -1179,9 +1179,14 @@ export default function CurationDashboard() {
         </Banner>
 
         {indexingActive && (
-          <Banner tone="info">
-            Indexação em curso — o dashboard continua utilizável. Abre o radar à direita para ver
-            produtos em tempo real.
+          <Banner
+            tone="info"
+            action={{
+              content: "Ver Radar & Progresso em Tempo Real",
+              onAction: () => setIndexingSheetOpen(true),
+            }}
+          >
+            Indexação do catálogo em curso — a processar fotografias e dados em background. Demora normalmente entre 1 a 3 minutos e o painel continua utilizável.
           </Banner>
         )}
 
