@@ -120,8 +120,8 @@ export function FacetedSearchSidebar({
             checked={inStockOnly}
             onChange={(e) => onInStockOnlyChange?.(e.target.checked)}
           />
-          <span>Em stock</span>
-          <span className="faceted-search__stock-hint">Apenas stock fornecedor &gt; 0</span>
+          <span>Mostrar apenas artigos em stock</span>
+          <span className="faceted-search__stock-hint">Filtrar produtos com stock &gt; 0</span>
         </label>
 
         <div className="faceted-search__accordion">
