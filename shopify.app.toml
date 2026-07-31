@@ -2,7 +2,7 @@
 
 client_id = "8a079f3e829fadae53513b5a8d9eea04"
 name = "alterpop-importer"
-application_url = "https://growth-duty-workflow-deposits.trycloudflare.com"
+application_url = "https://alterpop-importer-app.fly.dev"
 embedded = true
 
 [build]
@@ -24,4 +24,7 @@ api_version = "2025-10"
 scopes = "read_inventory,read_locations,read_orders,read_products,write_inventory,write_products"
 
 [auth]
-redirect_urls = [ "https://growth-duty-workflow-deposits.trycloudflare.com/auth/callback" ]
+redirect_urls = [
+  "https://alterpop-importer-app.fly.dev/auth/callback",
+  "https://alterpop-importer-app.fly.dev/auth/shopify/callback"
+]
