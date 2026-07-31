@@ -1370,6 +1370,8 @@ export default function CurationDashboard() {
                       }}
                     >
                       <option value="">Ordenar por…</option>
+                      <option value="margin_desc">Margem % ↓ (maior → menor)</option>
+                      <option value="margin_asc">Margem % ↑ (menor → maior)</option>
                       <option value="netPrice_asc">Preço ↑ (barato → caro)</option>
                       <option value="netPrice_desc">Preço ↓ (caro → barato)</option>
                       <option value="stock_desc">Stock ↓ (mais stock)</option>
