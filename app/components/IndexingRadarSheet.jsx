@@ -1,13 +1,15 @@
+/* eslint-disable react/prop-types */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Text, BlockStack, InlineStack, Box, Button } from "@shopify/polaris";
 import { CatalogProductThumbnail } from "./CatalogProductThumbnail.jsx";
 import { IndexingAuditReport } from "./IndexingAuditReport.jsx";
 
 const MAX_ITEMS = 20;
-const PANEL_WIDTH = 320;
+const PANEL_WIDTH = 340;
 
 /**
- * Painel fixo à direita — radar de indexação (SSE), sem backdrop (dashboard interactivo).
+ * Painel fixo à direita — radar de indexação (SSE), renderizado via Portal para document.body.
  */
 export function IndexingRadarSheet({
   open,
@@ -110,7 +112,7 @@ export function IndexingRadarSheet({
   }, [connectStream]);
 
   const visible = open || indexing;
-  if (!visible) return null;
+  if (!visible || typeof document === "undefined") return null;
 
   const phaseLabel =
     phase === "clearing"
@@ -131,12 +133,25 @@ export function IndexingRadarSheet({
                 ? "A indexar…"
                 : "Em espera";
 
-  return (
+  return createPortal(
     <div
       role="complementary"
       aria-label="Radar de indexação"
-      className="alterpop-radar-panel"
-      style={{ width: PANEL_WIDTH }}
+      style={{
+        position: "fixed",
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: PANEL_WIDTH,
+        maxWidth: "90vw",
+        zIndex: 999999,
+        display: "flex",
+        flexDirection: "column",
+        background: "#ffffff",
+        borderLeft: "1px solid #e3e3e3",
+        boxShadow: "-4px 0 24px rgba(0, 0, 0, 0.15)",
+        boxSizing: "border-box",
+      }}
     >
       <Box padding="400" borderBlockEndWidth="025" borderColor="border">
         <InlineStack align="space-between" blockAlign="center">
@@ -189,7 +204,8 @@ export function IndexingRadarSheet({
           </BlockStack>
         </BlockStack>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
