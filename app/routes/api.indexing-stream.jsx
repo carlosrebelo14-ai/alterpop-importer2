@@ -28,19 +28,6 @@ export async function loader({ request }) {
           ...status,
           audit: status.audit || null,
         });
-        if (status.state === "completed" && status.audit) {
-          send({
-            type: "done",
-            indexed: status.totalImported ?? status.totalRows,
-            scanned: status.totalLinesRead ?? status.scanned,
-            totalLinesRead: status.totalLinesRead,
-            totalImported: status.totalImported ?? status.totalRows,
-            totalRejected: status.totalRejected,
-            rejectionReasons: status.rejectionReasons,
-            audit: status.audit,
-            finishedAt: status.finishedAt,
-          });
-        }
       });
 
       const unsubscribe = subscribeIndexingEvents(session.shop, (event) => {

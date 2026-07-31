@@ -17,6 +17,7 @@ export function IndexingRadarSheet({
   indexing,
   onIndexingChange,
   onIndexingComplete,
+  onReindexCatalog,
 }) {
   const [items, setItems] = useState([]);
   const [indexed, setIndexed] = useState(0);
@@ -172,9 +173,21 @@ export function IndexingRadarSheet({
 
       <div style={{ flex: 1, overflowY: "auto", padding: "var(--p-space-400)" }}>
         <BlockStack gap="400">
-          <Text as="p" tone="subdued" variant="bodySm">
-            {`${indexed.toLocaleString("pt-PT")} indexados · ${scanned.toLocaleString("pt-PT")} linhas lidas`}
-          </Text>
+          <BlockStack gap="150">
+            <Text as="p" tone="subdued" variant="bodySm">
+              {`${indexed.toLocaleString("pt-PT")} indexados · ${scanned.toLocaleString("pt-PT")} linhas lidas`}
+            </Text>
+            {onReindexCatalog && (
+              <Button
+                size="slim"
+                onClick={onReindexCatalog}
+                loading={indexing}
+                disabled={indexing}
+              >
+                {indexing ? "A re-indexar catálogo…" : "⚡ Recomeçar Re-indexação"}
+              </Button>
+            )}
+          </BlockStack>
 
           {phase === "done" && auditReport && <IndexingAuditReport audit={auditReport} />}
 

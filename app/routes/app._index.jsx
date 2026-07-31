@@ -1022,7 +1022,7 @@ export default function CurationDashboard() {
 
   const handleRefreshCatalog = useCallback(() => {
     setIndexingSheetOpen(true);
-    fetcher.submit({ intent: "refresh-catalog" }, { method: "post" });
+    fetcher.submit({ intent: "force-reindex-catalog" }, { method: "post" });
   }, [fetcher]);
 
   return (
@@ -1599,6 +1599,7 @@ export default function CurationDashboard() {
       indexing={indexingActive}
       onIndexingChange={setIndexingActive}
       onIndexingComplete={handleIndexingComplete}
+      onReindexCatalog={handleRefreshCatalog}
     />
     <ShopifyPublishModal
       open={shopifyPublishOpen}
