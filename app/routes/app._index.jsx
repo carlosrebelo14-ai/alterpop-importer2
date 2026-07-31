@@ -186,9 +186,7 @@ export default function CurationDashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
-  const [inStockOnly, setInStockOnly] = useState(
-    () => Boolean(loaderData.settings?.importInStockOnly)
-  );
+  const [inStockOnly, setInStockOnly] = useState(true);
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState("");
   const [sortDir, setSortDir] = useState("desc");

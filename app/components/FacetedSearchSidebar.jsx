@@ -114,7 +114,7 @@ export function FacetedSearchSidebar({
           />
         </div>
 
-        <label className="faceted-search__stock-toggle">
+        <label className={`faceted-search__stock-toggle ${inStockOnly ? "faceted-search__stock-toggle--active" : ""}`}>
           <input
             type="checkbox"
             checked={inStockOnly}

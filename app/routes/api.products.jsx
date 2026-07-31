@@ -20,7 +20,8 @@ export const loader = async ({ request }) => {
   const search = url.searchParams.get("search") || "";
   const minPrice = url.searchParams.get("minPrice") || null;
   const maxPrice = url.searchParams.get("maxPrice") || null;
-  const inStockOnly = url.searchParams.get("inStockOnly") === "1";
+  const inStockOnlyParam = url.searchParams.get("inStockOnly");
+  const inStockOnly = inStockOnlyParam === "1" || inStockOnlyParam === "true" || inStockOnlyParam === "on";
   const includeCounts = url.searchParams.get("counts") === "1";
   const sortBy = url.searchParams.get("sortBy") || null;
   const sortDir = url.searchParams.get("sortDir") || null;
