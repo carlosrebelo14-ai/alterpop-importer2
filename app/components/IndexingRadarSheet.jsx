@@ -49,6 +49,10 @@ export function IndexingRadarSheet({
 
       if (data.type === "status") {
         onIndexingChange?.(Boolean(data.rebuilding));
+        if (data.phase) setPhase(data.phase);
+        if (data.scanned != null) setScanned(data.scanned);
+        if (data.totalRows != null) setIndexed(data.totalRows);
+        if (data.checkpointIndexed != null) setIndexed(data.checkpointIndexed);
         if (data.audit && data.state === "completed") {
           setAuditReport(data.audit);
           setPhase("done");
@@ -59,8 +63,8 @@ export function IndexingRadarSheet({
         setAuditReport(null);
       }
 
-      if (data.type === "started" || data.type === "progress") {
-        onIndexingChange?.(true);
+      if (data.type === "started" || data.type === "progress" || data.type === "status") {
+        onIndexingChange?.(Boolean(data.rebuilding ?? true));
         if (data.phase) setPhase(data.phase);
         if (data.indexed != null) setIndexed(data.indexed);
         if (data.scanned != null) setScanned(data.scanned);
