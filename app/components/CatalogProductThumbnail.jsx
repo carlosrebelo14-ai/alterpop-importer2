@@ -1,5 +1,6 @@
 /* eslint-disable react/prop-types */
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { ImagePlaceholderIcon } from "./InlineSvgIcon.jsx";
 
 /**
@@ -11,6 +12,15 @@ export function CatalogProductThumbnail({ imageUrl, title = "", size = 50 }) {
   const [hovered, setHovered] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const source = resolveProductImageSource(imageUrl);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") setIsOpen(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
 
   if (!source || failed) {
     return (
@@ -33,6 +43,128 @@ export function CatalogProductThumbnail({ imageUrl, title = "", size = 50 }) {
       </div>
     );
   }
+
+  const modalNode =
+    isOpen && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            onClick={() => setIsOpen(false)}
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              width: "100vw",
+              height: "100vh",
+              backgroundColor: "rgba(0, 0, 0, 0.75)",
+              backdropFilter: "blur(6px)",
+              zIndex: 9999999,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 20,
+              boxSizing: "border-box",
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: "relative",
+                width: "100%",
+                maxWidth: 680,
+                maxHeight: "90vh",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                background: "#ffffff",
+                borderRadius: 16,
+                padding: "24px 20px 20px 20px",
+                boxShadow: "0 24px 60px rgba(0, 0, 0, 0.35)",
+                border: "1px solid #e3e3e3",
+                boxSizing: "border-box",
+                overflow: "hidden",
+              }}
+            >
+              <button
+                onClick={() => setIsOpen(false)}
+                style={{
+                  position: "absolute",
+                  top: 12,
+                  right: 12,
+                  background: "#f1f2f3",
+                  border: "none",
+                  color: "#202223",
+                  fontSize: 18,
+                  fontWeight: "bold",
+                  width: 34,
+                  height: 34,
+                  borderRadius: "50%",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: 10,
+                  transition: "all 0.15s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#e3e3e3";
+                  e.currentTarget.style.transform = "scale(1.08)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "#f1f2f3";
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+                title="Fechar (Esc)"
+              >
+                ✕
+              </button>
+
+              <div
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  maxHeight: "68vh",
+                  overflow: "hidden",
+                }}
+              >
+                <img
+                  src={source}
+                  alt={title}
+                  style={{
+                    maxWidth: "100%",
+                    maxHeight: "68vh",
+                    objectFit: "contain",
+                    borderRadius: 8,
+                    display: "block",
+                  }}
+                />
+              </div>
+
+              {title && (
+                <div
+                  style={{
+                    marginTop: 16,
+                    textAlign: "center",
+                    color: "#202223",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    lineHeight: 1.4,
+                    wordBreak: "break-word",
+                    padding: "0 8px",
+                  }}
+                >
+                  {title}
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
 
   return (
     <>
@@ -67,98 +199,7 @@ export function CatalogProductThumbnail({ imageUrl, title = "", size = 50 }) {
         onClick={() => setIsOpen(true)}
         onError={() => setFailed(true)}
       />
-
-      {isOpen && (
-        <div
-          onClick={() => setIsOpen(false)}
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            width: "100vw",
-            height: "100vh",
-            backgroundColor: "rgba(15, 17, 26, 0.85)",
-            backdropFilter: "blur(8px)",
-            zIndex: 999999,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
-            cursor: "zoom-out",
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: "relative",
-              maxWidth: "90vw",
-              maxHeight: "85vh",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              background: "#181825",
-              borderRadius: 16,
-              padding: 20,
-              boxShadow: "0 24px 48px rgba(0,0,0,0.6)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              cursor: "default",
-            }}
-          >
-            <button
-              onClick={() => setIsOpen(false)}
-              style={{
-                position: "absolute",
-                top: 12,
-                right: 12,
-                background: "rgba(255,255,255,0.15)",
-                border: "none",
-                color: "#fff",
-                fontSize: 18,
-                fontWeight: "bold",
-                width: 32,
-                height: 32,
-                borderRadius: "50%",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 2,
-                transition: "background 0.15s ease",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.3)")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-              title="Fechar (Esc)"
-            >
-              ✕
-            </button>
-            <img
-              src={source}
-              alt={title}
-              style={{
-                maxWidth: "100%",
-                maxHeight: "72vh",
-                objectFit: "contain",
-                borderRadius: 8,
-              }}
-            />
-            {title && (
-              <div
-                style={{
-                  marginTop: 14,
-                  textAlign: "center",
-                  color: "#e2e8f0",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  maxWidth: 600,
-                }}
-              >
-                {title}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {modalNode}
     </>
   );
 }
