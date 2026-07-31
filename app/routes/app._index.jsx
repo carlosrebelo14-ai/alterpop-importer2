@@ -1011,7 +1011,9 @@ export default function CurationDashboard() {
   );
 
   const refreshStarting =
-    fetcher.state !== "idle" && fetcher.formData?.get("intent") === "refresh-catalog";
+    fetcher.state !== "idle" &&
+    (fetcher.formData?.get("intent") === "refresh-catalog" ||
+      fetcher.formData?.get("intent") === "force-reindex-catalog");
 
   const syncBusy =
     importFetcher.state !== "idle" && importFetcher.formMethod === "POST";
