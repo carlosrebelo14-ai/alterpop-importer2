@@ -1541,6 +1541,12 @@ export default function CurationDashboard() {
                                   {status === "REJECTED" && !smartAction && (
                                     <Badge tone="critical">Rejeitado</Badge>
                                   )}
+                                  {(() => {
+                                     const count = (imageUrl || "").split(/[,;|\n\r]+/).filter((u) => /^https?:\/\//i.test(u.trim())).length;
+                                     return count > 1 ? (
+                                       <Badge tone="info">{`📷 ${count} Fotos`}</Badge>
+                                     ) : null;
+                                   })()}
                                   <Badge tone={stock > 0 ? "success" : undefined}>
                                     {stock > 0 ? `Stock ${stock}` : "Sem stock"}
                                   </Badge>
