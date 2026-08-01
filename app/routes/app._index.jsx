@@ -216,6 +216,7 @@ export default function CurationDashboard() {
   );
   const [catalogCleanupMessage, setCatalogCleanupMessage] = useState(null);
   const [listRefreshKey, setListRefreshKey] = useState(0);
+  const [streamStats, setStreamStats] = useState({ scanned: 0, indexed: 0 });
   const productsFetchGen = useRef(0);
 
   const [selectedTab, setSelectedTab] = useState(0);
@@ -359,6 +360,41 @@ export default function CurationDashboard() {
       shopify.toast.show(fetcher.data.message);
     }
   }, [fetcher.data, shopify]);
+
+  useEffect(() => {
+    if (!indexingActive) return;
+
+    const shopParam = loaderData?.shop ? `?shop=${encodeURIComponent(loaderData.shop)}` : "";
+    const es = new EventSource(`/api/indexing-stream${shopParam}`, { withCredentials: true });
+    
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (data.type === "progress" || data.type === "status" || data.type === "done") {
+          const currentScanned = data.scanned ?? data.totalLinesRead ?? data.checkpointScanned ?? 0;
+          const currentIndexed = data.indexed ?? data.totalImported ?? data.checkpointIndexed ?? data.totalRows ?? 0;
+          
+          if (currentIndexed > 0 || currentScanned > 0) {
+            setStreamStats({ scanned: currentScanned, indexed: currentIndexed });
+            setDashboardStats(prev => ({
+              ...prev,
+              totalIndexed: currentIndexed
+            }));
+          }
+          
+          if (data.state === "completed" || data.type === "done") {
+            setIndexingActive(false);
+          }
+        }
+      } catch (err) {
+        // ignore
+      }
+    };
+
+    return () => {
+      es.close();
+    };
+  }, [indexingActive, loaderData?.shop]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1186,14 +1222,9 @@ export default function CurationDashboard() {
         </Banner>
 
         {indexingActive && (
-          <Banner
-            tone="info"
-            action={{
-              content: "Ver Radar & Progresso em Tempo Real",
-              onAction: () => setIndexingSheetOpen(true),
-            }}
-          >
-            Indexação do catálogo em curso — a processar fotografias e dados em background. Demora normalmente entre 1 a 3 minutos e o painel continua utilizável.
+          <Banner tone="info">
+            <strong>Indexação em curso...</strong> {streamStats.indexed.toLocaleString("pt-PT")} produtos indexados de {streamStats.scanned.toLocaleString("pt-PT")} linhas lidas.
+            A processar em background (demora 1-3 min). O painel continua utilizável.
           </Banner>
         )}
 
