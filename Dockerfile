@@ -23,4 +23,4 @@ RUN npm run build
 # Garantir que a pasta /app/data existe para a montagem do volume SQLite
 RUN mkdir -p /app/data
 
-CMD ["sh", "-c", "node scripts/setup/ensure-clean-db.js && npx prisma db push --accept-data-loss && npm run start"]
+CMD ["sh", "-c", "node scripts/setup/ensure-clean-db.js && npx prisma db push --skip-generate && npm run start"]
