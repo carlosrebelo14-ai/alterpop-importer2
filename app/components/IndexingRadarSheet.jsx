@@ -34,7 +34,8 @@ export function IndexingRadarSheet({
       esRef.current = null;
     }
 
-    const es = new EventSource("/api/indexing-stream", { withCredentials: true });
+    const shopParam = shop ? `?shop=${encodeURIComponent(shop)}` : "";
+    const es = new EventSource(`/api/indexing-stream${shopParam}`, { withCredentials: true });
     esRef.current = es;
 
     es.onopen = () => setConnected(true);

@@ -9,7 +9,18 @@ import {
  * GET /api/indexing-stream — Server-Sent Events do progresso de indexação.
  */
 export async function loader({ request }) {
-  const { session } = await authenticateAdmin(request);
+  const url = new URL(request.url);
+  let shop = url.searchParams.get("shop");
+
+  if (!shop) {
+    try {
+      const { session } = await authenticateAdmin(request);
+      shop = session?.shop;
+    } catch {
+      shop = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
+    }
+  }
+  if (!shop) shop = "jyr17t-wr.myshopify.com";
 
   const encoder = new TextEncoder();
 
@@ -19,10 +30,10 @@ export async function loader({ request }) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
       };
 
-      send({ type: "connected", shop: session.shop });
+      send({ type: "connected", shop });
 
-      readCatalogRebuildStatus(session.shop).then((status) => {
-        const isRunning = isCatalogIndexingRunning(session.shop) || status.state === "running" || status.indexing === true;
+      readCatalogRebuildStatus(shop).then((status) => {
+        const isRunning = isCatalogIndexingRunning(shop) || status.state === "running" || status.indexing === true;
         send({
           type: "status",
           rebuilding: isRunning,
@@ -34,7 +45,7 @@ export async function loader({ request }) {
         });
       });
 
-      const unsubscribe = subscribeIndexingEvents(session.shop, (event) => {
+      const unsubscribe = subscribeIndexingEvents(shop, (event) => {
         send(event);
       });
 
