@@ -130,20 +130,18 @@ export function IndexingRadarSheet({
     phase === "clearing"
       ? "A limpar catálogo…"
       : phase === "purge"
-        ? "Limpeza de regras…"
+      ? "A purgar base de dados…"
       : phase === "csv-cache"
-        ? "A preparar CSV local…"
-      : phase === "resuming"
-        ? "A retomar indexação…"
-        : phase === "facets" || phase === "facets-refresh"
-          ? "A gerar facets…"
-          : phase === "done"
-            ? "Concluído"
-            : phase === "error"
-              ? "Erro"
-              : indexing
-                ? "A indexar…"
-                : "Em espera";
+      ? "A obter ficheiro CSV do fornecedor (OcioStock)…"
+      : phase === "streaming"
+      ? "A ler e indexar produtos do CSV…"
+      : phase === "done"
+      ? "Concluído"
+      : phase === "error"
+      ? "Erro na indexação"
+      : indexing
+      ? "A indexar…"
+      : "Em espera";
 
   return createPortal(
     <div
