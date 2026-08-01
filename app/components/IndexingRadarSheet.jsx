@@ -48,23 +48,30 @@ export function IndexingRadarSheet({
       }
 
       if (data.type === "status") {
-        onIndexingChange?.(Boolean(data.rebuilding));
-        if (data.phase) setPhase(data.phase);
-        if (data.scanned != null) setScanned(data.scanned);
-        if (data.totalRows != null) setIndexed(data.totalRows);
-        if (data.checkpointIndexed != null) setIndexed(data.checkpointIndexed);
-        if (data.audit && data.state === "completed") {
-          setAuditReport(data.audit);
-          setPhase("done");
+        const isRebuilding = Boolean(data.rebuilding ?? data.indexing);
+        onIndexingChange?.(isRebuilding);
+        const currentScanned = data.scanned ?? data.totalLinesRead ?? data.checkpointScanned ?? 0;
+        const currentIndexed = data.indexed ?? data.totalImported ?? data.checkpointIndexed ?? data.totalRows ?? 0;
+        setScanned(currentScanned);
+        setIndexed(currentIndexed);
+        setPhase(data.phase || (data.state === "completed" ? "done" : isRebuilding ? "streaming" : "idle"));
+        if (data.audit || data.state === "completed") {
+          setAuditReport(data.audit || {
+            totalLinesRead: currentScanned,
+            totalImported: currentIndexed,
+            totalRejected: data.totalRejected ?? 0,
+            rejectionReasons: data.rejectionReasons ?? {},
+          });
         }
       }
 
       if (data.type === "started") {
         setAuditReport(null);
+        setPhase("streaming");
       }
 
-      if (data.type === "started" || data.type === "progress" || data.type === "status") {
-        onIndexingChange?.(Boolean(data.rebuilding ?? true));
+      if (data.type === "started" || data.type === "progress") {
+        onIndexingChange?.(true);
         if (data.phase) setPhase(data.phase);
         if (data.indexed != null) setIndexed(data.indexed);
         if (data.scanned != null) setScanned(data.scanned);
@@ -116,7 +123,7 @@ export function IndexingRadarSheet({
     };
   }, [connectStream]);
 
-  const visible = open || indexing;
+  const visible = open;
   if (!visible || typeof document === "undefined") return null;
 
   const phaseLabel =

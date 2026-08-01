@@ -22,9 +22,13 @@ export async function loader({ request }) {
       send({ type: "connected", shop: session.shop });
 
       readCatalogRebuildStatus(session.shop).then((status) => {
+        const isRunning = isCatalogIndexingRunning(session.shop) || status.state === "running" || status.indexing === true;
         send({
           type: "status",
-          rebuilding: isCatalogIndexingRunning(session.shop) || status.state === "running",
+          rebuilding: isRunning,
+          indexed: status.totalImported ?? status.checkpointIndexed ?? status.totalRows ?? 0,
+          scanned: status.totalLinesRead ?? status.checkpointScanned ?? status.scanned ?? 0,
+          phase: status.phase || (status.state === "completed" ? "done" : isRunning ? "streaming" : "idle"),
           ...status,
           audit: status.audit || null,
         });
