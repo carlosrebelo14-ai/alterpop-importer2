@@ -1188,7 +1188,7 @@ export default function CurationDashboard() {
         )}
 
         <Banner tone="info">
-          {`Filtro actual: ${listLoading ? "…" : totalCount.toLocaleString("pt-PT")} produtos mostrados | Aprovados (total): ${dashboardStats.totalApproved.toLocaleString("pt-PT")} | Rejeitados (total): ${dashboardStats.totalRejected.toLocaleString("pt-PT")} | Pendentes: ${dashboardStats.totalPending.toLocaleString("pt-PT")}`}
+          {`Filtro actual: ${listLoading ? "…" : (totalCount ?? 0).toLocaleString("pt-PT")} produtos mostrados | Aprovados (total): ${(dashboardStats?.totalApproved ?? 0).toLocaleString("pt-PT")} | Rejeitados (total): ${(dashboardStats?.totalRejected ?? 0).toLocaleString("pt-PT")} | Pendentes: ${(dashboardStats?.totalPending ?? 0).toLocaleString("pt-PT")}`}
         </Banner>
 
         {indexingActive && (

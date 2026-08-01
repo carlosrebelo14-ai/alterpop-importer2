@@ -200,7 +200,7 @@ export function IndexingRadarSheet({
         <BlockStack gap="400">
           <BlockStack gap="150">
             <Text as="p" tone="subdued" variant="bodySm">
-              {`${indexed.toLocaleString("pt-PT")} indexados · ${scanned.toLocaleString("pt-PT")} linhas lidas`}
+              {`${(indexed ?? 0).toLocaleString("pt-PT")} indexados · ${(scanned ?? 0).toLocaleString("pt-PT")} linhas lidas`}
             </Text>
             {onReindexCatalog && (
               <Button
