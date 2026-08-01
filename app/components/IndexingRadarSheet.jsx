@@ -38,7 +38,16 @@ export function IndexingRadarSheet({
     esRef.current = es;
 
     es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
+    es.onerror = () => {
+      setConnected(false);
+      if (es.readyState === EventSource.CLOSED) {
+        setTimeout(() => {
+          if (esRef.current === es) {
+            connectStream();
+          }
+        }, 3000);
+      }
+    };
 
     es.onmessage = (ev) => {
       let data;
