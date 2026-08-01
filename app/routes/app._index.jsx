@@ -310,23 +310,24 @@ export default function CurationDashboard() {
 
     async function pollCatalog() {
       try {
-        const [statusRes, statsRes] = await Promise.all([
-          fetch("/api/catalog/status", { credentials: "same-origin" }),
-          fetch("/api/dashboard/stats", { credentials: "same-origin" }),
-        ]);
+        // Fetch leve de status
+        const statusRes = await fetch("/api/catalog/status", { credentials: "same-origin" });
         const status = await statusRes.json();
-        const statsPayload = await statsRes.json();
         if (cancelled) return;
-
-        if (statsPayload?.ok && statsPayload.stats) {
-          setDashboardStats(statsPayload.stats);
-        } else if (status?.stats) {
-          setDashboardStats(status.stats);
-        }
 
         setIndexingActive(Boolean(status?.rebuilding));
         if (status?.message && !status?.rebuilding) {
           setCatalogCleanupMessage(status.message);
+        }
+
+        // Se NÃO estiver a indexar (radar fechado), atualizamos as stats de 3 em 3 segundos.
+        // Se estiver a indexar, o radar (SSE) trata das stats, evitamos sobrecarga da DB.
+        if (!status?.rebuilding) {
+          const statsRes = await fetch("/api/dashboard/stats", { credentials: "same-origin" });
+          const statsPayload = await statsRes.json();
+          if (!cancelled && statsPayload?.ok && statsPayload.stats) {
+            setDashboardStats(statsPayload.stats);
+          }
         }
       } catch {
         /* ignore */
