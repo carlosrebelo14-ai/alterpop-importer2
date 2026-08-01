@@ -1614,6 +1614,7 @@ export default function CurationDashboard() {
       onIndexingComplete={handleIndexingComplete}
       onReindexCatalog={handleRefreshCatalog}
       onPauseIndexing={handlePauseIndexing}
+      shop={loaderData?.shop}
     />
     <ShopifyPublishModal
       open={shopifyPublishOpen}

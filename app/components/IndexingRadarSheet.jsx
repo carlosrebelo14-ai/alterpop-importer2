@@ -19,6 +19,7 @@ export function IndexingRadarSheet({
   onIndexingComplete,
   onReindexCatalog,
   onPauseIndexing,
+  shop = "",
 }) {
   const [items, setItems] = useState([]);
   const [indexed, setIndexed] = useState(0);
