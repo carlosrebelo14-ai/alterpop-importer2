@@ -316,8 +316,8 @@ export default function CurationDashboard() {
           setCatalogCleanupMessage(status.message);
         }
 
-        // Se NÃO estiver a indexar (radar fechado), atualizamos as stats de 3 em 3 segundos.
-        // Se estiver a indexar, o radar (SSE) trata das stats, evitamos sobrecarga da DB.
+        // Se NÃO estiver a indexar, atualizamos as stats.
+        // Se estiver a indexar, o SSE trata das stats, evitamos sobrecarga.
         if (!status?.rebuilding) {
           const statsRes = await fetch("/api/dashboard/stats", { credentials: "same-origin" });
           const statsPayload = await statsRes.json();
@@ -331,12 +331,15 @@ export default function CurationDashboard() {
     }
 
     pollCatalog();
-    const timer = setInterval(pollCatalog, 3000);
+    // During indexing: poll every 15s (SSE provides real-time updates).
+    // When idle: poll every 5s for status changes.
+    const interval = indexingActive ? 15000 : 5000;
+    const timer = setInterval(pollCatalog, interval);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [fetcher.data?.rebuilding]);
+  }, [fetcher.data?.rebuilding, indexingActive]);
 
   const handleIndexingComplete = useCallback(() => {
     refreshDashboardStats();
