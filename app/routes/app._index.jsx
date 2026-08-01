@@ -47,10 +47,6 @@ import { SyncStagingModal } from "../components/SyncStagingModal.jsx";
 import { ShopifyPublishModal } from "../components/ShopifyPublishModal.jsx";
 import { SyncErrorLogsPanel } from "../components/SyncErrorLogsPanel.jsx";
 import { CuratorChatWidget } from "../components/CuratorChatWidget.jsx";
-import {
-  IndexingRadarSheet,
-  INDEXING_RADAR_PANEL_WIDTH,
-} from "../components/IndexingRadarSheet.jsx";
 import { CatalogProductThumbnail } from "../components/CatalogProductThumbnail.jsx";
 import { DashboardPageToolbar } from "../components/DashboardPageToolbar.jsx";
 import { useDebouncedValue } from "../hooks/useDebouncedValue.js";
@@ -209,7 +205,6 @@ export default function CurationDashboard() {
   const [totalPages, setTotalPages] = useState(1);
   const [listLoading, setListLoading] = useState(false);
   const [indexingActive, setIndexingActive] = useState(Boolean(loaderData.indexingActive));
-  const [indexingSheetOpen, setIndexingSheetOpen] = useState(Boolean(loaderData.indexingActive));
   const [dashboardStats, setDashboardStats] = useState(
     () =>
       loaderData.dashboardStats ?? {
@@ -348,10 +343,17 @@ export default function CurationDashboard() {
     setListRefreshKey((k) => k + 1);
   }, [refreshDashboardStats]);
 
+  const wasIndexing = useRef(indexingActive);
+  useEffect(() => {
+    if (wasIndexing.current && !indexingActive) {
+      handleIndexingComplete();
+    }
+    wasIndexing.current = indexingActive;
+  }, [indexingActive, handleIndexingComplete]);
+
   useEffect(() => {
     if (fetcher.data?.rebuilding) {
       setIndexingActive(true);
-      setIndexingSheetOpen(true);
     }
     if (fetcher.data?.message) {
       shopify.toast.show(fetcher.data.message);
@@ -1027,10 +1029,7 @@ export default function CurationDashboard() {
 
   const safePage = Math.min(page, totalPages);
 
-  const radarVisible = indexingSheetOpen || indexingActive;
-
   const handleRefreshCatalog = useCallback(() => {
-    setIndexingSheetOpen(true);
     fetcher.submit({ intent: "force-reindex-catalog" }, { method: "post" });
   }, [fetcher]);
 
@@ -1041,13 +1040,7 @@ export default function CurationDashboard() {
 
   return (
     <>
-    <div
-      className="alterpop-dashboard"
-      style={{
-        marginRight: radarVisible ? INDEXING_RADAR_PANEL_WIDTH : 0,
-        transition: "margin-right 0.2s ease",
-      }}
-    >
+    <div className="alterpop-dashboard">
     <Page
       fullWidth
       title="Alterpop — Painel de Curadoria"
@@ -1607,16 +1600,6 @@ export default function CurationDashboard() {
       </BlockStack>
     </Page>
     </div>
-    <IndexingRadarSheet
-      open={indexingSheetOpen}
-      onClose={() => setIndexingSheetOpen(false)}
-      indexing={indexingActive}
-      onIndexingChange={setIndexingActive}
-      onIndexingComplete={handleIndexingComplete}
-      onReindexCatalog={handleRefreshCatalog}
-      onPauseIndexing={handlePauseIndexing}
-      shop={loaderData?.shop}
-    />
     <ShopifyPublishModal
       open={shopifyPublishOpen}
       onClose={() => setShopifyPublishOpen(false)}
