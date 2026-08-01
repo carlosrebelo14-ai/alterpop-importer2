@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useFetcher, useLoaderData } from "react-router";
+import { useFetcher, useLoaderData, useRouteError } from "react-router";
 import {
   Page,
   Layout,
@@ -1722,3 +1722,27 @@ export default function CurationDashboard() {
 }
 
 export const headers = (headersArgs) => boundary.headers(headersArgs);
+
+export function ErrorBoundary() {
+  const error = useRouteError();
+  return (
+    <Page title="Painel de Curadoria">
+      <Layout>
+        <Layout.Section>
+          <Banner tone="critical" title="Ocorreu um problema ao carregar o painel">
+            <BlockStack gap="200">
+              <Text as="p">
+                {error?.message || "Erro de renderização temporário no navegador."}
+              </Text>
+              <InlineStack gap="200">
+                <Button variant="primary" onClick={() => window.location.reload()}>
+                  ⚡ Recarregar Painel
+                </Button>
+              </InlineStack>
+            </BlockStack>
+          </Banner>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
+}
