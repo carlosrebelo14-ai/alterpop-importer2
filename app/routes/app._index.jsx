@@ -106,6 +106,12 @@ export const action = async ({ request }) => {
   const form = await request.formData();
   const intent = form.get("intent");
 
+  if (intent === "pause-indexing") {
+    const { stopCatalogIndexingWorker } = await import("../../lib/importer/catalog/indexingStream.server.js");
+    await stopCatalogIndexingWorker(session.shop);
+    return { ok: true, rebuilding: false, message: "Indexação pausada com sucesso." };
+  }
+
   if (intent === "refresh-catalog" || intent === "purge-catalog" || intent === "force-reindex-catalog") {
     const settings = await loadShopSettings(session.shop);
     const purge = intent === "purge-catalog";
@@ -1027,6 +1033,11 @@ export default function CurationDashboard() {
     fetcher.submit({ intent: "force-reindex-catalog" }, { method: "post" });
   }, [fetcher]);
 
+  const handlePauseIndexing = useCallback(() => {
+    fetcher.submit({ intent: "pause-indexing" }, { method: "post" });
+    setIndexingActive(false);
+  }, [fetcher]);
+
   return (
     <>
     <div
@@ -1602,6 +1613,7 @@ export default function CurationDashboard() {
       onIndexingChange={setIndexingActive}
       onIndexingComplete={handleIndexingComplete}
       onReindexCatalog={handleRefreshCatalog}
+      onPauseIndexing={handlePauseIndexing}
     />
     <ShopifyPublishModal
       open={shopifyPublishOpen}

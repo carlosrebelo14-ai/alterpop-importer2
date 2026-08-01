@@ -13,11 +13,12 @@ const PANEL_WIDTH = 340;
  */
 export function IndexingRadarSheet({
   open,
+  indexing = false,
   onClose,
-  indexing,
   onIndexingChange,
   onIndexingComplete,
   onReindexCatalog,
+  onPauseIndexing,
 }) {
   const [items, setItems] = useState([]);
   const [indexed, setIndexed] = useState(0);
@@ -173,6 +174,11 @@ export function IndexingRadarSheet({
             <Text as="span" variant="bodySm" tone={indexing ? "caution" : connected ? "success" : "subdued"}>
               {phaseLabel}
             </Text>
+            {indexing && onPauseIndexing && (
+              <Button size="slim" tone="critical" onClick={onPauseIndexing}>
+                ⏸️ Pausar
+              </Button>
+            )}
             <Button variant="plain" onClick={onClose}>
               Fechar
             </Button>
