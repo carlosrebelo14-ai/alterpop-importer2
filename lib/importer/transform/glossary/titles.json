@@ -1,5 +1,12 @@
 {
-  "mappings": {
+  "settings": {
+    "fallback": "original",
+    "caseSensitive": false
+  },
+  "es": {
+    "El Señor de los Anillos": "Lord of the Rings",
+    "Juego de Tronos": "Game of Thrones",
+    "La Guerra de las Galaxias": "Star Wars",
     "Pesadilla Antes de Navidad": "Nightmare Before Christmas",
     "Pesadilla Antes De Navidad": "Nightmare Before Christmas",
     "pesadilla antes de navidad": "Nightmare Before Christmas",
@@ -156,9 +163,5 @@
     "Varitas": "Wands",
     "Set": "Set",
     "Pack": "Pack"
-  },
-  "settings": {
-    "fallback": "original",
-    "caseSensitive": false
   }
 }
