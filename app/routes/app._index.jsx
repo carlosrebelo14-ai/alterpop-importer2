@@ -885,7 +885,10 @@ export default function CurationDashboard() {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ customTags }),
+            body: JSON.stringify({
+              customTags,
+              skus: selectedSkus.length > 0 ? selectedSkus : approvedSkus,
+            }),
           });
           const data = await res.json();
           if (data?.ok) {

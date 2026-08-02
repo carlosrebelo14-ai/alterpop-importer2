@@ -12,6 +12,25 @@ import { Modal, BlockStack, Text, ProgressBar, Banner, List } from "@shopify/pol
 export function ShopifyPublishModal({ open, onClose, jobId, onComplete }) {
   const [status, setStatus] = useState(null);
   const [pollError, setPollError] = useState(null);
+  const [cancelling, setCancelling] = useState(false);
+
+  const handleCancelSync = async () => {
+    try {
+      setCancelling(true);
+      const res = await fetch("/api/shopify-sync", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "cancel" }),
+      });
+      const data = await res.json();
+      if (data?.status) setStatus(data.status);
+    } catch {
+      /* ignore */
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   useEffect(() => {
     if (!open || !jobId) return;
@@ -64,6 +83,18 @@ export function ShopifyPublishModal({ open, onClose, jobId, onComplete }) {
         content: done || failedJob ? "Fechar" : "Minimizar",
         onAction: onClose,
       }}
+      secondaryActions={
+        running
+          ? [
+              {
+                content: cancelling ? "A parar..." : "Parar Importação",
+                destructive: true,
+                disabled: cancelling,
+                onAction: handleCancelSync,
+              },
+            ]
+          : undefined
+      }
     >
       <Modal.Section>
         <BlockStack gap="400">
