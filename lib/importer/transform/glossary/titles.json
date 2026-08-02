@@ -1,5 +1,8 @@
 {
   "mappings": {
+    "Pesadilla Antes de Navidad": "Nightmare Before Christmas",
+    "Pesadilla Antes De Navidad": "Nightmare Before Christmas",
+    "pesadilla antes de navidad": "Nightmare Before Christmas",
     "Figura hucha": "Figure Money Box",
     "Figura Hucha": "Figure Money Box",
     "figura hucha": "figure money box",
@@ -45,6 +48,9 @@
     "Baraja de cartas": "Deck of Cards",
     "Set de regalo": "Gift Set",
     "Set regalo": "Gift Set",
+    "surtido": "Assorted",
+    "Surtido": "Assorted",
+    "SURTIDO": "Assorted",
     "Figura": "Figure",
     "Figuras": "Figures",
     "Hucha": "Money Box",
