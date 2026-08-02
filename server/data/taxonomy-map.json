@@ -1,0 +1,32 @@
+{
+  "sections": [
+    {
+      "id": "figures",
+      "title": "Figuras & Estátuas",
+      "children": [
+        {
+          "id": "action-figures",
+          "label": "Action Figures",
+          "matchKeys": ["accion", "articulada", "figura"]
+        }
+      ]
+    },
+    {
+      "id": "games",
+      "title": "Jogos",
+      "children": [
+        {
+          "id": "board-games",
+          "label": "Board Games",
+          "matchKeys": ["juego", "mesa"]
+        }
+      ]
+    }
+  ],
+  "productTypes": [
+    {
+      "id": "collectible",
+      "matchKeys": ["coleccion", "coleccionable"]
+    }
+  ]
+}

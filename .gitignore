@@ -5,6 +5,8 @@ node_modules/
 cache/
 results/
 data/
+!server/data/
+!server/data/taxonomy-map.json
 cache/translations.json
 prisma/dev.sqlite
 prisma/dev.sqlite-journal
