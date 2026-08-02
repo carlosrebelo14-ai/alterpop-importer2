@@ -9,16 +9,16 @@
  *   RESUME=1 SHOP=jyr17t-wr.myshopify.com node scripts/full-catalog-reindex.js
  */
 import "dotenv/config";
-import { getDefaultConfig } from "../lib/importer/config.js";
-import { loadShopSettings } from "../lib/importer/settings.server.js";
-import { syncCatalogWithProgress } from "../lib/importer/catalog/syncCatalogWithProgress.server.js";
-import { getCatalogProductTotal } from "../lib/importer/catalog/catalogProductsDb.server.js";
+import { getDefaultConfig } from "../../lib/importer/config.js";
+import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { syncCatalogWithProgress } from "../../lib/importer/catalog/syncCatalogWithProgress.server.js";
+import { getCatalogProductTotal } from "../../lib/importer/catalog/catalogProductsDb.server.js";
 import {
   writeCatalogRebuildStatus,
   readCatalogRebuildStatus,
   canResumeCatalogRebuild,
-} from "../lib/importer/catalog/catalogRebuildStatus.server.js";
-import { ensureLocalOcioStockCsv } from "../lib/importer/catalog/ensureLocalOcioStockCsv.server.js";
+} from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
+import { ensureLocalOcioStockCsv } from "../../lib/importer/catalog/ensureLocalOcioStockCsv.server.js";
 
 const shop = process.env.SHOP || process.env.SHOPIFY_SHOP_URL || "alterpop-store.myshopify.com";
 const forceResume = ["1", "true", "yes"].includes(String(process.env.RESUME || "").toLowerCase());

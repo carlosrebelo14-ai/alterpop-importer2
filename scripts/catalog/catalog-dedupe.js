@@ -4,8 +4,8 @@
  * Uso: SHOP=alterpop-store.myshopify.com node scripts/catalog-dedupe.js
  */
 import "dotenv/config";
-import { deduplicateCatalog } from "../lib/importer/catalog/deduplicateCatalog.server.js";
-import { getCatalogProductTotal } from "../lib/importer/catalog/catalogProductsDb.server.js";
+import { deduplicateCatalog } from "../../lib/importer/catalog/deduplicateCatalog.server.js";
+import { getCatalogProductTotal } from "../../lib/importer/catalog/catalogProductsDb.server.js";
 
 const shop = process.env.SHOP || "alterpop-store.myshopify.com";
 
