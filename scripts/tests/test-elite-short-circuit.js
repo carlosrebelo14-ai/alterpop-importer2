@@ -2,7 +2,7 @@
 /**
  * Valida short-circuit de marcas/franquias premium no importador.
  */
-import { evaluateStructuredCatalogFilter } from "../lib/importer/curation/structuredCatalogFilter.server.js";
+import { evaluateStructuredCatalogFilter } from "../../lib/importer/curation/structuredCatalogFilter.server.js";
 
 const cases = [
   {

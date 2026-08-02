@@ -7,7 +7,7 @@
  *   SHOP=alterpop-store.myshopify.com node scripts/elite-curation-purge.js
  */
 import "dotenv/config";
-import { purgeEliteCatalog, readElitePurgeLog } from "../lib/importer/curation/eliteCuration.server.js";
+import { purgeEliteCatalog, readElitePurgeLog } from "../../lib/importer/curation/eliteCuration.server.js";
 
 const shop = process.env.SHOP || "alterpop-store.myshopify.com";
 

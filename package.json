@@ -32,9 +32,9 @@
     "curation:elite-purge": "node scripts/curation/elite-curation-purge.js",
     "oauth:url": "node scripts/setup/generate-oauth-install-url.js",
     "sync:daemon": "node scripts/sync/live-sync-daemon.js",
-    "sync:daemon:resilient": "bash scripts/setup/run-with-restart.sh \"npm run sync:daemon\"",
-    "dev:resilient": "bash scripts/setup/run-with-restart.sh \"npm run dev\"",
-    "start:resilient": "bash scripts/setup/run-with-restart.sh \"npm run start\""
+    "sync:daemon:resilient": "bash scripts/run-with-restart.sh \"npm run sync:daemon\"",
+    "dev:resilient": "bash scripts/run-with-restart.sh \"npm run dev\"",
+    "start:resilient": "bash scripts/run-with-restart.sh \"npm run start\""
   },
   "type": "module",
   "engines": {

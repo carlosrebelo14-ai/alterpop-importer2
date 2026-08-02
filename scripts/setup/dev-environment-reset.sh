@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Reset limpo: sessão OAuth + DRY_RUN + relink CLI (túnel novo).
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 CLIENT_ID=$(grep -E '^client_id' shopify.app.toml | head -1 | sed 's/.*= *"\(.*\)"/\1/')
 
 echo "=== Alterpop — reset ambiente dev ==="
 
 # Sessões Prisma + ficheiros
-npm run shopify:reset-session 2>/dev/null || node scripts/reset-shopify-session.js
+npm run shopify:reset-session 2>/dev/null || node scripts/setup/reset-shopify-session.js
 rm -rf data/sessions/*.json 2>/dev/null || true
 
 # Modo seguro

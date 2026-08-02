@@ -3,14 +3,14 @@
  * Completa variantes / preço / metafield / imagens dos produtos do spot-check live
  * criados antes do fix de ProductVariantsBulkInput (SKU em inventoryItem).
  */
-import prisma from "../app/db.server.js";
-import { mapOcioStockRow } from "../lib/importer/connectors/ociostock/csvFieldMap.js";
-import { streamOcioStockRows } from "../lib/importer/connectors/ociostock/streamCsv.js";
-import { transformOcioStockRecord } from "../lib/importer/core/transformRow.js";
-import { resolveProductStatus } from "../lib/importer/curation/index.js";
-import { ImportJob } from "../lib/importer/jobs/ImportJob.js";
-import { ProductImporter } from "../lib/importer/importers/ProductImporter.js";
-import { createShopifyClientFromSession } from "../lib/importer/shopifyClient.js";
+import prisma from "../../app/db.server.js";
+import { mapOcioStockRow } from "../../lib/importer/connectors/ociostock/csvFieldMap.js";
+import { streamOcioStockRows } from "../../lib/importer/connectors/ociostock/streamCsv.js";
+import { transformOcioStockRecord } from "../../lib/importer/core/transformRow.js";
+import { resolveProductStatus } from "../../lib/importer/curation/index.js";
+import { ImportJob } from "../../lib/importer/jobs/ImportJob.js";
+import { ProductImporter } from "../../lib/importer/importers/ProductImporter.js";
+import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 
 const TARGETS = [
   {

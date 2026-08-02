@@ -3,7 +3,7 @@
  * Stream import dry-run (axios + csv-parser, p-limit, SYNC_LIMIT).
  * Usage: SYNC_LIMIT=5 node scripts/stream-import-dry-run.js
  */
-import { runImport } from "../lib/importer/jobs/runImport.js";
+import { runImport } from "../../lib/importer/jobs/runImport.js";
 
 const limit = parseInt(process.env.SYNC_LIMIT || "5", 10);
 process.env.DRY_RUN = process.env.DRY_RUN ?? "true";

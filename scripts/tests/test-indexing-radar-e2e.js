@@ -4,12 +4,12 @@
  * Uso: node scripts/test-indexing-radar-e2e.js
  */
 import "dotenv/config";
-import { loadShopSettings } from "../lib/importer/settings.server.js";
+import { loadShopSettings } from "../../lib/importer/settings.server.js";
 import {
   startCatalogRebuildInBackground,
   subscribeIndexingEvents,
   isCatalogIndexingRunning,
-} from "../lib/importer/catalog/catalogRebuild.server.js";
+} from "../../lib/importer/catalog/catalogRebuild.server.js";
 
 const shop = process.env.SHOP || "alterpop-store.myshopify.com";
 const MIN_PRODUCTS = Number(process.env.MIN_PRODUCTS || 3);

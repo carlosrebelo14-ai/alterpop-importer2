@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import "dotenv/config";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const projectRoot = path.join(__dirname, "..");
+const projectRoot = path.join(__dirname, "..", "..");
 const errorsPath = path.join(projectRoot, "results", "errors.json");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,7 +36,7 @@ async function appendErrorLog(entry) {
 
 function runOneCycle(syncLimitArg) {
   return new Promise((resolve, reject) => {
-    const args = ["scripts/run-live-import.js"];
+    const args = ["scripts/sync/run-live-import.js"];
     if (syncLimitArg !== null) args.push(String(syncLimitArg));
 
     const child = spawn(process.execPath, args, {

@@ -5,12 +5,12 @@
  * Uso: node scripts/setup-metafields.js
  * Requer sessão OAuth em Prisma (abre a app no Admin com npm run dev).
  */
-import prisma from "../app/db.server.js";
-import { createShopifyClientFromSession } from "../lib/importer/shopifyClient.js";
+import prisma from "../../app/db.server.js";
+import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import {
   createOciostockNetPriceMetafield,
   OCIOSTOCK_NET_PRICE_DEFINITION,
-} from "../lib/importer/shopify/metafieldSetup.js";
+} from "../../lib/importer/shopify/metafieldSetup.js";
 
 async function loadSession() {
   const shop =

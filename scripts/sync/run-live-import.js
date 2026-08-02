@@ -4,11 +4,11 @@
  *
  * Uso: node scripts/run-live-import.js [syncLimit]
  */
-import { runImport } from "../lib/importer/jobs/runImport.js";
-import { loadShopSettings } from "../lib/importer/settings.server.js";
-import { assertLiveImportAllowed } from "../lib/importer/jobs/dryRunGuard.js";
-import { getDefaultConfig } from "../lib/importer/config.js";
-import { loadOfflineSessionForShop } from "../lib/session/loadOfflineSessionForShop.server.js";
+import { runImport } from "../../lib/importer/jobs/runImport.js";
+import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { assertLiveImportAllowed } from "../../lib/importer/jobs/dryRunGuard.js";
+import { getDefaultConfig } from "../../lib/importer/config.js";
+import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 
 const envLimit = parseInt(process.env.SYNC_LIMIT || "3", 10);
 const limit = parseInt(process.argv[2] || String(envLimit), 10);

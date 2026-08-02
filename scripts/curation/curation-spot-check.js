@@ -17,25 +17,25 @@ import fsPromises from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import { config } from "../lib/importer/config.js";
-import { mapOcioStockRow } from "../lib/importer/connectors/ociostock/csvFieldMap.js";
-import { streamOcioStockRows } from "../lib/importer/connectors/ociostock/streamCsv.js";
-import { transformOcioStockRecord } from "../lib/importer/core/transformRow.js";
+import { config } from "../../lib/importer/config.js";
+import { mapOcioStockRow } from "../../lib/importer/connectors/ociostock/csvFieldMap.js";
+import { streamOcioStockRows } from "../../lib/importer/connectors/ociostock/streamCsv.js";
+import { transformOcioStockRecord } from "../../lib/importer/core/transformRow.js";
 import {
   evaluateCurationRules,
   resolveProductStatus,
   shouldImport,
   loadCuration,
-} from "../lib/importer/curation/index.js";
-import { validateRecord } from "../lib/importer/validation/validateRecord.js";
-import { ImportJob } from "../lib/importer/jobs/ImportJob.js";
-import { ProductImporter } from "../lib/importer/importers/ProductImporter.js";
-import { createShopifyClientFromSession } from "../lib/importer/shopifyClient.js";
-import { assertLiveImportAllowed } from "../lib/importer/jobs/dryRunGuard.js";
-import prisma from "../app/db.server.js";
+} from "../../lib/importer/curation/index.js";
+import { validateRecord } from "../../lib/importer/validation/validateRecord.js";
+import { ImportJob } from "../../lib/importer/jobs/ImportJob.js";
+import { ProductImporter } from "../../lib/importer/importers/ProductImporter.js";
+import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
+import { assertLiveImportAllowed } from "../../lib/importer/jobs/dryRunGuard.js";
+import prisma from "../../app/db.server.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = path.join(__dirname, "..");
+const PROJECT_ROOT = path.join(__dirname, "..", "..");
 const SKIPPED_FILE = path.join(PROJECT_ROOT, "results", "spot-check-skipped.json");
 
 /** Quando o feed não tem Caso 2 real, derivar do Caso 1 (mesmo SKU base + franchise no título). */
@@ -70,7 +70,7 @@ function logCor(msg, color = cor.reset) {
 /**
  * Envolve o cliente Shopify com logs coloridos por resposta GraphQL (spot-check live).
  * O p-limit permanece activo via shopifyClient → runThrottled.
- * @param {import('../lib/importer/shopifyClient.js').ShopifyClient} client
+ * @param {import('../../lib/importer/shopifyClient.js').ShopifyClient} client
  */
 function wrapShopifyClientWithSpotCheckLogs(client) {
   const baseGraphql = client.graphql.bind(client);
@@ -188,7 +188,7 @@ function printLiveRunInstructions() {
 
 /**
  * Motor de curadoria (alias público shouldImport = resolveProductStatus).
- * @param {import('../lib/importer/types.js').ProductRecord} record
+ * @param {import('../../lib/importer/types.js').ProductRecord} record
  */
 function evaluateCuration(record) {
   return evaluateCurationRules(record);

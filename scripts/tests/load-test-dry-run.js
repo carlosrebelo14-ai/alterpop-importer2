@@ -8,8 +8,8 @@
  */
 import fs from "fs/promises";
 import path from "path";
-import { config } from "../lib/importer/config.js";
-import { runImport } from "../lib/importer/jobs/runImport.js";
+import { config } from "../../lib/importer/config.js";
+import { runImport } from "../../lib/importer/jobs/runImport.js";
 
 const limit = parseInt(process.argv[2] || String(config.import.syncLimit || 10), 10);
 

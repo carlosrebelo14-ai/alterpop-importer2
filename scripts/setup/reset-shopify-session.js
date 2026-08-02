@@ -8,10 +8,10 @@
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
-import prisma from "../app/db.server.js";
+import prisma from "../../app/db.server.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const sessionsDir = path.join(__dirname, "..", "data", "sessions");
+const sessionsDir = path.join(__dirname, "..", "..", "data", "sessions");
 
 const shop =
   process.env.SPOT_CHECK_SHOP ||
