@@ -33,7 +33,7 @@ async function loadRecordForSku(sku, syntheticFrom) {
     onRow: async (row) => {
       const mapped = mapOcioStockRow(row);
       if (!mapped || mapped.sku !== (syntheticFrom || sku)) return;
-      transformOcioStockRecord(mapped, null);
+      await transformOcioStockRecord(mapped, null);
       found = mapped;
       if (syntheticFrom) {
         found = structuredClone(mapped);

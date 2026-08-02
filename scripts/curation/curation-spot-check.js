@@ -199,11 +199,11 @@ function evaluateCuration(record) {
  * @param {Record<string, string>} rawRow
  * @param {ImportJob} job
  */
-function prepareRecord(rawRow, job) {
+async function prepareRecord(rawRow, job) {
   const record = mapOcioStockRow(rawRow);
   if (!record) return null;
 
-  transformOcioStockRecord(record, job);
+  await transformOcioStockRecord(record, job);
 
   // Spot-check: rejeitar preço <= 0 e URLs de imagem inválidas antes de testar curadoria.
   const validation = validateRecord(record, {
@@ -322,7 +322,7 @@ async function scanFeedForSpotCases(job) {
     shouldStop: allFound,
     onRow: async (mapped, rowIndex) => {
       try {
-        const prepared = prepareRecord(mapped, job);
+        const prepared = await prepareRecord(mapped, job);
 
         if (!prepared?.record) return;
 

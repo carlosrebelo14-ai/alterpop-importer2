@@ -1,0 +1,42 @@
+{
+  "settings": {
+    "note": "Palavras gramaticais/função ES->EN. Separado de titles.json (que cobre termos de produto) porque são categorias de problema diferentes: aqui cobrimos preposições/conjunções que nunca aparecem como 'termo de produto' mas aparecem em quase todos os títulos (ex: 'Figura DE Goku')."
+  },
+  "es": {
+    "de la": "of the",
+    "de los": "of the",
+    "de las": "of the",
+    "del": "of the",
+    "de": "of",
+    "y": "and",
+    "con": "with",
+    "sin": "without",
+    "para": "for",
+    "por": "for",
+    "en": "in",
+    "sobre": "about",
+    "nuevo": "new",
+    "nueva": "new",
+    "nuevos": "new",
+    "nuevas": "new",
+    "grande": "large",
+    "grandes": "large",
+    "pequeño": "small",
+    "pequeña": "small",
+    "pequeños": "small",
+    "pequeñas": "small",
+    "oficial": "official",
+    "oficiales": "official",
+    "original": "original",
+    "originales": "original",
+    "edicion": "edition",
+    "edición": "edition",
+    "coleccion": "collection",
+    "colección": "collection",
+    "talla": "size",
+    "color": "color",
+    "colores": "colors",
+    "unico": "one size",
+    "único": "one size"
+  }
+}
