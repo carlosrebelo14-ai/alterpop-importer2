@@ -69,6 +69,7 @@ model CatalogProduct {
   grossPrice       Float?
   imageUrl         String?
   barcode          String?
+  weightKg         Float?
   indexedAt        DateTime @default(now())
 
   @@id([shop, sku])
