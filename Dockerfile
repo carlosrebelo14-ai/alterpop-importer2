@@ -8,8 +8,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
-# TEMP: --expose-gc para TESTE A (diagnóstico slowdown 25k) — remover após diagnóstico
-ENV NODE_OPTIONS="--max-old-space-size=1024 --expose-gc"
+ENV NODE_OPTIONS="--max-old-space-size=1024"
 ENV OCIOSTOCK_CSV_URL="https://ociostock.gesio.be/dyndata/exportaciones/csvzip/catalog_1_50_54_2_40836fd3ce5ea622a4d34a8aa6c8cda3_csv_plain.csv"
 
 COPY package.json package-lock.json* ./
