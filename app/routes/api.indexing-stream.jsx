@@ -26,8 +26,33 @@ export async function loader({ request }) {
 
   const stream = new ReadableStream({
     start(controller) {
+      let closed = false;
+
+      /**
+       * Encerra a stream uma única vez. Chamado tanto pelo abort do pedido
+       * como por uma falha de enqueue (controller já fechado por uma corrida
+       * entre desconexão do cliente e um evento/timer ainda em voo) — nunca
+       * deixa uma exceção não apanhada matar o processo Node.
+       */
+      const handleClose = () => {
+        if (closed) return;
+        closed = true;
+        clearInterval(heartbeat);
+        unsubscribe();
+        try {
+          controller.close();
+        } catch {
+          /* já fechado — ignorar */
+        }
+      };
+
       const send = (payload) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        } catch {
+          handleClose();
+        }
       };
 
       send({ type: "connected", shop });
@@ -53,11 +78,7 @@ export async function loader({ request }) {
         send({ type: "ping", at: Date.now() });
       }, 25000);
 
-      request.signal?.addEventListener?.("abort", () => {
-        clearInterval(heartbeat);
-        unsubscribe();
-        controller.close();
-      });
+      request.signal?.addEventListener?.("abort", handleClose);
     },
   });
 
