@@ -70,6 +70,10 @@ model CatalogProduct {
   imageUrl         String?
   barcode          String?
   weightKg         Float?
+  // "supplier" = título já veio em inglês do fornecedor e NÃO deve ser re-traduzido
+  // na leitura nem no publish; "pipeline" (ou null, em linhas anteriores a 2026-08-04)
+  // = passou pelo glossário + API e mantém o comportamento antigo.
+  titleSource      String?
   indexedAt        DateTime @default(now())
 
   @@id([shop, sku])
