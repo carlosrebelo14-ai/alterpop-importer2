@@ -74,6 +74,9 @@ model CatalogProduct {
   // na leitura nem no publish; "pipeline" (ou null, em linhas anteriores a 2026-08-04)
   // = passou pelo glossário + API e mantém o comportamento antigo.
   titleSource      String?
+  // Dimensões da embalagem já formatadas ("25 × 5 × 15 cm"), de xml_info_dimensiones.
+  // NULL nos ~31% de produtos sem esse dado no feed — nesses não gera linha nem metafield.
+  dimensions       String?
   indexedAt        DateTime @default(now())
 
   @@id([shop, sku])
