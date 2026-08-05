@@ -14,7 +14,9 @@ primary_region = "fra"
   SHOPIFY_SHOP_URL = "jyr17t-wr.myshopify.com"
   SHOPIFY_APP_URL = "https://alterpop-importer-app.fly.dev"
   APP_URL = "https://alterpop-importer-app.fly.dev"
-  DRY_RUN = "true"
+  # DRY_RUN removido a 2026-08-04: nunca protegeu o publish (shopifyApprovedSync não
+  # consulta a flag), mas bloqueava runImport — o caminho que o daemon de sync usa.
+  # envBool("DRY_RUN", false) tem default false, por isso ausente == desligado.
   TRANSLATION_PROVIDER = "libretranslate"
   LIBRETRANSLATE_URL = "https://alterpop-libretranslate.fly.dev"
 
