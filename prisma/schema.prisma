@@ -77,6 +77,9 @@ model CatalogProduct {
   // Dimensões da embalagem já formatadas ("25 × 5 × 15 cm"), de xml_info_dimensiones.
   // NULL nos ~31% de produtos sem esse dado no feed — nesses não gera linha nem metafield.
   dimensions       String?
+  // Pauta aduaneira (hs_intrastat_code), normalizada para 6 ou 8 dígitos.
+  // NULL nos ~9,3% sem valor aproveitável — nesses o campo é omitido no publish.
+  hsCode           String?
   indexedAt        DateTime @default(now())
 
   @@id([shop, sku])
