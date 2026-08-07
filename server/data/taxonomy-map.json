@@ -7,7 +7,11 @@
         {
           "id": "action-figures",
           "label": "Action Figures",
-          "matchKeys": ["accion", "articulada", "figura"]
+          "matchKeys": [
+            "accion",
+            "articulada",
+            "figura"
+          ]
         }
       ]
     },
@@ -18,7 +22,10 @@
         {
           "id": "board-games",
           "label": "Board Games",
-          "matchKeys": ["juego", "mesa"]
+          "matchKeys": [
+            "juego",
+            "mesa"
+          ]
         }
       ]
     }
@@ -26,7 +33,10 @@
   "productTypes": [
     {
       "id": "collectible",
-      "matchKeys": ["coleccion", "coleccionable"]
+      "matchKeys": [
+        "coleccion",
+        "coleccionable"
+      ]
     }
   ],
   "shopifyCategoryIds": {
@@ -70,6 +80,21 @@
     "Poster": "ae-3-2-4",
     "Sticker": "ae-2-1-2-8-4",
     "Pin": "ae-2-2-10-1-10",
-    "Suitcase": "lb-12-9"
+    "Suitcase": "lb-12-9",
+    "Doormat": "hg-3-26",
+    "Duvet Cover": "hg-15-1-5",
+    "Bedding": "hg-15-1",
+    "Dolls": "tg-5-8-6",
+    "Sunglasses": "aa-2-27",
+    "Umbrella": "hg-16-2",
+    "Coin Purse": "aa-5-5-3",
+    "Pyjamas": "aa-1-17-4",
+    "Keychain": "aa-4-1",
+    "Toiletry Bag": "lb-3-4",
+    "Hair Accessories": "aa-2-14",
+    "Toy Cars": "tg-5-8-12-2",
+    "Jewellery": "aa-6",
+    "Handbag": "aa-5-4",
+    "Checked Luggage": "lb-12-3"
   }
 }
