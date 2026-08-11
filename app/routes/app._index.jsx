@@ -15,6 +15,7 @@ import {
   Button,
   Checkbox,
   EmptyState,
+  Modal,
   SkeletonBodyText,
   SkeletonDisplayText,
   TextField,
@@ -24,7 +25,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateAdmin } from "../utils/authenticate.server";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
-import { getDashboardStats } from "../../lib/importer/dashboard/getDashboardStats.server.js";
+import { getCurationLiteStats } from "../../lib/importer/dashboard/getDashboardStats.server.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
 import {
   startCatalogCleanupInBackground,
@@ -53,7 +54,7 @@ const PAGE_SIZE = 50;
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
   const settings = await loadShopSettings(session.shop);
-  const dashboardStats = await getDashboardStats(session.shop);
+  const dashboardStats = await getCurationLiteStats(session.shop);
   const indexingActive = isCatalogIndexingRunning(session.shop);
   const catalogRebuildStatus = await readCatalogRebuildStatus(session.shop);
   const catalogCanResume = canResumeCatalogRebuild(catalogRebuildStatus);
@@ -230,6 +231,7 @@ export default function CurationDashboard() {
   const [selectedSkus, setSelectedSkus] = useState([]);
   const [bulkMargin, setBulkMargin] = useState("1.4");
   const [undoSnapshots, setUndoSnapshots] = useState([]);
+  const [massActionConfirm, setMassActionConfirm] = useState(null);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -312,11 +314,19 @@ export default function CurationDashboard() {
 
         // Se NÃO estiver a indexar, atualizamos as stats.
         // Se estiver a indexar, o SSE trata das stats, evitamos sobrecarga.
+        // Endpoint super-leve (sem ler a fila de curadoria) — este poll corre a
+        // cada 5-15s, por isso faz merge só de totalIndexed/totalSyncError em vez
+        // de substituir o estado inteiro (Aprovados/Rejeitados/Pendentes só mudam
+        // via refreshDashboardStats, chamado explicitamente após uma ação).
         if (!status?.rebuilding) {
-          const statsRes = await fetch("/api/dashboard/stats", { credentials: "same-origin" });
+          const statsRes = await fetch("/api/dashboard/poll-stats", { credentials: "same-origin" });
           const statsPayload = await statsRes.json();
           if (!cancelled && statsPayload?.ok && statsPayload.stats) {
-            setDashboardStats(statsPayload.stats);
+            setDashboardStats((prev) => ({
+              ...prev,
+              totalIndexed: statsPayload.stats.totalIndexed,
+              totalSyncError: statsPayload.stats.totalSyncError,
+            }));
           }
         }
       } catch {
@@ -607,6 +617,21 @@ export default function CurationDashboard() {
     facetBrands,
     facetProductTypes,
   ]);
+
+  const activeFilterSummary = useMemo(
+    () =>
+      activeFilterPills.length > 0
+        ? activeFilterPills.map((p) => p.label).join(" · ")
+        : "Sem filtros activos — isto aplica-se a TODO o catálogo indexado",
+    [activeFilterPills]
+  );
+
+  const confirmMassAction = useCallback(async () => {
+    if (!massActionConfirm) return;
+    const action = massActionConfirm.action;
+    setMassActionConfirm(null);
+    await runBulkApproveFiltered(action);
+  }, [massActionConfirm, runBulkApproveFiltered]);
 
   const clearAllFilters = useCallback(() => {
     setSelectedLicenceIds([]);
@@ -1164,6 +1189,39 @@ export default function CurationDashboard() {
           liveMode={stagingLiveMode}
         />
 
+        {massActionConfirm && (
+          <Modal
+            open
+            onClose={() => setMassActionConfirm(null)}
+            title={
+              massActionConfirm.action === "approve_filtered"
+                ? `Aprovar ${totalCount.toLocaleString("pt-PT")} produto(s)?`
+                : `Rejeitar ${totalCount.toLocaleString("pt-PT")} produto(s)?`
+            }
+            primaryAction={{
+              content:
+                massActionConfirm.action === "approve_filtered"
+                  ? `Aprovar ${totalCount.toLocaleString("pt-PT")}`
+                  : `Rejeitar ${totalCount.toLocaleString("pt-PT")}`,
+              destructive: massActionConfirm.action === "reject_filtered",
+              onAction: confirmMassAction,
+            }}
+            secondaryActions={[{ content: "Cancelar", onAction: () => setMassActionConfirm(null) }]}
+          >
+            <Modal.Section>
+              <BlockStack gap="200">
+                <Text as="p" variant="bodyMd">
+                  Esta ação aplica-se a <strong>{totalCount.toLocaleString("pt-PT")} produto(s)</strong>,
+                  não só à página atual.
+                </Text>
+                <Text as="p" tone="subdued">
+                  Filtro activo: {activeFilterSummary}
+                </Text>
+              </BlockStack>
+            </Modal.Section>
+          </Modal>
+        )}
+
         <Layout>
           <Layout.Section variant="oneThird">
             {metaLoading ? (
@@ -1210,7 +1268,7 @@ export default function CurationDashboard() {
                       <Button
                         size="slim"
                         tone="success"
-                        onClick={() => runBulkApproveFiltered("approve_filtered")}
+                        onClick={() => setMassActionConfirm({ action: "approve_filtered" })}
                       >
                         {`Aprovar Toda a Pesquisa (${totalCount.toLocaleString("pt-PT")})`}
                       </Button>
@@ -1219,7 +1277,7 @@ export default function CurationDashboard() {
                       <Button
                         size="slim"
                         tone="critical"
-                        onClick={() => runBulkApproveFiltered("reject_filtered")}
+                        onClick={() => setMassActionConfirm({ action: "reject_filtered" })}
                       >
                         {`Rejeitar Toda a Pesquisa (${totalCount.toLocaleString("pt-PT")})`}
                       </Button>
