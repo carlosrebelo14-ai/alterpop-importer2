@@ -2,8 +2,6 @@
  * Barra de acções — HTML nativo com estilos de fallback (funciona mesmo sem CSS Polaris).
  */
 export function DashboardPageToolbar({
-  onRefreshSales,
-  salesRefreshing,
   onRefreshCatalog,
   refreshStarting,
   indexingActive,
@@ -15,14 +13,6 @@ export function DashboardPageToolbar({
 }) {
   return (
     <div className="alterpop-toolbar" role="toolbar" aria-label="Acções do painel">
-      <button
-        type="button"
-        className="alterpop-btn"
-        onClick={onRefreshSales}
-        disabled={salesRefreshing}
-      >
-        {salesRefreshing ? "Vendas…" : "Radar de vendas (30d)"}
-      </button>
       <button
         type="button"
         className="alterpop-btn"

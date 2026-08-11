@@ -23,8 +23,9 @@ export default function App() {
     <AppProvider embedded apiKey={apiKey}>
       <PolarisAppProvider i18n={enTranslations}>
         <s-app-nav>
-          <s-link href="/app">Dashboard</s-link>
-          <s-link href="/app/settings">Settings</s-link>
+          <s-link href="/app">Curadoria</s-link>
+          <s-link href="/app/reports">Relatórios</s-link>
+          <s-link href="/app/settings">Definições</s-link>
           <s-link href="/app/setup-guide">Setup Guide</s-link>
         </s-app-nav>
         {isBusy && (

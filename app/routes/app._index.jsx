@@ -17,11 +17,8 @@ import {
   EmptyState,
   SkeletonBodyText,
   SkeletonDisplayText,
-  ProgressBar,
   TextField,
-  Tabs,
   Tooltip,
-  Box,
 } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -45,7 +42,6 @@ import { FacetedSearchSidebar } from "../components/FacetedSearchSidebar.jsx";
 import { ActiveFilterPills } from "../components/ActiveFilterPills.jsx";
 import { SyncStagingModal } from "../components/SyncStagingModal.jsx";
 import { ShopifyPublishModal } from "../components/ShopifyPublishModal.jsx";
-import { SyncErrorLogsPanel } from "../components/SyncErrorLogsPanel.jsx";
 import { CuratorChatWidget } from "../components/CuratorChatWidget.jsx";
 import { CatalogProductThumbnail } from "../components/CatalogProductThumbnail.jsx";
 import { DashboardPageToolbar } from "../components/DashboardPageToolbar.jsx";
@@ -219,7 +215,6 @@ export default function CurationDashboard() {
   const [streamStats, setStreamStats] = useState({ scanned: 0, indexed: 0 });
   const productsFetchGen = useRef(0);
 
-  const [selectedTab, setSelectedTab] = useState(0);
   const [stagingOpen, setStagingOpen] = useState(false);
   const [stagingSummary, setStagingSummary] = useState(null);
   const [stagingLoading, setStagingLoading] = useState(false);
@@ -227,7 +222,6 @@ export default function CurationDashboard() {
   const [pendingLiveAfterDryRun, setPendingLiveAfterDryRun] = useState(false);
   const [importJobId, setImportJobId] = useState(null);
   const [importJobStatus, setImportJobStatus] = useState(null);
-  const [salesRefreshing, setSalesRefreshing] = useState(false);
   const [shopifyPublishOpen, setShopifyPublishOpen] = useState(false);
   const [shopifyPublishJobId, setShopifyPublishJobId] = useState(null);
   const [shopifyPublishBusy, setShopifyPublishBusy] = useState(false);
@@ -636,7 +630,6 @@ export default function CurationDashboard() {
       setMaxPrice(filters.maxPrice || "");
       setInStockOnly(Boolean(filters.inStockOnly));
       setPage(1);
-      setSelectedTab(0);
       shopify.toast.show("Catalog filters updated from chat");
     },
     [shopify]
@@ -963,38 +956,6 @@ export default function CurationDashboard() {
     [importFetcher, shopify]
   );
 
-  const refreshSales = useCallback(async () => {
-    setSalesRefreshing(true);
-    try {
-      const res = await fetch("/api/shopify/sales-refresh", {
-        method: "POST",
-        credentials: "same-origin",
-      });
-      const data = await res.json();
-      if (data?.ok) {
-        shopify.toast.show(
-          `Vendas actualizadas (${data.skusWithSales ?? 0} SKUs com vendas)`
-        );
-        setPage((p) => p);
-        return;
-      }
-      if (data?.needsScopeGrant && data.grantUrl) {
-        const go = window.confirm(
-          `${data.error || "Autorizar read_orders?"}\n\nSerás redireccionado para a Shopify.`
-        );
-        if (go) {
-          window.open(data.grantUrl, "_top");
-        }
-        return;
-      }
-      shopify.toast.show(data?.error || "Erro ao actualizar vendas", { isError: true });
-    } catch {
-      shopify.toast.show("Falha de rede ao actualizar vendas", { isError: true });
-    } finally {
-      setSalesRefreshing(false);
-    }
-  }, [shopify]);
-
   const handleSyncClick = useCallback(() => {
     setPendingLiveAfterDryRun(true);
     openStagingModal(false);
@@ -1090,8 +1051,6 @@ export default function CurationDashboard() {
     >
       <BlockStack gap="400">
         <DashboardPageToolbar
-          onRefreshSales={refreshSales}
-          salesRefreshing={salesRefreshing}
           onRefreshCatalog={handleRefreshCatalog}
           refreshStarting={refreshStarting}
           indexingActive={indexingActive}
@@ -1102,117 +1061,11 @@ export default function CurationDashboard() {
           shopifyPublishBusy={shopifyPublishBusy}
         />
 
-        <div className="alterpop-kpi-grid">
-          <Card className="alterpop-fade-in">
-            <BlockStack gap="100">
-              <Text as="p" tone="subdued" variant="bodySm">
-                Total Potential Revenue
-              </Text>
-              <Text
-                as="p"
-                variant="headingLg"
-                tone={(dashboardStats.totalPotentialRevenue || 0) === 0 ? "subdued" : undefined}
-              >
-                {formatEur(dashboardStats.totalPotentialRevenue)}
-              </Text>
-            </BlockStack>
-          </Card>
-
-          <Card className="alterpop-fade-in">
-            <BlockStack gap="100">
-              <Text as="p" tone="subdued" variant="bodySm">
-                Estimated Net Profit
-              </Text>
-              <Text
-                as="p"
-                variant="headingLg"
-                tone={(dashboardStats.estimatedNetProfit || 0) === 0 ? "subdued" : undefined}
-              >
-                {formatEur(dashboardStats.estimatedNetProfit)}
-              </Text>
-            </BlockStack>
-          </Card>
-
-          <Card className="alterpop-fade-in">
-            <BlockStack gap="100">
-              <Text as="p" tone="subdued" variant="bodySm">
-                Inventory Volume
-              </Text>
-              <Text
-                as="p"
-                variant="headingLg"
-                tone={(dashboardStats.inventoryVolume || 0) === 0 ? "subdued" : undefined}
-              >
-                {(dashboardStats.inventoryVolume || 0).toLocaleString("pt-PT")}
-              </Text>
-            </BlockStack>
-          </Card>
-
-          <Card className="alterpop-fade-in">
-            <BlockStack gap="100">
-              <Text as="p" tone="subdued" variant="bodySm">
-                Shopify Sync Health
-              </Text>
-              <Text as="p" variant="headingLg">
-                {`${Math.round((dashboardStats.syncHealthRate || 0) * 100)}%`}
-              </Text>
-              <ProgressBar
-                progress={Math.round((dashboardStats.syncHealthRate || 0) * 100)}
-                tone={(dashboardStats.syncHealthRate || 0) >= 0.8 ? "success" : "warning"}
-              />
-            </BlockStack>
-          </Card>
-
-          <Card className="alterpop-fade-in">
-            <BlockStack gap="100">
-              <Text as="p" tone="subdued" variant="bodySm">
-                Sem Decisão
-              </Text>
-              <Text
-                as="p"
-                variant="headingLg"
-                tone={(dashboardStats.withoutDecision || 0) > 0 ? "caution" : "subdued"}
-              >
-                {(dashboardStats.withoutDecision || 0).toLocaleString("pt-PT")}
-              </Text>
-              <Text as="p" tone="subdued" variant="bodySm">
-                {dashboardStats.totalIndexed > 0
-                  ? `${Math.round(((dashboardStats.withoutDecision || 0) / dashboardStats.totalIndexed) * 100)}% do catálogo`
-                  : "—"}
-              </Text>
-            </BlockStack>
-          </Card>
-
-          <Card className="alterpop-fade-in">
-            <BlockStack gap="100">
-              <Text as="p" tone="subdued" variant="bodySm">
-                Taxa de Aprovação
-              </Text>
-              <Text as="p" variant="headingLg">
-                {`${Math.round((dashboardStats.approvalRate || 0) * 100)}%`}
-              </Text>
-              <ProgressBar
-                progress={Math.round((dashboardStats.approvalRate || 0) * 100)}
-                tone={(dashboardStats.approvalRate || 0) >= 0.3 ? "success" : "warning"}
-              />
-            </BlockStack>
-          </Card>
-
-          <Card className="alterpop-fade-in">
-            <BlockStack gap="100">
-              <Text as="p" tone="subdued" variant="bodySm">
-                Preço Médio Aprovados
-              </Text>
-              <Text
-                as="p"
-                variant="headingLg"
-                tone={(dashboardStats.avgApprovedNetPrice || 0) === 0 ? "subdued" : undefined}
-              >
-                {formatEur(dashboardStats.avgApprovedNetPrice || 0)}
-              </Text>
-            </BlockStack>
-          </Card>
-        </div>
+        {(dashboardStats.totalSyncError || 0) > 0 && (
+          <Banner tone="warning" action={{ content: "Ver Logs de Erro", url: "/app/reports" }}>
+            {`${dashboardStats.totalSyncError} produto(s) com erro de sincronização pendente.`}
+          </Banner>
+        )}
 
         {shopifyPublishBanner && (
           <Banner
@@ -1313,13 +1166,6 @@ export default function CurationDashboard() {
 
         <Layout>
           <Layout.Section variant="oneThird">
-            {indexingActive && (
-              <Box paddingBlockEnd="300">
-                <Button onClick={() => setIndexingSheetOpen(true)} fullWidth>
-                  Ver radar de indexação
-                </Button>
-              </Box>
-            )}
             {metaLoading ? (
               <Card>
                 <BlockStack gap="200">
@@ -1353,21 +1199,6 @@ export default function CurationDashboard() {
           </Layout.Section>
 
           <Layout.Section>
-            <Tabs
-              tabs={[
-                { id: "results", content: "Resultados" },
-                { id: "errors", content: "Logs de Erro" },
-              ]}
-              selected={selectedTab}
-              onSelect={setSelectedTab}
-            />
-
-            {selectedTab === 1 ? (
-              <SyncErrorLogsPanel
-                lastJobId={importJobId}
-                onRetryJob={retryFailedJob}
-              />
-            ) : (
             <Card>
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
@@ -1438,14 +1269,14 @@ export default function CurationDashboard() {
                     heading="Bem-vindo! Ainda não há catálogo indexado"
                     image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
                     action={{
-                      content: "Upload Your First Catalog",
+                      content: "Configurar CSV URL",
                       onAction: () => {
                         window.location.href = "/app/settings";
                       },
                     }}
                   >
                     <p>
-                      Começa por carregar o teu primeiro CSV em Settings e faz o mapeamento de colunas no Data Mapping Wizard.
+                      Começa por configurar o URL do CSV da OcioStock em Definições.
                     </p>
                   </EmptyState>
                 ) : listLoading && products.length === 0 ? (
@@ -1631,7 +1462,6 @@ export default function CurationDashboard() {
                 )}
               </BlockStack>
             </Card>
-            )}
           </Layout.Section>
         </Layout>
       </BlockStack>

@@ -1,13 +1,11 @@
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   Banner,
   BlockStack,
   Button,
-  DataTable,
   InlineStack,
-  Select,
   Tabs,
   Tag,
   Text,
@@ -136,13 +134,6 @@ export default function SettingsPage() {
   const [resetBusy, setResetBusy] = useState(false);
   const [resetBanner, setResetBanner] = useState(null);
   const [toast, setToast] = useState(null);
-  const [csvColumns, setCsvColumns] = useState([]);
-  const [csvPreviewRows, setCsvPreviewRows] = useState([]);
-  const [csvMapping, setCsvMapping] = useState(() => ({
-    sku: settings.csvColumnMap?.sku || "",
-    netPrice: settings.csvColumnMap?.netPrice || "",
-    vendor: settings.csvColumnMap?.vendor || "",
-  }));
 
   const handleResetComplete = useCallback((status) => {
     setResetBanner(
@@ -246,37 +237,6 @@ export default function SettingsPage() {
     marketFetcher.submit(fd, { method: "post" });
   }, [vipBrands, vipCategories, blockedTerms, vipLicences, marketFetcher]);
 
-  const csvMapOptions = useMemo(
-    () => [
-      { label: "Selecionar coluna…", value: "" },
-      ...csvColumns.map((c) => ({ label: c, value: c })),
-    ],
-    [csvColumns]
-  );
-
-  const parseCsvPreview = useCallback((file) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = String(reader.result || "");
-      const lines = text
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean)
-        .slice(0, 4);
-      if (lines.length < 2) return;
-      const delimiter = lines[0].includes(";") ? ";" : ",";
-      const headers = lines[0].split(delimiter).map((h) => h.trim().replace(/^"|"$/g, ""));
-      const preview = lines.slice(1, 4).map((line) =>
-        line.split(delimiter).map((v) => v.trim().replace(/^"|"$/g, ""))
-      );
-      setCsvColumns(headers);
-      setCsvPreviewRows(preview);
-      setToast({ content: "CSV carregado. Mapeia as colunas abaixo." });
-    };
-    reader.readAsText(file);
-  }, []);
-
   const s = fetcher.data?.settings || settings;
   const busy =
     ["loading", "submitting"].includes(fetcher.state) && fetcher.formMethod === "POST";
@@ -289,169 +249,84 @@ export default function SettingsPage() {
 
   return (
     <div className="alterpop-dashboard alterpop-page-shell">
-    <s-page heading="Settings">
+    <s-page heading="Definições">
       <fetcher.Form method="post">
-        <s-section heading="OcioStock">
+        <s-section heading="CSV URL (OcioStock)">
           <s-text-field
             name="ociostockCsvUrl"
             label="CSV URL"
             value={s.ociostockCsvUrl}
             details="Plain CSV export from OcioStock (semicolon-delimited)"
           />
-          <input
-            type="hidden"
-            name="csvColumnMapJson"
-            value={JSON.stringify(csvMapping)}
-            readOnly
-          />
         </s-section>
 
-        <s-section heading="Data Mapping Wizard">
-          <BlockStack gap="300">
-            <Text as="p" variant="bodyMd">
-              Faz upload do CSV e mapeia as colunas comerciais para o motor de importação.
-            </Text>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(e) => parseCsvPreview(e.target.files?.[0])}
-            />
-            {csvPreviewRows.length > 0 ? (
-              <>
-                <DataTable
-                  columnContentTypes={new Array(csvColumns.length).fill("text")}
-                  headings={csvColumns}
-                  rows={csvPreviewRows}
+        <s-section heading="Avançado">
+          <details>
+            <summary>Tradução (ES → EN)</summary>
+            <div style={{ marginTop: "12px" }}>
+              <BlockStack gap="300">
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Raramente necessário — o título inglês do próprio fornecedor já cobre a
+                  quase totalidade dos produtos. Isto é só um fallback para os casos residuais.
+                </Text>
+                <s-paragraph>Status: {translationLabel}</s-paragraph>
+                <s-checkbox
+                  name="autoGlossaryTranslation"
+                  label="Tradução automática (glossário nos títulos — predefinição da loja)"
+                  checked={s.autoGlossaryTranslation !== false}
                 />
-                <InlineStack gap="300" align="start">
-                  <div style={{ minWidth: 240 }}>
-                    <Select
-                      label="Qual é a coluna do SKU?"
-                      options={csvMapOptions}
-                      value={csvMapping.sku}
-                      onChange={(value) => setCsvMapping((prev) => ({ ...prev, sku: value }))}
-                    />
-                  </div>
-                  <div style={{ minWidth: 240 }}>
-                    <Select
-                      label="Qual é a coluna do Preço?"
-                      options={csvMapOptions}
-                      value={csvMapping.netPrice}
-                      onChange={(value) => setCsvMapping((prev) => ({ ...prev, netPrice: value }))}
-                    />
-                  </div>
-                  <div style={{ minWidth: 240 }}>
-                    <Select
-                      label="Qual é a coluna da Marca?"
-                      options={csvMapOptions}
-                      value={csvMapping.vendor}
-                      onChange={(value) => setCsvMapping((prev) => ({ ...prev, vendor: value }))}
-                    />
-                  </div>
-                </InlineStack>
-              </>
-            ) : (
-              <Text as="p" tone="subdued">
-                Sem preview ainda. Faz upload de um CSV para iniciar o wizard.
-              </Text>
-            )}
-          </BlockStack>
-        </s-section>
+                <s-checkbox
+                  name="translateToEnglish"
+                  label="Tradução API (DeepL) — opcional, além do glossário"
+                  checked={s.translateToEnglish === true}
+                />
+                <s-select name="translationProvider" label="Provider" value={s.translationProvider}>
+                  <option value="passthrough">passthrough (no API)</option>
+                  <option value="deepl">DeepL</option>
+                  <option value="libretranslate">LibreTranslate</option>
+                </s-select>
+                <s-text-field
+                  name="translationApiKey"
+                  label="API key"
+                  value={s.translationApiKey}
+                  details="Required for DeepL. Also set TRANSLATION_API_KEY in .env for dev."
+                />
+              </BlockStack>
+            </div>
+          </details>
 
-        <s-section heading="Tradução (ES → EN)">
-          <s-paragraph>Status: {translationLabel}</s-paragraph>
-          <s-checkbox
-            name="autoGlossaryTranslation"
-            label="Tradução automática (glossário nos títulos — predefinição da loja)"
-            checked={s.autoGlossaryTranslation !== false}
-          />
-          <s-checkbox
-            name="translateToEnglish"
-            label="Tradução API (DeepL) — opcional, além do glossário"
-            checked={s.translateToEnglish === true}
-          />
-          <s-select name="translationProvider" label="Provider" value={s.translationProvider}>
-            <option value="passthrough">passthrough (no API)</option>
-            <option value="deepl">DeepL</option>
-            <option value="libretranslate">LibreTranslate</option>
-          </s-select>
-          <s-text-field
-            name="translationApiKey"
-            label="API key"
-            value={s.translationApiKey}
-            details="Required for DeepL. Also set TRANSLATION_API_KEY in .env for dev."
-          />
-        </s-section>
-
-        <s-section heading="Sync options">
-          <s-checkbox name="syncImages" label="Sync product images" checked={s.syncImages !== false} />
-          <s-checkbox name="syncPrices" label="Sync prices (gross price + net metafield)" checked={s.syncPrices !== false} />
-          <s-checkbox name="syncProducts" label="Sync products" checked={s.syncProducts !== false} />
-          <s-checkbox name="syncInventory" label="Sync inventory" checked={s.syncInventory !== false} />
-        </s-section>
-
-        <s-section heading="Import">
-          <s-select name="importMode" label="Product mode" value={s.importMode}>
-            <option value="UPDATE_ONLY">UPDATE_ONLY</option>
-            <option value="CREATE_AND_UPDATE">CREATE_AND_UPDATE</option>
-          </s-select>
-          <s-text-field name="syncLimit" label="Default row limit (0 = all)" value={String(s.syncLimit)} />
-          <s-text-field name="skuAllowlist" label="SKU allowlist (comma-separated)" value={s.skuAllowlist} />
-          <s-text-field
-            name="locationId"
-            label="Inventory location GID (optional)"
-            value={s.locationId}
-            details="Leave empty to auto-detect primary fulfillment location"
-          />
-          <s-text-field name="batchSize" label="Batch size" value={String(s.batchSize)} />
-          <s-checkbox
-            name="importInStockOnly"
-            label="Importar apenas produtos com stock (fornecedor)"
-            checked={s.importInStockOnly === true}
-            details="Aplica-se a importações CSV/stream e envios Shopify que usam filtros de importação."
-          />
+          <details style={{ marginTop: "16px" }}>
+            <summary>Import (avançado)</summary>
+            <div style={{ marginTop: "12px" }}>
+              <BlockStack gap="300">
+                <s-select name="importMode" label="Product mode" value={s.importMode}>
+                  <option value="UPDATE_ONLY">UPDATE_ONLY</option>
+                  <option value="CREATE_AND_UPDATE">CREATE_AND_UPDATE</option>
+                </s-select>
+                <s-text-field name="syncLimit" label="Default row limit (0 = all)" value={String(s.syncLimit)} />
+                <s-text-field name="skuAllowlist" label="SKU allowlist (comma-separated)" value={s.skuAllowlist} />
+                <s-text-field
+                  name="locationId"
+                  label="Inventory location GID (optional)"
+                  value={s.locationId}
+                  details="Leave empty to auto-detect primary fulfillment location"
+                />
+                <s-text-field name="batchSize" label="Batch size" value={String(s.batchSize)} />
+                <s-checkbox
+                  name="importInStockOnly"
+                  label="Importar apenas produtos com stock (fornecedor)"
+                  checked={s.importInStockOnly === true}
+                  details="Aplica-se a importações CSV/stream e envios Shopify que usam filtros de importação."
+                />
+              </BlockStack>
+            </div>
+          </details>
         </s-section>
 
         <s-button type="submit" variant="primary" {...(busy ? { loading: true } : {})}>
           Save settings
         </s-button>
       </fetcher.Form>
-
-      <s-section heading="Filtro de exclusão (exclude-list.json)">
-        <BlockStack gap="300">
-          <Text as="p" variant="bodyMd">
-            Marcas, categorias e regras rejeitadas na indexação e curadoria. Ficheiro:{" "}
-            <code>server/data/exclude-list.json</code>
-          </Text>
-          <excludeFetcher.Form method="post">
-            <input type="hidden" name="intent" value="save-exclude-list" />
-            <textarea
-              name="excludeListJson"
-              value={excludeDraft}
-              onChange={(e) => setExcludeDraft(e.target.value)}
-              rows={16}
-              style={{
-                width: "100%",
-                fontFamily: "ui-monospace, monospace",
-                fontSize: "12px",
-                padding: "12px",
-                borderRadius: "8px",
-                border: "1px solid #c9cccf",
-              }}
-              spellCheck={false}
-            />
-            <div style={{ marginTop: "12px" }}>
-              <Button
-                submit
-                variant="primary"
-                loading={excludeFetcher.state !== "idle"}
-              >
-                Guardar exclude-list
-              </Button>
-            </div>
-          </excludeFetcher.Form>
-        </BlockStack>
-      </s-section>
 
       <s-section heading="Market Configuration">
         <BlockStack gap="300">
@@ -523,6 +398,56 @@ export default function SettingsPage() {
             <summary>Ver JSON efetivo</summary>
             <pre style={{ whiteSpace: "pre-wrap", marginTop: "8px" }}>{marketDraft}</pre>
           </details>
+        </BlockStack>
+      </s-section>
+
+      <s-section heading="Filtro de exclusão (exclude-list.json)">
+        <BlockStack gap="300">
+          <Text as="p" variant="bodyMd">
+            Marcas, categorias e regras rejeitadas na indexação e curadoria. Ficheiro:{" "}
+            <code>server/data/exclude-list.json</code>
+          </Text>
+          <excludeFetcher.Form method="post">
+            <input type="hidden" name="intent" value="save-exclude-list" />
+            <textarea
+              name="excludeListJson"
+              value={excludeDraft}
+              onChange={(e) => setExcludeDraft(e.target.value)}
+              rows={16}
+              style={{
+                width: "100%",
+                fontFamily: "ui-monospace, monospace",
+                fontSize: "12px",
+                padding: "12px",
+                borderRadius: "8px",
+                border: "1px solid #c9cccf",
+              }}
+              spellCheck={false}
+            />
+            <div style={{ marginTop: "12px" }}>
+              <Button
+                submit
+                variant="primary"
+                loading={excludeFetcher.state !== "idle"}
+              >
+                Guardar exclude-list
+              </Button>
+            </div>
+          </excludeFetcher.Form>
+        </BlockStack>
+      </s-section>
+
+      <s-section heading="Permissões">
+        <BlockStack gap="300">
+          <Text as="p" variant="bodyMd">
+            Se a publicação de produtos ao canal Online Store estiver a falhar por
+            falta de permissão, autoriza aqui os novos scopes <code>read_publications</code> e <code>write_publications</code>.
+          </Text>
+          <div>
+            <Button onClick={() => window.open("/api/shopify/grant-publications-scope", "_top")}>
+              Autorizar permissão de publicações
+            </Button>
+          </div>
         </BlockStack>
       </s-section>
 
