@@ -143,12 +143,14 @@ function buildProductsApiUrl({
   brand,
   filterIds,
   search,
+  searchScope,
   minPrice,
   maxPrice,
   inStockOnly,
   sortBy,
   sortDir,
   curationStatus,
+  reasonFilter,
 }) {
   const params = new URLSearchParams({
     page: String(page),
@@ -157,12 +159,14 @@ function buildProductsApiUrl({
   if (brand) params.set("brand", brand);
   if (filterIds.length) params.set("filters", filterIds.join(","));
   if (search) params.set("search", search);
+  if (search && searchScope && searchScope !== "all") params.set("searchScope", searchScope);
   if (minPrice) params.set("minPrice", minPrice);
   if (maxPrice) params.set("maxPrice", maxPrice);
   if (inStockOnly) params.set("inStockOnly", "1");
   if (sortBy) params.set("sortBy", sortBy);
   if (sortDir) params.set("sortDir", sortDir);
   if (curationStatus) params.set("curationStatus", curationStatus);
+  if (reasonFilter) params.set("reason", reasonFilter);
   return `/api/products?${params.toString()}`;
 }
 
@@ -190,6 +194,9 @@ export default function CurationDashboard() {
   const [sortBy, setSortBy] = useState("");
   const [sortDir, setSortDir] = useState("desc");
   const [curationStatus, setCurationStatus] = useState("");
+  const [searchScope, setSearchScope] = useState("all");
+  const [reasonFilter, setReasonFilter] = useState("");
+  const [savedFilters, setSavedFilters] = useState([]);
   const [decisions, setDecisions] = useState(() => ({ ...loaderData.decisions }));
 
   useEffect(() => {
@@ -435,6 +442,109 @@ export default function CurationDashboard() {
     };
   }, []);
 
+  const loadSavedFilters = useCallback(async () => {
+    try {
+      const res = await fetch("/api/saved-filters", { credentials: "same-origin" });
+      const data = await res.json();
+      if (data?.ok) setSavedFilters(data.filters || []);
+    } catch (err) {
+      console.error("[debug:curation] loadSavedFilters failed", err?.message || err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSavedFilters();
+  }, [loadSavedFilters]);
+
+  const handleApplySavedFilter = useCallback(
+    (id) => {
+      const found = savedFilters.find((f) => f.id === id);
+      if (!found) return;
+      const f = found.filters || {};
+      setSelectedLicenceIds(f.licenceIds || []);
+      setSelectedProductTypeIds(f.productTypeIds || []);
+      setSelectedBrand(f.brand || null);
+      setSearchQuery(f.search || "");
+      setSearchScope(f.searchScope || "all");
+      setMinPrice(f.minPrice || "");
+      setMaxPrice(f.maxPrice || "");
+      setInStockOnly(Boolean(f.inStockOnly));
+      setCurationStatus(f.curationStatus || "");
+      setReasonFilter(f.reason || "");
+      setPage(1);
+      shopify.toast.show(`Filtro "${found.name}" aplicado`);
+    },
+    [savedFilters, shopify]
+  );
+
+  const handleSaveCurrentFilter = useCallback(
+    async (name) => {
+      if (!name) return;
+      const filters = {
+        search: debouncedSearch,
+        searchScope,
+        licenceIds: selectedLicenceIds,
+        productTypeIds: selectedProductTypeIds,
+        brand: selectedBrand,
+        minPrice,
+        maxPrice,
+        inStockOnly,
+        curationStatus,
+        reason: reasonFilter,
+      };
+      const form = new FormData();
+      form.set("intent", "create");
+      form.set("name", name);
+      form.set("filters", JSON.stringify(filters));
+      try {
+        const res = await fetch("/api/saved-filters", {
+          method: "POST",
+          body: form,
+          credentials: "same-origin",
+        });
+        const data = await res.json();
+        if (data?.ok) {
+          shopify.toast.show(`Filtro "${name}" guardado`);
+          loadSavedFilters();
+        } else {
+          shopify.toast.show(data?.error || "Erro ao guardar filtro", { isError: true });
+        }
+      } catch (err) {
+        console.error("[debug:curation] saveCurrentFilter failed", err?.message || err);
+        shopify.toast.show("Erro ao guardar filtro", { isError: true });
+      }
+    },
+    [
+      debouncedSearch,
+      searchScope,
+      selectedLicenceIds,
+      selectedProductTypeIds,
+      selectedBrand,
+      minPrice,
+      maxPrice,
+      inStockOnly,
+      curationStatus,
+      reasonFilter,
+      shopify,
+      loadSavedFilters,
+    ]
+  );
+
+  const handleDeleteSavedFilter = useCallback(
+    async (id) => {
+      const form = new FormData();
+      form.set("intent", "delete");
+      form.set("id", id);
+      try {
+        await fetch("/api/saved-filters", { method: "POST", body: form, credentials: "same-origin" });
+        setSavedFilters((prev) => prev.filter((f) => f.id !== id));
+      } catch (err) {
+        console.error("[debug:curation] deleteSavedFilter failed", err?.message || err);
+      }
+    },
+    []
+  );
+
   useEffect(() => {
     if (dashboardStats.totalIndexed === 0 && !indexingActive) {
       setListLoading(false);
@@ -453,12 +563,14 @@ export default function CurationDashboard() {
         brand: debouncedBrand,
         filterIds: debouncedFilterIds,
         search: debouncedSearch,
+        searchScope,
         minPrice: debouncedMinPrice,
         maxPrice: debouncedMaxPrice,
         inStockOnly,
         sortBy,
         sortDir,
         curationStatus,
+        reasonFilter,
       });
 
       console.log("[debug:curation] fetch →", url, {
@@ -516,6 +628,7 @@ export default function CurationDashboard() {
   }, [
     page,
     debouncedSearch,
+    searchScope,
     debouncedBrand,
     debouncedFilterIds,
     debouncedMinPrice,
@@ -524,6 +637,7 @@ export default function CurationDashboard() {
     sortBy,
     sortDir,
     curationStatus,
+    reasonFilter,
     dashboardStats.totalIndexed,
     indexingActive,
     listRefreshKey,
@@ -597,10 +711,23 @@ export default function CurationDashboard() {
     }
 
     if (debouncedSearch) {
+      const scopeLabel =
+        searchScope === "title" ? " (título)" :
+        searchScope === "sku" ? " (SKU)" :
+        searchScope === "barcode" ? " (EAN)" :
+        searchScope === "vendor" ? " (marca)" : "";
       pills.push({
         id: "search",
-        label: `Search: ${debouncedSearch}`,
+        label: `Search: ${debouncedSearch}${scopeLabel}`,
         onRemove: () => setSearchQuery(""),
+      });
+    }
+
+    if (reasonFilter) {
+      pills.push({
+        id: "reason",
+        label: `Motivo: ${reasonFilter}`,
+        onRemove: () => setReasonFilter(""),
       });
     }
 
@@ -613,6 +740,8 @@ export default function CurationDashboard() {
     maxPrice,
     inStockOnly,
     debouncedSearch,
+    searchScope,
+    reasonFilter,
     facetLicences,
     facetBrands,
     facetProductTypes,
@@ -641,6 +770,9 @@ export default function CurationDashboard() {
     setMaxPrice("");
     setInStockOnly(false);
     setSearchQuery("");
+    setSearchScope("all");
+    setCurationStatus("");
+    setReasonFilter("");
     setPage(1);
   }, []);
 
@@ -667,6 +799,16 @@ export default function CurationDashboard() {
 
   const handleSearchChange = useCallback((q) => {
     setSearchQuery(q);
+    setPage(1);
+  }, []);
+
+  const handleSearchScopeChange = useCallback((scope) => {
+    setSearchScope(scope);
+    setPage(1);
+  }, []);
+
+  const handleReasonFilterChange = useCallback((reason) => {
+    setReasonFilter(reason);
     setPage(1);
   }, []);
 
@@ -951,12 +1093,14 @@ export default function CurationDashboard() {
           brand: debouncedBrand,
           filterIds: debouncedFilterIds,
           search: debouncedSearch,
+          searchScope,
           minPrice: debouncedMinPrice,
           maxPrice: debouncedMaxPrice,
           inStockOnly,
           sortBy,
           sortDir,
           curationStatus,
+          reasonFilter,
         }), { credentials: "same-origin" })
           .then((r) => r.json())
           .then((data) => {
@@ -1250,8 +1394,16 @@ export default function CurationDashboard() {
                 onInStockOnlyChange={handleInStockOnlyChange}
                 searchQuery={searchQuery}
                 onSearchChange={handleSearchChange}
+                searchScope={searchScope}
+                onSearchScopeChange={handleSearchScopeChange}
                 curationStatus={curationStatus}
                 onCurationStatusChange={(v) => { setCurationStatus(v); setPage(1); }}
+                reasonFilter={reasonFilter}
+                onReasonFilterChange={handleReasonFilterChange}
+                savedFilters={savedFilters}
+                onApplySavedFilter={handleApplySavedFilter}
+                onDeleteSavedFilter={handleDeleteSavedFilter}
+                onSaveCurrentFilter={handleSaveCurrentFilter}
               />
             )}
           </Layout.Section>

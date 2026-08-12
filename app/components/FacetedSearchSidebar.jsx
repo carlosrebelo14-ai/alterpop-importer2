@@ -4,6 +4,31 @@ import { Card, TextField } from "@shopify/polaris";
 import "../styles/faceted-search.css";
 
 /**
+ * Motivos reais gerados por evaluateCurationRules() (lib/importer/curation/
+ * visibilityGatekeeper.js) — o gate que corre em cada produto indexado; ordem e
+ * volumes confirmados contra a fila de curadoria em produção (2026-08-12,
+ * 29.601 itens): brand_not_allowed 16.651, approved 9.097, elite_brand_not_premium
+ * 2.100, blocked_category 1.224, priority_franchise_exception 433. Os "structured_*"
+ * vêm de evaluateStructuredCatalogFilter() (caminho legado/paralelo, muito menos
+ * usado hoje — ~100 itens no total) mas mantidos porque ainda aparecem. A
+ * comparação ignora o sufixo ":valor" dos motivos parametrizados.
+ */
+const REASON_OPTIONS = [
+  { value: "", label: "Todos" },
+  { value: "brand_not_allowed", label: "Marca não permitida" },
+  { value: "approved", label: "Aprovado automaticamente (gate)" },
+  { value: "elite_brand_not_premium", label: "Marca elite, mas não premium" },
+  { value: "blocked_category", label: "Categoria bloqueada" },
+  { value: "priority_franchise_exception", label: "Exceção por franquia prioritária" },
+  { value: "pending_review", label: "Pendente de revisão" },
+  { value: "manual_dashboard", label: "Decisão manual" },
+  { value: "manual_dashboard_bulk", label: "Decisão manual em massa" },
+  { value: "structured_no_brand_no_stock", label: "(legado) Sem marca e sem stock" },
+  { value: "structured_min_price", label: "(legado) Abaixo do preço mínimo" },
+  { value: "structured_junk_category", label: "(legado) Categoria excluída" },
+];
+
+/**
  * @param {{
  *   licences: { id: string, label: string, count: number }[],
  *   brands: { id: string, label: string, count: number }[],
@@ -22,6 +47,14 @@ import "../styles/faceted-search.css";
  *   onInStockOnlyChange: (v: boolean) => void,
  *   searchQuery: string,
  *   onSearchChange: (q: string) => void,
+ *   searchScope: string,
+ *   onSearchScopeChange: (scope: string) => void,
+ *   reasonFilter: string,
+ *   onReasonFilterChange: (reason: string) => void,
+ *   savedFilters: { id: string, name: string }[],
+ *   onApplySavedFilter: (id: string) => void,
+ *   onDeleteSavedFilter: (id: string) => void,
+ *   onSaveCurrentFilter: (name: string) => void,
  * }} props
  */
 export function FacetedSearchSidebar({
@@ -42,16 +75,27 @@ export function FacetedSearchSidebar({
   onInStockOnlyChange,
   searchQuery,
   onSearchChange,
+  searchScope = "all",
+  onSearchScopeChange,
   curationStatus = "",
   onCurationStatusChange,
+  reasonFilter = "",
+  onReasonFilterChange,
+  savedFilters = [],
+  onApplySavedFilter,
+  onDeleteSavedFilter,
+  onSaveCurrentFilter,
 }) {
   const [open, setOpen] = useState({
+    savedFilters: false,
     curationStatus: true,
+    reason: false,
     licences: true,
     brands: false,
     productTypes: false,
     price: false,
   });
+  const [saveFilterName, setSaveFilterName] = useState("");
   const [licenceQuery, setLicenceQuery] = useState("");
   const [brandQuery, setBrandQuery] = useState("");
 
@@ -84,6 +128,8 @@ export function FacetedSearchSidebar({
     onMaxPriceChange("");
     onInStockOnlyChange?.(false);
     onSearchChange("");
+    onSearchScopeChange?.("all");
+    onReasonFilterChange?.("");
     setLicenceQuery("");
     setBrandQuery("");
   }, [
@@ -94,6 +140,8 @@ export function FacetedSearchSidebar({
     onMaxPriceChange,
     onInStockOnlyChange,
     onSearchChange,
+    onSearchScopeChange,
+    onReasonFilterChange,
     onCurationStatusChange,
   ]);
 
@@ -112,6 +160,21 @@ export function FacetedSearchSidebar({
             clearButton
             onClearButtonClick={() => onSearchChange("")}
           />
+          <label style={{ display: "block", marginTop: 6 }}>
+            <span style={{ fontSize: 12, color: "#6d7175" }}>Procurar em</span>
+            <select
+              value={searchScope}
+              onChange={(e) => onSearchScopeChange?.(e.target.value)}
+              style={{ width: "100%", marginTop: 2 }}
+              aria-label="Âmbito da pesquisa"
+            >
+              <option value="all">Título + SKU (padrão)</option>
+              <option value="title">Só título</option>
+              <option value="sku">Só SKU</option>
+              <option value="barcode">Só EAN / código de barras</option>
+              <option value="vendor">Só marca</option>
+            </select>
+          </label>
         </div>
 
         <label className={`faceted-search__stock-toggle ${inStockOnly ? "faceted-search__stock-toggle--active" : ""}`}>
@@ -125,6 +188,75 @@ export function FacetedSearchSidebar({
         </label>
 
         <div className="faceted-search__accordion">
+          <FacetSection
+            title="Filtros guardados"
+            count={savedFilters.length}
+            open={open.savedFilters}
+            onToggle={() => toggleOpen("savedFilters")}
+          >
+            {savedFilters.length === 0 ? (
+              <p style={{ fontSize: 12, color: "#6d7175", margin: "0 0 8px" }}>
+                Nenhum filtro guardado ainda.
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                {savedFilters.map((f) => (
+                  <div
+                    key={f.id}
+                    style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "space-between" }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onApplySavedFilter?.(f.id)}
+                      style={{
+                        flex: 1,
+                        textAlign: "left",
+                        background: "none",
+                        border: "none",
+                        padding: "2px 0",
+                        cursor: "pointer",
+                        color: "#2c6ecb",
+                        fontSize: 13,
+                        overflowWrap: "anywhere",
+                      }}
+                    >
+                      {f.name}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteSavedFilter?.(f.id)}
+                      aria-label={`Apagar filtro ${f.name}`}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "#8c9196", fontSize: 12 }}
+                    >
+                      Apagar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                type="text"
+                placeholder="Nome do filtro atual…"
+                value={saveFilterName}
+                onChange={(e) => setSaveFilterName(e.target.value)}
+                style={{ flex: 1 }}
+                aria-label="Nome do novo filtro guardado"
+              />
+              <button
+                type="button"
+                disabled={!saveFilterName.trim()}
+                onClick={() => {
+                  onSaveCurrentFilter?.(saveFilterName.trim());
+                  setSaveFilterName("");
+                }}
+                style={{ whiteSpace: "nowrap" }}
+              >
+                Guardar
+              </button>
+            </div>
+          </FacetSection>
+
           <FacetSection
             title="Estado de Curadoria"
             count={curationStatus ? 1 : 0}
@@ -151,6 +283,31 @@ export function FacetedSearchSidebar({
                     name="curation-status"
                     checked={curationStatus === opt.value}
                     onChange={() => onCurationStatusChange?.(opt.value)}
+                  />
+                  <span className="faceted-search__option-label">{opt.label}</span>
+                </label>
+              ))}
+            </div>
+          </FacetSection>
+
+          <FacetSection
+            title="Motivo de Curadoria"
+            count={reasonFilter ? 1 : 0}
+            open={open.reason}
+            onToggle={() => toggleOpen("reason")}
+          >
+            <div className="faceted-search__options" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {REASON_OPTIONS.map((opt) => (
+                <label
+                  key={opt.value}
+                  className="faceted-search__option"
+                  style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+                >
+                  <input
+                    type="radio"
+                    name="curation-reason"
+                    checked={reasonFilter === opt.value}
+                    onChange={() => onReasonFilterChange?.(opt.value)}
                   />
                   <span className="faceted-search__option-label">{opt.label}</span>
                 </label>

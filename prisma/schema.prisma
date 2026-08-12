@@ -139,3 +139,15 @@ model MarketSettings {
   blockedTerms  String   @default("[]")
   updatedAt     DateTime @updatedAt
 }
+
+/// Conjuntos de filtros da Curadoria guardados pelo utilizador (segmentos nomeados).
+model SavedFilterSet {
+  id          String   @id @default(cuid())
+  shop        String
+  name        String
+  /// JSON: { search, searchScope, licenceIds, productTypeIds, brand, minPrice, maxPrice, inStockOnly, curationStatus, reason }
+  filtersJson String
+  createdAt   DateTime @default(now())
+
+  @@index([shop])
+}
