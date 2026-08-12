@@ -239,6 +239,8 @@ export default function CurationDashboard() {
   const [bulkMargin, setBulkMargin] = useState("1.4");
   const [undoSnapshots, setUndoSnapshots] = useState([]);
   const [massActionConfirm, setMassActionConfirm] = useState(null);
+  const [importingCsv, setImportingCsv] = useState(false);
+  const importFileInputRef = useRef(null);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -804,6 +806,69 @@ export default function CurationDashboard() {
     setReasonFilter(reason);
     setPage(1);
   }, []);
+
+  const handleExportCsv = useCallback(() => {
+    const params = new URLSearchParams();
+    if (debouncedBrand) params.set("brand", debouncedBrand);
+    if (debouncedFilterIds.length) params.set("filters", debouncedFilterIds.join(","));
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    if (debouncedSearch && searchScope !== "all") params.set("searchScope", searchScope);
+    if (debouncedMinPrice) params.set("minPrice", debouncedMinPrice);
+    if (debouncedMaxPrice) params.set("maxPrice", debouncedMaxPrice);
+    if (inStockOnly) params.set("inStockOnly", "1");
+    if (curationStatus) params.set("curationStatus", curationStatus);
+    if (reasonFilter) params.set("reason", reasonFilter);
+    window.open(`/api/products/export?${params.toString()}`, "_blank");
+  }, [
+    debouncedBrand,
+    debouncedFilterIds,
+    debouncedSearch,
+    searchScope,
+    debouncedMinPrice,
+    debouncedMaxPrice,
+    inStockOnly,
+    curationStatus,
+    reasonFilter,
+  ]);
+
+  const handleImportCsvFile = useCallback(
+    async (e) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+
+      setImportingCsv(true);
+      try {
+        const form = new FormData();
+        form.set("file", file);
+        const res = await fetch("/api/products/import-edits", {
+          method: "POST",
+          body: form,
+          credentials: "same-origin",
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.ok) {
+          shopify.toast.show(data?.error || "Erro ao importar CSV", { isError: true });
+          return;
+        }
+        shopify.toast.show(
+          `${data.appliedCount} linhas aplicadas, ${data.rejectedCount} rejeitadas de ${data.totalRows}`,
+          { isError: data.rejectedCount > 0 && data.appliedCount === 0 }
+        );
+        if (data.rejectedCount > 0) {
+          console.log("[debug:curation] import-edits rejeitados", data.rejected);
+        }
+        setListRefreshKey((k) => k + 1);
+        refreshDashboardStats();
+      } catch (err) {
+        console.error("[debug:curation] import-edits failed", err?.message || err);
+        shopify.toast.show("Falha de rede ao importar CSV", { isError: true });
+      } finally {
+        setImportingCsv(false);
+      }
+    },
+    [shopify, refreshDashboardStats]
+  );
 
   const handleMinPriceChange = useCallback((v) => {
     setMinPrice(v);
@@ -1434,6 +1499,19 @@ export default function CurationDashboard() {
                         {`Rejeitar Toda a Pesquisa (${totalCount.toLocaleString("pt-PT")})`}
                       </Button>
                     )}
+                    <Button size="slim" onClick={handleExportCsv} disabled={totalCount === 0}>
+                      Exportar CSV
+                    </Button>
+                    <Button size="slim" onClick={() => importFileInputRef.current?.click()} loading={importingCsv}>
+                      Importar edições
+                    </Button>
+                    <input
+                      ref={importFileInputRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      style={{ display: "none" }}
+                      onChange={handleImportCsvFile}
+                    />
                   </InlineStack>
                   <InlineStack gap="200" blockAlign="center">
                     <select
