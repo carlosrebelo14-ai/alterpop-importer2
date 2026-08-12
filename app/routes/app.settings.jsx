@@ -5,6 +5,7 @@ import {
   Banner,
   BlockStack,
   Button,
+  Card,
   InlineStack,
   Tabs,
   Tag,
@@ -329,6 +330,7 @@ export default function SettingsPage() {
       </fetcher.Form>
 
       <s-section heading="Market Configuration">
+        <Card>
         <BlockStack gap="300">
           <Text as="p" variant="bodyMd">
             Motor multitenant: regras VIP e termos bloqueados editáveis por mercado.
@@ -399,6 +401,7 @@ export default function SettingsPage() {
             <pre style={{ whiteSpace: "pre-wrap", marginTop: "8px" }}>{marketDraft}</pre>
           </details>
         </BlockStack>
+        </Card>
       </s-section>
 
       <s-section heading="Filtro de exclusão (exclude-list.json)">
