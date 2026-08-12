@@ -146,6 +146,7 @@ function buildProductsApiUrl({
   searchScope,
   minPrice,
   maxPrice,
+  minConfidence,
   inStockOnly,
   sortBy,
   sortDir,
@@ -162,6 +163,7 @@ function buildProductsApiUrl({
   if (search && searchScope && searchScope !== "all") params.set("searchScope", searchScope);
   if (minPrice) params.set("minPrice", minPrice);
   if (maxPrice) params.set("maxPrice", maxPrice);
+  if (minConfidence) params.set("minConfidence", minConfidence);
   if (inStockOnly) params.set("inStockOnly", "1");
   if (sortBy) params.set("sortBy", sortBy);
   if (sortDir) params.set("sortDir", sortDir);
@@ -189,6 +191,7 @@ export default function CurationDashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
+  const [minConfidence, setMinConfidence] = useState("");
   const [inStockOnly, setInStockOnly] = useState(true);
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState("");
@@ -269,6 +272,7 @@ export default function CurationDashboard() {
   );
   const debouncedMinPrice = useDebouncedValue(minPrice, 300);
   const debouncedMaxPrice = useDebouncedValue(maxPrice, 300);
+  const debouncedMinConfidence = useDebouncedValue(minConfidence, 300);
 
   const approvedSkus = useMemo(
     () => Object.entries(decisions).filter(([, s]) => s === "APPROVED").map(([sku]) => sku),
@@ -573,6 +577,7 @@ export default function CurationDashboard() {
         searchScope,
         minPrice: debouncedMinPrice,
         maxPrice: debouncedMaxPrice,
+        minConfidence: debouncedMinConfidence,
         inStockOnly,
         sortBy,
         sortDir,
@@ -640,6 +645,7 @@ export default function CurationDashboard() {
     debouncedFilterIds,
     debouncedMinPrice,
     debouncedMaxPrice,
+    debouncedMinConfidence,
     inStockOnly,
     sortBy,
     sortDir,
@@ -709,6 +715,14 @@ export default function CurationDashboard() {
       });
     }
 
+    if (minConfidence) {
+      pills.push({
+        id: "min-confidence",
+        label: `Confiança ≥ ${minConfidence}%`,
+        onRemove: () => setMinConfidence(""),
+      });
+    }
+
     if (inStockOnly) {
       pills.push({
         id: "in-stock",
@@ -745,6 +759,7 @@ export default function CurationDashboard() {
     selectedBrand,
     minPrice,
     maxPrice,
+    minConfidence,
     inStockOnly,
     debouncedSearch,
     searchScope,
@@ -768,6 +783,7 @@ export default function CurationDashboard() {
     setSelectedBrand(null);
     setMinPrice("");
     setMaxPrice("");
+    setMinConfidence("");
     setInStockOnly(false);
     setSearchQuery("");
     setSearchScope("all");
@@ -1670,7 +1686,26 @@ export default function CurationDashboard() {
                       <option value="stock_desc">Stock ↓ (mais stock)</option>
                       <option value="title_asc">Título A → Z</option>
                       <option value="title_desc">Título Z → A</option>
+                      <option value="confidence_desc">Confiança ↓ (mais fiável)</option>
+                      <option value="confidence_asc">Confiança ↑ (menos fiável)</option>
                     </select>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="5"
+                      placeholder="Confiança mín. %"
+                      value={minConfidence}
+                      onChange={(e) => { setMinConfidence(e.target.value); setPage(1); }}
+                      style={{
+                        width: 130,
+                        padding: "4px 8px",
+                        borderRadius: 6,
+                        border: "1px solid var(--p-color-border-secondary, #ccc)",
+                        fontSize: 13,
+                        background: "var(--p-color-bg-surface, #fff)",
+                      }}
+                    />
                     <Text as="p" tone="subdued">
                       {listLoading
                         ? "A carregar…"
@@ -1732,6 +1767,7 @@ export default function CurationDashboard() {
                           salesUnits30d,
                           barcode,
                           franchises,
+                          dataConfidence,
                         } = item;
                         const status = decisions[sku];
                         const smartAction = smartFlags[sku];
@@ -1849,6 +1885,23 @@ export default function CurationDashboard() {
                                   <Badge tone={stock > 0 ? "success" : undefined}>
                                     {stock > 0 ? `Stock ${stock}` : "Sem stock"}
                                   </Badge>
+                                  {dataConfidence && (
+                                    <Tooltip
+                                      content={`Título: ${dataConfidence.breakdown.titleSource ? "✓" : "✗"} · Categoria: ${dataConfidence.breakdown.category ? "✓" : "✗"} · Dimensões: ${dataConfidence.breakdown.dimensions ? "✓" : "✗"} · Peso: ${dataConfidence.breakdown.weightKg ? "✓" : "✗"} · Pauta: ${dataConfidence.breakdown.hsCode ? "✓" : "✗"}`}
+                                    >
+                                      <Badge
+                                        tone={
+                                          dataConfidence.level === "high"
+                                            ? "success"
+                                            : dataConfidence.level === "medium"
+                                              ? "warning"
+                                              : "critical"
+                                        }
+                                      >
+                                        {`Confiança ${dataConfidence.score}%`}
+                                      </Badge>
+                                    </Tooltip>
+                                  )}
                                 </InlineStack>
                               </InlineStack>
                               <InlineStack gap="200">

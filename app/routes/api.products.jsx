@@ -21,6 +21,7 @@ export const loader = async ({ request }) => {
   const searchScope = url.searchParams.get("searchScope") || "all";
   const minPrice = url.searchParams.get("minPrice") || null;
   const maxPrice = url.searchParams.get("maxPrice") || null;
+  const minConfidence = url.searchParams.get("minConfidence") || null;
   const inStockOnlyParam = url.searchParams.get("inStockOnly");
   const inStockOnly = inStockOnlyParam === "1" || inStockOnlyParam === "true" || inStockOnlyParam === "on";
   const includeCounts = url.searchParams.get("counts") === "1";
@@ -60,6 +61,7 @@ export const loader = async ({ request }) => {
     searchScope,
     minPrice,
     maxPrice,
+    minConfidence,
     inStockOnly,
     includeCounts,
     sortBy,
