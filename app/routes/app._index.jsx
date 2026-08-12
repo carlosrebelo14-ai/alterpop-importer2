@@ -986,10 +986,13 @@ export default function CurationDashboard() {
             filters: {
               brand: debouncedBrand,
               search: debouncedSearch,
+              searchScope,
               minPrice: debouncedMinPrice,
               maxPrice: debouncedMaxPrice,
               inStockOnly,
               filterIds: debouncedFilterIds,
+              curationStatus,
+              reason: reasonFilter,
             },
           }),
         });
@@ -1001,6 +1004,18 @@ export default function CurationDashboard() {
         setToast({
           content: `${data.updated} produtos da pesquisa ${action.startsWith("approve") ? "aprovados" : "rejeitados"}!`,
         });
+        // Sem isto, `decisions` (e por consequência approvedSkus/o botão "Publicar na
+        // Shopify") só actualizava depois de um reload completo — approve_filtered
+        // nunca tinha os SKUs no cliente para os marcar localmente (2.º bug do mesmo
+        // report do 1.º fix acima).
+        if (Array.isArray(data.skus) && data.skus.length) {
+          const targetStatus = action.startsWith("approve") ? "APPROVED" : "REJECTED";
+          setDecisions((prev) => {
+            const next = { ...prev };
+            for (const sku of data.skus) next[sku] = targetStatus;
+            return next;
+          });
+        }
         clearSelection();
         setListRefreshKey((k) => k + 1);
         refreshDashboardStats();
@@ -1011,10 +1026,13 @@ export default function CurationDashboard() {
     [
       debouncedBrand,
       debouncedSearch,
+      searchScope,
       debouncedMinPrice,
       debouncedMaxPrice,
       inStockOnly,
       debouncedFilterIds,
+      curationStatus,
+      reasonFilter,
       clearSelection,
       refreshDashboardStats,
     ]

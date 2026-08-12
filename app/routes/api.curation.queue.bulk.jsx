@@ -4,13 +4,15 @@ import {
   bulkSetQueueStatus,
 } from "../../lib/curation/curationQueue.server.js";
 import { invalidateCurationQueueCache } from "../../lib/importer/curation/index.js";
+import { computeCurationSkuFilter } from "../../lib/curation/curationStatusFilter.server.js";
 
 /**
  * POST /api/curation/queue/bulk
  * body: { skus: string[], action: 'approve'|'reject'|'margin', marginMultiplier?: number }
+ * ou body: { action: 'approve_filtered'|'reject_filtered', filters: {...} }
  */
 export const action = async ({ request }) => {
-  await authenticateAdmin(request);
+  const { session } = await authenticateAdmin(request);
 
   if (request.method !== "POST") {
     return Response.json({ ok: false, error: "Method not allowed" }, { status: 405 });
@@ -29,15 +31,28 @@ export const action = async ({ request }) => {
 
     if (actionName === "approve_filtered" || actionName === "reject_filtered") {
       const { getMatchingCatalogSkus } = await import("../../lib/importer/catalog/catalogProductsDb.server.js");
-      const session = await import("../shopify.server.js").then((m) => m.default.authenticate.admin(request));
       const filters = body.filters || {};
-      skus = await getMatchingCatalogSkus(session.session.shop, {
+
+      // Tem de usar EXATAMENTE os mesmos filtros que /api/products usa para mostrar a
+      // contagem no botão "Aprovar/Rejeitar Toda a Pesquisa" — searchScope/
+      // curationStatus/reason faltavam aqui antes, fazendo o botão aprovar um conjunto
+      // diferente (mais pequeno) do que estava a mostrar (bug reportado 2026-08-13:
+      // "selecionei 135, só aprovou 100").
+      const { skuInclude, skuExclude } = await computeCurationSkuFilter(
+        filters.curationStatus || null,
+        filters.reason || null
+      );
+
+      skus = await getMatchingCatalogSkus(session.shop, {
         brand: filters.brand || null,
         search: filters.search || "",
+        searchScope: filters.searchScope || "all",
         minPrice: filters.minPrice || "",
         maxPrice: filters.maxPrice || "",
         inStockOnly: filters.inStockOnly,
         filterIds: Array.isArray(filters.filterIds) ? filters.filterIds : [],
+        skuInclude,
+        skuExclude,
       });
     }
 
@@ -54,6 +69,11 @@ export const action = async ({ request }) => {
         action: actionName,
         updated: result.updatedItems.length,
         previousSnapshots: result.previousSnapshots,
+        // O frontend precisa disto para actualizar o estado local `decisions` depois de
+        // approve_filtered/reject_filtered — sem a lista de SKUs de volta, o botão
+        // "Publicar na Shopify" ficava cinzento até um reload completo da página (o
+        // segundo bug do mesmo report: approve_filtered nunca actualizava `decisions`).
+        skus,
       });
     }
 
@@ -74,4 +94,3 @@ export const action = async ({ request }) => {
     return Response.json({ ok: false, error: err?.message || String(err) }, { status: 500 });
   }
 };
-

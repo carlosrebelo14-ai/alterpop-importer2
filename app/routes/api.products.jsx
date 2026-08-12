@@ -2,28 +2,7 @@ import { authenticateAdmin } from "../utils/authenticate.server";
 import { expandFilterIdsForQuery } from "../../lib/importer/catalog/taxonomy.server.js";
 import { queryCatalogProducts } from "../../lib/importer/catalog/catalogProductsDb.server.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
-
-/**
- * Motivos como "blocked_brand:FOO" ou "structured_min_price:3<4" trazem um sufixo
- * parametrizado depois de ":" — o filtro compara só a parte antes disso.
- * @param {string} reason
- */
-function reasonBaseToken(reason) {
-  return String(reason || "").split(":")[0];
-}
-
-/**
- * @param {{ reason?: string, metadata?: { curationReasons?: string[] } }} item
- * @param {string} reasonFilter
- */
-function itemMatchesReason(item, reasonFilter) {
-  if (reasonBaseToken(item?.reason) === reasonFilter) return true;
-  const extra = item?.metadata?.curationReasons;
-  if (Array.isArray(extra)) {
-    return extra.some((r) => reasonBaseToken(r) === reasonFilter);
-  }
-  return false;
-}
+import { computeCurationSkuFilter } from "../../lib/curation/curationStatusFilter.server.js";
 
 /**
  * GET /api/products?page=1&limit=50&brand=&filters=&search=&counts=1
@@ -70,31 +49,7 @@ export const loader = async ({ request }) => {
     curationStatus,
   });
 
-  let skuInclude = undefined;
-  let skuExclude = undefined;
-
-  if (curationStatus || reasonFilter) {
-    const { loadCurationQueue } = await import("../../lib/curation/curationQueue.server.js");
-    const queue = await loadCurationQueue();
-    const items = queue.items || [];
-
-    if (curationStatus === "NO_DECISION" && !reasonFilter) {
-      skuExclude = items.map((item) => item.sku);
-    } else {
-      let filtered = items;
-      if (curationStatus && curationStatus !== "NO_DECISION") {
-        filtered = filtered.filter((item) => item.status === curationStatus);
-      } else if (curationStatus === "NO_DECISION") {
-        // NO_DECISION + motivo não faz sentido (sem decisão não tem motivo registado);
-        // fica vazio em vez de devolver o catálogo inteiro por engano.
-        filtered = [];
-      }
-      if (reasonFilter) {
-        filtered = filtered.filter((item) => itemMatchesReason(item, reasonFilter));
-      }
-      skuInclude = filtered.map((item) => item.sku);
-    }
-  }
+  const { skuInclude, skuExclude } = await computeCurationSkuFilter(curationStatus, reasonFilter);
 
   const result = await queryCatalogProducts(session.shop, {
     page,

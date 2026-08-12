@@ -3,6 +3,7 @@ import { expandFilterIdsForQuery } from "../../lib/importer/catalog/taxonomy.ser
 import { queryCatalogProducts } from "../../lib/importer/catalog/catalogProductsDb.server.js";
 import { buildCsv } from "../../lib/importer/catalog/csvExport.server.js";
 import { loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
+import { computeCurationSkuFilter } from "../../lib/curation/curationStatusFilter.server.js";
 import { computeShopifyRetailPrice } from "../../lib/importer/shopify/shopifyMapper.server.js";
 
 // Limite de segurança — o mesmo já usado em getMatchingCatalogSkus() para "todos os
@@ -37,31 +38,7 @@ export const loader = async ({ request }) => {
     filtersRaw.split(",").map((s) => s.trim()).filter(Boolean)
   );
 
-  let skuInclude;
-  let skuExclude;
-  let queue = null;
-
-  if (curationStatus || reasonFilter) {
-    queue = await loadCurationQueue();
-    const items = queue.items || [];
-    if (curationStatus === "NO_DECISION" && !reasonFilter) {
-      skuExclude = items.map((i) => i.sku);
-    } else {
-      let filtered = items;
-      if (curationStatus && curationStatus !== "NO_DECISION") {
-        filtered = filtered.filter((i) => i.status === curationStatus);
-      } else if (curationStatus === "NO_DECISION") {
-        filtered = [];
-      }
-      if (reasonFilter) {
-        const base = (r) => String(r || "").split(":")[0];
-        filtered = filtered.filter(
-          (i) => base(i.reason) === reasonFilter || (i.metadata?.curationReasons || []).some((r) => base(r) === reasonFilter)
-        );
-      }
-      skuInclude = filtered.map((i) => i.sku);
-    }
-  }
+  const { skuInclude, skuExclude } = await computeCurationSkuFilter(curationStatus, reasonFilter);
 
   const result = await queryCatalogProducts(session.shop, {
     page: 1,
@@ -77,7 +54,7 @@ export const loader = async ({ request }) => {
     skuExclude,
   });
 
-  if (!queue) queue = await loadCurationQueue();
+  const queue = await loadCurationQueue();
   const bySku = new Map((queue.items || []).map((i) => [i.sku, i]));
 
   const rows = result.products.map((p) => {
