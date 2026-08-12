@@ -48,11 +48,18 @@ export function SyncErrorLogsPanel({ onRetryJob, lastJobId }) {
           <Text as="h2" variant="headingMd">
             Logs de Erro
           </Text>
-          {lastJobId && onRetryJob && (
-            <Button size="slim" onClick={() => onRetryJob(lastJobId)}>
-              Retry falhas do último job
-            </Button>
-          )}
+          <InlineStack gap="200">
+            {errors.length > 0 && (
+              <Button size="slim" onClick={() => window.open("/api/sync/errors/export", "_blank")}>
+                Exportar
+              </Button>
+            )}
+            {lastJobId && onRetryJob && (
+              <Button size="slim" onClick={() => onRetryJob(lastJobId)}>
+                Retry falhas do último job
+              </Button>
+            )}
+          </InlineStack>
         </InlineStack>
 
         <Text as="p" tone="subdued">
