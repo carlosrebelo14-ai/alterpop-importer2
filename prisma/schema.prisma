@@ -109,9 +109,14 @@ model SyncErrorLog {
   message   String
   jobId     String?
   createdAt DateTime @default(now())
+  /// false depois de resolvido (publish com sucesso) ou invalidado numa reindexação
+  /// completa. Histórico fica na tabela para a página "Logs de Erro"; contagens de
+  /// "erros ativos" (ex.: getPollStats) filtram por active:true.
+  active    Boolean  @default(true)
 
   @@index([shop, createdAt])
   @@index([shop, sku])
+  @@index([shop, active])
 }
 
 /// Vendas últimos 30 dias (Radar de Curadoria).
