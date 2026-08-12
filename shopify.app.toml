@@ -1,6 +1,6 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "8a079f3e829fadae53513b5a8d9eea04"
+client_id = "e41654ad431265c9533c277a0c92baff"
 name = "alterpop-importer"
 application_url = "https://alterpop-importer-app.fly.dev"
 embedded = true
@@ -19,9 +19,13 @@ api_version = "2025-10"
   uri = "/webhooks/app/scopes_update"
   topics = [ "app/scopes_update" ]
 
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/create"
+  topics = [ "orders/create" ]
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_inventory,read_locations,read_orders,read_products,write_inventory,write_products"
+scopes = "read_inventory,read_locations,read_orders,read_products,read_publications,write_inventory,write_products,write_publications"
 
 [auth]
 redirect_urls = [

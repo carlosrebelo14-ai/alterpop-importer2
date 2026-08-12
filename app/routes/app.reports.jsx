@@ -8,6 +8,7 @@ import { getDashboardStats } from "../../lib/importer/dashboard/getDashboardStat
 import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
 import { SyncErrorLogsPanel } from "../components/SyncErrorLogsPanel.jsx";
 import { LastSyncRunBanner } from "../components/LastSyncRunBanner.jsx";
+import { OrderStockAlertsPanel } from "../components/OrderStockAlertsPanel.jsx";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
@@ -215,6 +216,7 @@ export default function ReportsPage() {
           </Layout>
 
           <LastSyncRunBanner />
+          <OrderStockAlertsPanel />
           <SyncErrorLogsPanel />
         </BlockStack>
       </Page>

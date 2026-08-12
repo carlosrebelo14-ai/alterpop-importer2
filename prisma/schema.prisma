@@ -117,6 +117,25 @@ model SyncJob {
   @@index([shop, startedAt])
 }
 
+/// Item 18 do roadmap — heurística de encomenda sem stock. NÃO cancela nada;
+/// só sinaliza para o Carlos rever manualmente. Baseado no stock indexado
+/// localmente (CatalogProduct.stock), que pode estar desactualizado até ao
+/// próximo ciclo do relógio (45 min) — não é confirmação real do fornecedor.
+model OrderStockAlert {
+  id            String   @id @default(cuid())
+  shop          String
+  orderId       String
+  orderName     String
+  sku           String
+  orderedQty    Int
+  indexedStock  Int
+  createdAt     DateTime @default(now())
+  resolved      Boolean  @default(false)
+
+  @@index([shop, resolved])
+  @@index([shop, orderId])
+}
+
 /// Erros de sincronização Shopify (dashboard — Logs de Erro).
 model SyncErrorLog {
   id        String   @id @default(cuid())
