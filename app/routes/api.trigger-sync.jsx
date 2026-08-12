@@ -4,7 +4,8 @@ import {
   startCatalogIndexingWorker,
 } from "../../lib/importer/catalog/indexingStream.server.js";
 import { readCatalogRebuildStatus } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
-import { startApprovedShopifySyncInBackground } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
+import { runApprovedShopifySync } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
+import { syncPublishedStockLevels } from "../../lib/importer/shopify/publishedStockSync.server.js";
 import { isShopifySyncRunning } from "../../lib/importer/shopify/shopifySyncJob.server.js";
 import { listApprovedSkusForShopifySync } from "../../lib/curation/curationQueue.server.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
@@ -127,8 +128,10 @@ export const action = async ({ request }) => {
   // Arranca em background e devolve já — o ciclo demora minutos.
   //
   // ATENÇÃO: startCatalogIndexingWorker devolve ANTES de terminar (o trabalho corre num
-  // IIFE destacado), e startApprovedShopifySyncInBackground é fire-and-forget. Encadeá-las
-  // com await publicaria sobre um catálogo meio indexado — daí o polling explícito.
+  // IIFE destacado) — daí o polling explícito antes de publicar sobre um catálogo já
+  // completo. Dentro do IIFE, runApprovedShopifySync e syncPublishedStockLevels (item
+  // 18b) correm sequencialmente com await — não bloqueiam a resposta HTTP (já foi
+  // devolvida antes disto), só garantem que não disputam a API da Shopify ao mesmo tempo.
   void (async () => {
     try {
       console.log(`[trigger-sync] ciclo iniciado @ ${startedAt}`);
@@ -164,8 +167,29 @@ export const action = async ({ request }) => {
       }
 
       console.log("[trigger-sync] a publicar aprovados…");
-      startApprovedShopifySyncInBackground(session, {});
-      console.log("[trigger-sync] publicação lançada.");
+      try {
+        await runApprovedShopifySync(session, { skipInit: true });
+        console.log("[trigger-sync] publicação de aprovados concluída.");
+      } catch (err) {
+        console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
+      }
+
+      // Item 18b — produtos já PUBLISHED não entram no runApprovedShopifySync acima
+      // (esse só processa status APPROVED). Sem isto, um produto que esgota e o
+      // fornecedor repõe stock ficava preso a "sem stock" na Shopify até alguém o
+      // reaprovar manualmente. Corre sempre a seguir ao publish normal, nunca em
+      // paralelo — evita as duas rotinas disputarem o mesmo variantCache/rate limit.
+      try {
+        const stockClient = createShopifyClientFromSession(session);
+        const stockResult = await syncPublishedStockLevels(stockClient, shop, {
+          stockBuffer: settings.stockBuffer,
+        });
+        console.log(
+          `[trigger-sync] stock de publicados: ${stockResult.checked} verificados, ${stockResult.updated} atualizados, ${stockResult.skipped} sem alteração, ${stockResult.failed} falhas.`
+        );
+      } catch (err) {
+        console.error("[trigger-sync] sync de stock de publicados falhou:", err?.message || err);
+      }
     } catch (err) {
       console.error("[trigger-sync] ciclo falhou:", err?.message || err);
     }
