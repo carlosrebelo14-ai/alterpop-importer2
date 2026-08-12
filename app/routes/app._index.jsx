@@ -241,6 +241,11 @@ export default function CurationDashboard() {
   const [massActionConfirm, setMassActionConfirm] = useState(null);
   const [importingCsv, setImportingCsv] = useState(false);
   const importFileInputRef = useRef(null);
+  const [smartRuleModalOpen, setSmartRuleModalOpen] = useState(false);
+  const [smartRuleName, setSmartRuleName] = useState("");
+  const [smartRuleCategory, setSmartRuleCategory] = useState("");
+  const [smartRuleAction, setSmartRuleAction] = useState("AUTO_APPROVE");
+  const [smartRuleSaving, setSmartRuleSaving] = useState(false);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -870,6 +875,39 @@ export default function CurationDashboard() {
     [shopify, refreshDashboardStats]
   );
 
+  const canCreateSmartRule = Boolean(selectedBrand || minPrice || maxPrice || smartRuleCategory);
+
+  const handleCreateSmartRule = useCallback(async () => {
+    if (!canCreateSmartRule) return;
+    setSmartRuleSaving(true);
+    try {
+      const form = new FormData();
+      form.set("intent", "create");
+      form.set("action", smartRuleAction);
+      if (smartRuleName) form.set("name", smartRuleName);
+      if (selectedBrand) form.set("brand", selectedBrand);
+      if (smartRuleCategory) form.set("category", smartRuleCategory);
+      if (minPrice) form.set("minPrice", minPrice);
+      if (maxPrice) form.set("maxPrice", maxPrice);
+
+      const res = await fetch("/api/smart-rules", { method: "POST", body: form, credentials: "same-origin" });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        shopify.toast.show(data?.error || "Erro ao criar regra", { isError: true });
+        return;
+      }
+      shopify.toast.show("Regra criada");
+      setSmartRuleModalOpen(false);
+      setSmartRuleName("");
+      setSmartRuleCategory("");
+    } catch (err) {
+      console.error("[debug:curation] createSmartRule failed", err?.message || err);
+      shopify.toast.show("Falha de rede ao criar regra", { isError: true });
+    } finally {
+      setSmartRuleSaving(false);
+    }
+  }, [canCreateSmartRule, smartRuleAction, smartRuleName, selectedBrand, smartRuleCategory, minPrice, maxPrice, shopify]);
+
   const handleMinPriceChange = useCallback((v) => {
     setMinPrice(v);
     setPage(1);
@@ -1398,6 +1436,74 @@ export default function CurationDashboard() {
           liveMode={stagingLiveMode}
         />
 
+        {smartRuleModalOpen && (
+          <Modal
+            open
+            onClose={() => setSmartRuleModalOpen(false)}
+            title="Criar regra a partir deste filtro"
+            primaryAction={{
+              content: "Criar regra",
+              onAction: handleCreateSmartRule,
+              loading: smartRuleSaving,
+              disabled: !canCreateSmartRule,
+            }}
+            secondaryActions={[{ content: "Cancelar", onAction: () => setSmartRuleModalOpen(false) }]}
+          >
+            <Modal.Section>
+              <BlockStack gap="300">
+                <Text as="p" tone="subdued">
+                  A regra usa a marca e o intervalo de preço do filtro activo. Pesquisa de texto,
+                  licenças/tipos de produto, estado e motivo de curadoria não entram na regra —
+                  o motor de smart rules só entende marca, categoria e preço.
+                </Text>
+                <Text as="p">
+                  <strong>Marca:</strong> {selectedBrand || "(qualquer)"}
+                  {" · "}
+                  <strong>Preço:</strong> {minPrice || "0"}€ – {maxPrice || "∞"}€
+                </Text>
+                <TextField
+                  label="Categoria (opcional, texto livre)"
+                  value={smartRuleCategory}
+                  onChange={setSmartRuleCategory}
+                  autoComplete="off"
+                  helpText="Comparado por substring contra a categoria do produto."
+                />
+                <TextField
+                  label="Nome da regra (opcional)"
+                  value={smartRuleName}
+                  onChange={setSmartRuleName}
+                  autoComplete="off"
+                />
+                <BlockStack gap="150">
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      name="smart-rule-action"
+                      checked={smartRuleAction === "AUTO_APPROVE"}
+                      onChange={() => setSmartRuleAction("AUTO_APPROVE")}
+                    />
+                    <span>Aprovar automaticamente</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      name="smart-rule-action"
+                      checked={smartRuleAction === "AUTO_REJECT"}
+                      onChange={() => setSmartRuleAction("AUTO_REJECT")}
+                    />
+                    <span>Rejeitar automaticamente</span>
+                  </label>
+                </BlockStack>
+                {!canCreateSmartRule && (
+                  <Text as="p" tone="critical">
+                    Escolhe pelo menos uma marca, preço ou categoria antes de criar a regra.
+                  </Text>
+                )}
+              </BlockStack>
+            </Modal.Section>
+          </Modal>
+        )}
+
         {massActionConfirm && (
           <Modal
             open
@@ -1504,6 +1610,9 @@ export default function CurationDashboard() {
                     </Button>
                     <Button size="slim" onClick={() => importFileInputRef.current?.click()} loading={importingCsv}>
                       Importar edições
+                    </Button>
+                    <Button size="slim" onClick={() => setSmartRuleModalOpen(true)}>
+                      Criar regra deste filtro
                     </Button>
                     <input
                       ref={importFileInputRef}
