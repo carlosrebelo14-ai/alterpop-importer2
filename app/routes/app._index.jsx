@@ -237,6 +237,8 @@ export default function CurationDashboard() {
   const [shopifyPublishJobId, setShopifyPublishJobId] = useState(null);
   const [shopifyPublishBusy, setShopifyPublishBusy] = useState(false);
   const [shopifyPublishBanner, setShopifyPublishBanner] = useState(null);
+  const [lifecycleReport, setLifecycleReport] = useState(null);
+  const [lifecycleBannerDismissed, setLifecycleBannerDismissed] = useState(false);
   const [toast, setToast] = useState(null);
   const [selectedSkus, setSelectedSkus] = useState([]);
   const [bulkMargin, setBulkMargin] = useState("1.4");
@@ -279,6 +281,19 @@ export default function CurationDashboard() {
     [decisions]
   );
   const selectedCount = selectedSkus.length;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/sku-lifecycle", { credentials: "same-origin" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled && data?.ok && data.latest) setLifecycleReport(data.latest);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const refreshDashboardStats = useCallback(async () => {
     try {
@@ -1370,6 +1385,21 @@ export default function CurationDashboard() {
         {(dashboardStats.totalSyncError || 0) > 0 && (
           <Banner tone="warning" action={{ content: "Ver Logs de Erro", url: "/app/reports" }}>
             {`${dashboardStats.totalSyncError} produto(s) com erro de sincronização pendente.`}
+          </Banner>
+        )}
+
+        {lifecycleReport && lifecycleReport.newSkuCount > 0 && !lifecycleBannerDismissed && (
+          <Banner
+            tone={lifecycleReport.newVipSkus.length > 0 ? "success" : "info"}
+            onDismiss={() => setLifecycleBannerDismissed(true)}
+          >
+            {`${lifecycleReport.newSkuCount} novidade(s) desde o último ciclo` +
+              (lifecycleReport.newVipSkus.length > 0
+                ? ` — ${lifecycleReport.newVipSkus.length} de marcas/licenças VIP: ${lifecycleReport.newVipSkus
+                    .slice(0, 8)
+                    .map((s) => s.sku)
+                    .join(", ")}${lifecycleReport.newVipSkus.length > 8 ? "…" : ""}`
+                : ".")}
           </Banner>
         )}
 

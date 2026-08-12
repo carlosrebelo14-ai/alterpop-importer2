@@ -187,3 +187,62 @@ model SavedFilterSet {
 
   @@index([shop])
 }
+
+/// Ciclo de vida do SKU no feed do fornecedor — persiste ENTRE reindexações completas,
+/// ao contrário de CatalogProduct (que é limpo e reconstruído em cada ciclo do relógio,
+/// ver syncCatalogWithProgress clearFirst). É a única forma de comparar "SKUs deste
+/// ciclo" com "SKUs do ciclo anterior" sem guardar snapshots inteiros do CSV.
+/// Usado por lib/importer/catalog/skuLifecycle.server.js para:
+///  - Item 2 (novidades): sku com firstSeenAt == ranAt do ciclo atual.
+///  - Item 3 (descontinuados): missingCycles incrementa quando o sku não aparece num
+///    ciclo; a partir de DISCONTINUED_THRESHOLD (3) o status passa a "review".
+model CatalogSkuTracking {
+  shop          String
+  sku           String
+  vendor        String?
+  /// JSON string[] — franchises do último ciclo em que o SKU foi visto (para destacar
+  /// novidades de licenças VIP sem reconsultar CatalogProduct, que já pode ter mudado).
+  franchises    String   @default("[]")
+  firstSeenAt   DateTime @default(now())
+  lastSeenAt    DateTime @default(now())
+  missingCycles Int      @default(0)
+  /// "active" | "review" (3+ ciclos consecutivos sem aparecer) | "discontinued" (confirmado
+  /// manualmente — reservado para quando a despublicação automática for ativada, ver TODO)
+  status        String   @default("active")
+
+  @@id([shop, sku])
+  @@index([shop, status])
+  @@index([shop, lastSeenAt])
+}
+
+/// Item 5 do pacote de melhorias criativas de 2026-08-12 — evita recriar/reavaliar a
+/// mesma smart collection por licença em todos os ciclos. Uma linha por licença que já
+/// atingiu o limiar (10+ publicados) alguma vez, mesmo que a contagem desça depois.
+model AutoCollectionLicence {
+  shop                String
+  /// Licença normalizada (lowercase, trim) — chave de agrupamento, não o label mostrado.
+  licenceKey          String
+  licenceLabel        String
+  shopifyCollectionId String
+  productCountAtCreate Int     @default(0)
+  createdAt           DateTime @default(now())
+
+  @@id([shop, licenceKey])
+}
+
+/// Um registo por ciclo completo de indexação (não resumido) — alimenta o banner de
+/// novidades na Curadoria e a secção de descontinuados em Relatórios. Histórico mantido
+/// para tendência; a UI normalmente só lê o mais recente por shop.
+model SkuLifecycleCycleReport {
+  id                    String   @id @default(cuid())
+  shop                  String
+  ranAt                 DateTime @default(now())
+  newSkuCount           Int      @default(0)
+  /// JSON [{ sku, vendor, franchises }] — só as novidades de marcas/licenças VIP
+  newVipSkusJson        String   @default("[]")
+  discontinuedReviewCount Int    @default(0)
+  /// JSON [{ sku, vendor, missingCycles }]
+  discontinuedReviewJson String @default("[]")
+
+  @@index([shop, ranAt])
+}
