@@ -7,6 +7,7 @@ import { authenticateAdmin } from "../utils/authenticate.server";
 import { getDashboardStats } from "../../lib/importer/dashboard/getDashboardStats.server.js";
 import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
 import { SyncErrorLogsPanel } from "../components/SyncErrorLogsPanel.jsx";
+import { LastSyncRunBanner } from "../components/LastSyncRunBanner.jsx";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
@@ -213,6 +214,7 @@ export default function ReportsPage() {
             </Layout.Section>
           </Layout>
 
+          <LastSyncRunBanner />
           <SyncErrorLogsPanel />
         </BlockStack>
       </Page>

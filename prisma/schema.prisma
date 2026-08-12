@@ -100,6 +100,23 @@ model CatalogProductFilterTag {
   @@index([shop, sku])
 }
 
+/// Registo agregado por corrida do relógio/sync em massa (item 16 do roadmap).
+/// `id` é o mesmo jobId do ShopifySyncJobStatus (shopifySyncJob.server.js) —
+/// SyncErrorLog.jobId liga-se a este id sem precisar de foreign key formal.
+model SyncJob {
+  id         String    @id
+  shop       String
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  received   Int       @default(0)
+  succeeded  Int       @default(0)
+  failed     Int       @default(0)
+  /// "running" | "completed" | "failed"
+  status     String    @default("running")
+
+  @@index([shop, startedAt])
+}
+
 /// Erros de sincronização Shopify (dashboard — Logs de Erro).
 model SyncErrorLog {
   id        String   @id @default(cuid())
