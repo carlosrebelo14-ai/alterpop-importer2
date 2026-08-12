@@ -2,7 +2,6 @@ import { authenticateAdmin } from "../utils/authenticate.server";
 import { expandFilterIdsForQuery } from "../../lib/importer/catalog/taxonomy.server.js";
 import { queryCatalogProducts } from "../../lib/importer/catalog/catalogProductsDb.server.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
-import { attachDebugMockIfEmpty } from "../../lib/importer/catalog/curationMock.server.js";
 
 /**
  * Motivos como "blocked_brand:FOO" ou "structured_min_price:3<4" trazem um sufixo
@@ -97,7 +96,7 @@ export const loader = async ({ request }) => {
     }
   }
 
-  let result = await queryCatalogProducts(session.shop, {
+  const result = await queryCatalogProducts(session.shop, {
     page,
     limit,
     brand,
@@ -114,12 +113,9 @@ export const loader = async ({ request }) => {
     skuExclude,
   });
 
-  result = attachDebugMockIfEmpty(result, filterIds);
-
   console.log("[debug:curation] GET /api/products result", {
     totalCount: result.totalCount,
     returned: result.products?.length ?? 0,
-    debugMock: result._debugMock === true,
   });
 
   return Response.json({ ok: true, rebuilding: indexing, indexingActive: indexing, ...result });

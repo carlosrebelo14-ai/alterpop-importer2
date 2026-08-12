@@ -755,13 +755,6 @@ export default function CurationDashboard() {
     [activeFilterPills]
   );
 
-  const confirmMassAction = useCallback(async () => {
-    if (!massActionConfirm) return;
-    const action = massActionConfirm.action;
-    setMassActionConfirm(null);
-    await runBulkApproveFiltered(action);
-  }, [massActionConfirm, runBulkApproveFiltered]);
-
   const clearAllFilters = useCallback(() => {
     setSelectedLicenceIds([]);
     setSelectedProductTypeIds([]);
@@ -923,6 +916,13 @@ export default function CurationDashboard() {
       refreshDashboardStats,
     ]
   );
+
+  const confirmMassAction = useCallback(async () => {
+    if (!massActionConfirm) return;
+    const action = massActionConfirm.action;
+    setMassActionConfirm(null);
+    await runBulkApproveFiltered(action);
+  }, [massActionConfirm, runBulkApproveFiltered]);
 
   const runBulkMargin = useCallback(async () => {
     if (!selectedSkus.length) return;
@@ -1503,6 +1503,15 @@ export default function CurationDashboard() {
                     <ResourceList
                       resourceName={{ singular: "produto", plural: "produtos" }}
                       items={products}
+                      emptyState={
+                        <EmptyState
+                          heading="Sem produtos para este filtro"
+                          image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                          action={{ content: "Limpar filtros", onAction: clearAllFilters }}
+                        >
+                          <p>Experimenta remover ou ajustar alguns dos filtros activos.</p>
+                        </EmptyState>
+                      }
                       renderItem={(item) => {
                         const {
                           sku,
