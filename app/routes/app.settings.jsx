@@ -101,6 +101,7 @@ export const action = async ({ request }) => {
     syncPrices: form.get("syncPrices") === "on",
     batchSize: parseInt(String(form.get("batchSize") || "50"), 10) || 50,
     importInStockOnly: form.get("importInStockOnly") === "on",
+    stockBuffer: Math.max(0, parseInt(String(form.get("stockBuffer") || "0"), 10) || 0),
     csvColumnMap: (() => {
       try {
         const raw = String(form.get("csvColumnMapJson") || "{}");
@@ -305,6 +306,12 @@ export default function SettingsPage() {
                   <option value="CREATE_AND_UPDATE">CREATE_AND_UPDATE</option>
                 </s-select>
                 <s-text-field name="syncLimit" label="Default row limit (0 = all)" value={String(s.syncLimit)} />
+                <s-text-field
+                  name="stockBuffer"
+                  label="Buffer de stock (unidades subtraídas antes de publicar)"
+                  value={String(s.stockBuffer ?? 0)}
+                  details="Ex: fornecedor diz 5, buffer 2 → publica 3. 0 = sem buffer."
+                />
                 <s-text-field name="skuAllowlist" label="SKU allowlist (comma-separated)" value={s.skuAllowlist} />
                 <s-text-field
                   name="locationId"
