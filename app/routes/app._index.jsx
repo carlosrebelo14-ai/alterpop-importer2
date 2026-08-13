@@ -1021,12 +1021,30 @@ export default function CurationDashboard() {
   // por checkbox; "single" continua a usar toggleSelectSku, "page"/"all" replicam o
   // que a Curadoria já suportava (seleção acumulada entre páginas), só que agora dá
   // para marcar/desmarcar a página inteira de uma vez via o checkbox do cabeçalho.
+  // Corrige bug de code review (2026-08-13): tratar "range"/"multi" (shift/ctrl-click)
+  // como "página inteira" selecionava TODAS as linhas visíveis em vez de só o
+  // intervalo clicado. Réplica da lógica de referência do próprio Polaris
+  // (useIndexResourceState) usando `products` como lista de recursos — não dá para
+  // usar o hook diretamente porque `selectedSkus` já é a fonte de verdade partilhada
+  // por várias ações fora da tabela (bulk approve, publish, etc.).
   const handleTableSelectionChange = useCallback(
     (selectionType, isSelected, selection) => {
       if (selectionType === "single") {
         toggleSelectSku(selection, isSelected);
         return;
       }
+      if (selectionType === "range" || selectionType === "multi") {
+        if (!selection) return;
+        const [start, end] = selection;
+        const rangeSkus = products.slice(Number(start), Number(end) + 1).map((p) => p.sku);
+        setSelectedSkus((prev) => {
+          if (isSelected) return [...new Set([...prev, ...rangeSkus])];
+          return prev.filter((s) => !rangeSkus.includes(s));
+        });
+        return;
+      }
+      // "page" / "all" — sem paginação infinita nesta tabela, ambos significam
+      // "todas as linhas visíveis nesta página".
       const pageSkus = products.map((p) => p.sku);
       setSelectedSkus((prev) => {
         if (isSelected) return [...new Set([...prev, ...pageSkus])];
