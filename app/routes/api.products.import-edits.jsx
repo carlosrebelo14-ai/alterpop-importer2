@@ -50,14 +50,24 @@ export const action = async ({ request }) => {
   }
 
   const skus = dataRows.map((r) => (r[idx.sku] || "").trim()).filter(Boolean);
-  const existingRows = await safePrisma("importEdits.validateSkus", () =>
-    prisma.catalogProduct.findMany({
-      where: { shop: session.shop, sku: { in: skus } },
-      select: { sku: true },
-    }),
-    { fallback: [] }
+  // Chunk de 500 — evita o limite de parâmetros do SQLite em CSVs grandes (ver
+  // SKU_FILTER_CHUNK_SIZE em catalogProductsDb.server.js).
+  const skuChunks = [];
+  for (let i = 0; i < skus.length; i += 500) skuChunks.push(skus.slice(i, i + 500));
+  const existingRowChunks = await Promise.all(
+    skuChunks.map((chunk) =>
+      safePrisma(
+        "importEdits.validateSkus",
+        () =>
+          prisma.catalogProduct.findMany({
+            where: { shop: session.shop, sku: { in: chunk } },
+            select: { sku: true },
+          }),
+        { fallback: [] }
+      )
+    )
   );
-  const existingSkuSet = new Set(existingRows.map((r) => r.sku));
+  const existingSkuSet = new Set(existingRowChunks.flat().map((r) => r.sku));
 
   const applied = [];
   const rejected = [];
