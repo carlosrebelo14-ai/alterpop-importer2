@@ -106,6 +106,10 @@ export const action = async ({ request }) => {
       0,
       parseInt(String(form.get("marginErosionThresholdPct") || "15"), 10) || 15
     ),
+    marginWarnThresholdPct: Math.max(
+      0,
+      parseInt(String(form.get("marginWarnThresholdPct") || "30"), 10) || 30
+    ),
     csvColumnMap: (() => {
       try {
         const raw = String(form.get("csvColumnMapJson") || "{}");
@@ -321,6 +325,12 @@ export default function SettingsPage() {
                   label="Limiar de erosão de margem (%)"
                   value={String(s.marginErosionThresholdPct ?? 15)}
                   details="Sinaliza em Relatórios produtos publicados cujo custo do fornecedor subiu X% desde a publicação. Nunca muda preço/stock sozinho. Default 15."
+                />
+                <s-text-field
+                  name="marginWarnThresholdPct"
+                  label="Limiar de aviso de margem baixa (%) — Curadoria"
+                  value={String(s.marginWarnThresholdPct ?? 30)}
+                  details="Destaca visualmente a coluna Margem na Curadoria quando abaixo deste valor. Só apresentação, não muda nada. Default 30."
                 />
                 <s-text-field name="skuAllowlist" label="SKU allowlist (comma-separated)" value={s.skuAllowlist} />
                 <s-text-field

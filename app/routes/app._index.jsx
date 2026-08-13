@@ -5,23 +5,23 @@ import {
   Layout,
   Card,
   Text,
-  ResourceList,
-  ResourceItem,
+  IndexTable,
   Badge,
   Pagination,
   BlockStack,
   InlineStack,
   Banner,
   Button,
-  Checkbox,
   EmptyState,
   Modal,
   SkeletonBodyText,
   SkeletonDisplayText,
   TextField,
   Tooltip,
+  Tabs,
 } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
+import { reasonLabel } from "../utils/curationReasonLabels.js";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateAdmin } from "../utils/authenticate.server";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
@@ -50,6 +50,11 @@ import { useDebouncedValue } from "../hooks/useDebouncedValue.js";
 import { useImportJobPolling } from "../hooks/useImportJobPolling.js";
 
 const PAGE_SIZE = 50;
+/** Redesign da Curadoria (2026-08-12) — limiar do badge "Stock baixo" na tabela. */
+const LOW_STOCK_THRESHOLD = 10;
+/** IndexTable: índice de coluna sortável → mesmo campo já usado pelo <select> de ordenação. */
+const SORT_COLUMN_TO_FIELD = { 0: "title", 4: "netPrice", 5: "margin", 6: "stock" };
+const SORT_FIELD_TO_COLUMN = { title: 0, netPrice: 4, margin: 5, stock: 6 };
 
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
@@ -62,6 +67,7 @@ export const loader = async ({ request }) => {
   const curationQueue = await loadCurationQueue();
   const decisions = {};
   const smartFlags = {};
+  const reasons = {};
   for (const item of curationQueue.items) {
     if (
       item.status === "APPROVED" ||
@@ -76,6 +82,10 @@ export const loader = async ({ request }) => {
     } else if (item.metadata?.aiCuration && item.metadata?.aiAction === "APPROVE") {
       smartFlags[item.sku] = "AI_APPROVE";
     }
+    // Redesign da Curadoria (2026-08-12) — motivo mostrado inline por baixo do badge
+    // de Estado. Já existia para o filtro por motivo (curationStatusFilter.server.js);
+    // aqui só se expõe por SKU para a tabela não ter de pedir mais nada ao servidor.
+    if (item.reason) reasons[item.sku] = item.reason;
   }
 
   const smartStats = countSmartRuleDecisions(curationQueue.items);
@@ -89,6 +99,7 @@ export const loader = async ({ request }) => {
     catalogCanResume,
     decisions,
     smartFlags,
+    reasons,
     smartStats,
     settings,
   };
@@ -207,6 +218,38 @@ export default function CurationDashboard() {
   }, [loaderData.decisions]);
 
   const [smartFlags] = useState(() => ({ ...loaderData.smartFlags }));
+  const [reasons] = useState(() => ({ ...loaderData.reasons }));
+  const marginWarnThresholdPct = Number(settings?.marginWarnThresholdPct ?? 30);
+
+  // Redesign da Curadoria (2026-08-12) — toggle de densidade da tabela, preferência
+  // local por navegador/loja (não é dado de negócio, não faz sentido no servidor).
+  const [density, setDensity] = useState("comfortable");
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("alterpop_curadoria_density");
+      if (saved === "compact" || saved === "comfortable") setDensity(saved);
+    } catch {
+      /* localStorage indisponível (modo privado, etc.) — mantém o default */
+    }
+  }, []);
+  const changeDensity = useCallback((next) => {
+    setDensity(next);
+    try {
+      window.localStorage.setItem("alterpop_curadoria_density", next);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Separadores rápidos ("Todos" + filtros guardados) acima da tabela — mesmos
+  // handlers já usados pela sidebar (handleApplySavedFilter/clearAllFilters), só
+  // muda a superfície onde ficam acessíveis.
+  const [activeSegmentId, setActiveSegmentId] = useState("all");
+  // TextField em vez de window.prompt: diálogos nativos do browser (alert/confirm/
+  // prompt) ficam frequentemente bloqueados dentro do iframe embutido do Admin da
+  // Shopify — não é fiável usar aqui.
+  const [savingFilterOpen, setSavingFilterOpen] = useState(false);
+  const [newFilterName, setNewFilterName] = useState("");
   const [products, setProducts] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -498,6 +541,7 @@ export default function CurationDashboard() {
       setCurationStatus(f.curationStatus || "");
       setReasonFilter(f.reason || "");
       setPage(1);
+      setActiveSegmentId(id);
       shopify.toast.show(`Filtro "${found.name}" aplicado`);
     },
     [savedFilters, shopify]
@@ -555,6 +599,14 @@ export default function CurationDashboard() {
       loadSavedFilters,
     ]
   );
+
+  const submitNewFilterName = useCallback(() => {
+    const name = newFilterName.trim();
+    if (!name) return;
+    handleSaveCurrentFilter(name);
+    setNewFilterName("");
+    setSavingFilterOpen(false);
+  }, [newFilterName, handleSaveCurrentFilter]);
 
   const handleDeleteSavedFilter = useCallback(
     async (id) => {
@@ -805,6 +857,7 @@ export default function CurationDashboard() {
     setCurationStatus("");
     setReasonFilter("");
     setPage(1);
+    setActiveSegmentId("all");
   }, []);
 
   const handleApplyCatalogFiltersFromChat = useCallback(
@@ -962,6 +1015,36 @@ export default function CurationDashboard() {
   }, []);
 
   const clearSelection = useCallback(() => setSelectedSkus([]), []);
+
+  // Redesign da Curadoria (2026-08-12) — IndexTable dispara isto em vez do onChange
+  // por checkbox; "single" continua a usar toggleSelectSku, "page"/"all" replicam o
+  // que a Curadoria já suportava (seleção acumulada entre páginas), só que agora dá
+  // para marcar/desmarcar a página inteira de uma vez via o checkbox do cabeçalho.
+  const handleTableSelectionChange = useCallback(
+    (selectionType, isSelected, selection) => {
+      if (selectionType === "single") {
+        toggleSelectSku(selection, isSelected);
+        return;
+      }
+      const pageSkus = products.map((p) => p.sku);
+      setSelectedSkus((prev) => {
+        if (isSelected) return [...new Set([...prev, ...pageSkus])];
+        return prev.filter((s) => !pageSkus.includes(s));
+      });
+    },
+    [toggleSelectSku, products]
+  );
+
+  const handleTableSort = useCallback(
+    (columnIndex, direction) => {
+      const field = SORT_COLUMN_TO_FIELD[columnIndex];
+      if (!field) return;
+      setSortBy(field);
+      setSortDir(direction === "descending" ? "desc" : "asc");
+      setPage(1);
+    },
+    []
+  );
 
   const runBulkStatus = useCallback(
     async (actionName) => {
@@ -1647,6 +1730,109 @@ export default function CurationDashboard() {
             <Card>
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Tabs
+                      tabs={[
+                        { id: "all", content: "Todos" },
+                        ...savedFilters.map((f) => ({ id: f.id, content: f.name })),
+                      ]}
+                      selected={Math.max(
+                        0,
+                        activeSegmentId === "all"
+                          ? 0
+                          : 1 + savedFilters.findIndex((f) => f.id === activeSegmentId)
+                      )}
+                      onSelect={(index) => {
+                        if (index === 0) {
+                          clearAllFilters();
+                        } else {
+                          const target = savedFilters[index - 1];
+                          if (target) handleApplySavedFilter(target.id);
+                        }
+                      }}
+                    />
+                  </div>
+                  <InlineStack gap="200" blockAlign="center">
+                    {savingFilterOpen ? (
+                      <InlineStack gap="100" blockAlign="center">
+                        <div style={{ width: 180 }}>
+                          <TextField
+                            labelHidden
+                            label="Nome do filtro"
+                            autoComplete="off"
+                            placeholder="Nome do filtro atual…"
+                            value={newFilterName}
+                            onChange={setNewFilterName}
+                          />
+                        </div>
+                        <Button size="slim" variant="primary" onClick={submitNewFilterName} disabled={!newFilterName.trim()}>
+                          Guardar
+                        </Button>
+                        <Button
+                          size="slim"
+                          variant="plain"
+                          onClick={() => {
+                            setNewFilterName("");
+                            setSavingFilterOpen(false);
+                          }}
+                        >
+                          Cancelar
+                        </Button>
+                      </InlineStack>
+                    ) : (
+                      <Button size="slim" variant="plain" onClick={() => setSavingFilterOpen(true)}>
+                        + Guardar filtro atual
+                      </Button>
+                    )}
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        background: "var(--p-color-bg-surface-secondary, #f1f2f3)",
+                        borderRadius: 8,
+                        padding: 3,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => changeDensity("compact")}
+                        style={{
+                          border: "none",
+                          borderRadius: 6,
+                          padding: "6px 12px",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          background: density === "compact" ? "var(--p-color-bg-surface, #fff)" : "transparent",
+                          color: density === "compact" ? "#1a1a1a" : "#6d7175",
+                          boxShadow: density === "compact" ? "0 1px 2px rgba(0,0,0,0.15)" : "none",
+                        }}
+                      >
+                        Compacta
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => changeDensity("comfortable")}
+                        style={{
+                          border: "none",
+                          borderRadius: 6,
+                          padding: "6px 12px",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          background: density === "comfortable" ? "var(--p-color-bg-surface, #fff)" : "transparent",
+                          color: density === "comfortable" ? "#1a1a1a" : "#6d7175",
+                          boxShadow: density === "comfortable" ? "0 1px 2px rgba(0,0,0,0.15)" : "none",
+                        }}
+                      >
+                        Confortável
+                      </button>
+                    </div>
+                  </InlineStack>
+                </InlineStack>
+
+                <InlineStack align="space-between" blockAlign="center">
                   <InlineStack gap="300" blockAlign="center">
                     <Text as="h2" variant="headingMd">
                       Resultados
@@ -1770,191 +1956,211 @@ export default function CurationDashboard() {
                       pills={activeFilterPills}
                       onClearAll={clearAllFilters}
                     />
-                    <ResourceList
-                      resourceName={{ singular: "produto", plural: "produtos" }}
-                      items={products}
-                      emptyState={
-                        <EmptyState
-                          heading="Sem produtos para este filtro"
-                          image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-                          action={{ content: "Limpar filtros", onAction: clearAllFilters }}
-                        >
-                          <p>Experimenta remover ou ajustar alguns dos filtros activos.</p>
-                        </EmptyState>
-                      }
-                      renderItem={(item) => {
-                        const {
-                          sku,
-                          title,
-                          imageUrl,
-                          categoryMain,
-                          vendor,
-                          stock,
-                          netPrice,
-                          grossPrice,
-                          targetRetailPrice,
-                          syncError,
-                          salesUnits30d,
-                          barcode,
-                          franchises,
-                          dataConfidence,
-                        } = item;
-                        const status = decisions[sku];
-                        const smartAction = smartFlags[sku];
-                        const categoryLabel = translateCategoryLabel(categoryMain);
-                        const marginPct = grossPrice && netPrice && grossPrice > 0
-                          ? Math.round(((grossPrice - netPrice) / grossPrice) * 100)
-                          : null;
-                        const franchiseList = (() => {
-                          try {
-                            const parsed = typeof franchises === "string" ? JSON.parse(franchises) : franchises;
-                            return Array.isArray(parsed) ? parsed.filter(Boolean).slice(0, 3) : [];
-                          } catch { return []; }
-                        })();
+                    {products.length === 0 ? (
+                      <EmptyState
+                        heading="Sem produtos para este filtro"
+                        image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                        action={{ content: "Limpar filtros", onAction: clearAllFilters }}
+                      >
+                        <p>Experimenta remover ou ajustar alguns dos filtros activos.</p>
+                      </EmptyState>
+                    ) : (
+                      <IndexTable
+                        resourceName={{ singular: "produto", plural: "produtos" }}
+                        itemCount={products.length}
+                        selectedItemsCount={
+                          products.every((p) => selectedSkus.includes(p.sku))
+                            ? "All"
+                            : products.filter((p) => selectedSkus.includes(p.sku)).length
+                        }
+                        onSelectionChange={handleTableSelectionChange}
+                        sortable={[true, false, false, false, true, true, true, false, false]}
+                        sortDirection={sortDir === "asc" ? "ascending" : "descending"}
+                        sortColumnIndex={SORT_FIELD_TO_COLUMN[sortBy]}
+                        onSort={handleTableSort}
+                        promotedBulkActions={[
+                          { content: "Aprovar seleção", onAction: () => runBulkStatus("approve") },
+                          { content: "Rejeitar seleção", destructive: true, onAction: () => runBulkStatus("reject") },
+                        ]}
+                        bulkActions={[{ content: "Cancelar seleção", onAction: clearSelection }]}
+                        headings={[
+                          { title: "Produto" },
+                          { title: "Franquia / Categoria" },
+                          { title: "Custo", alignment: "end" },
+                          { title: "MSRP", alignment: "end" },
+                          { title: "Retail", alignment: "end" },
+                          { title: "Margem", alignment: "end" },
+                          { title: "Stock" },
+                          { title: "Estado" },
+                          { title: "Ações", alignment: "center" },
+                        ]}
+                      >
+                        {products.map((item, index) => {
+                          const {
+                            sku,
+                            title,
+                            imageUrl,
+                            categoryMain,
+                            vendor,
+                            stock,
+                            netPrice,
+                            grossPrice,
+                            targetRetailPrice,
+                            syncError,
+                            salesUnits30d,
+                            barcode,
+                            franchises,
+                            dataConfidence,
+                          } = item;
+                          const status = decisions[sku];
+                          const smartAction = smartFlags[sku];
+                          const reasonCode = reasons[sku];
+                          const categoryLabel = translateCategoryLabel(categoryMain);
+                          const marginPct = grossPrice && netPrice && grossPrice > 0
+                            ? Math.round(((grossPrice - netPrice) / grossPrice) * 100)
+                            : null;
+                          const isLowMargin = marginPct !== null && marginPct < marginWarnThresholdPct;
+                          const franchiseList = (() => {
+                            try {
+                              const parsed = typeof franchises === "string" ? JSON.parse(franchises) : franchises;
+                              return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+                            } catch { return []; }
+                          })();
+                          const primaryFranchise = franchiseList[0] || null;
+                          const photoCount = (imageUrl || "").split(/[,;|\n\r]+/).filter((u) => /^https?:\/\//i.test(u.trim())).length;
+                          const selected = selectedSkus.includes(sku);
 
-                        return (
-                          <ResourceItem
-                            id={sku}
-                            accessibilityLabel={`${title} (${sku})`}
-                            media={
-                              <CatalogProductThumbnail
-                                imageUrl={imageUrl}
-                                title={title}
-                                size={120}
-                              />
-                            }
-                            verticalAlignment="center"
-                          >
-                            <BlockStack gap="200">
-                              <InlineStack align="space-between" blockAlign="start">
-                                <BlockStack gap="100">
-                                  <Text as="h3" variant="bodyMd" fontWeight="semibold">
-                                    {title}
-                                  </Text>
-                                  <Text as="p" tone="subdued">
-                                    {`SKU ${sku} · ${categoryLabel} · ${vendor || "—"}${barcode ? ` · EAN ${barcode}` : ""}`}
-                                  </Text>
-                                  <InlineStack gap="200" blockAlign="center">
-                                    <Text as="span" tone="subdued">
-                                      {`Custo: ${formatEur(netPrice)}`}
+                          let curationLabel = "Pendente";
+                          let curationTone = "warning";
+                          if (smartAction === "AUTO_APPROVE") { curationLabel = "Smart-Approved"; curationTone = "success"; }
+                          else if (smartAction === "AI_APPROVE") { curationLabel = "AI-Approved"; curationTone = "success"; }
+                          else if (smartAction === "AUTO_REJECT") { curationLabel = "Smart-Rejected"; curationTone = "warning"; }
+                          else if (status === "PUBLISHED") { curationLabel = "Publicado Shopify"; curationTone = "success"; }
+                          else if (status === "SYNC_ERROR") { curationLabel = "Erro sync"; curationTone = "critical"; }
+                          else if (status === "APPROVED") { curationLabel = "Aprovado"; curationTone = "success"; }
+                          else if (status === "REJECTED") { curationLabel = "Rejeitado"; curationTone = "critical"; }
+                          const showReason = (status === "REJECTED" || smartAction === "AUTO_REJECT") && reasonCode;
+
+                          let stockLabel, stockTone;
+                          if (stock <= 0) { stockLabel = "Esgotado"; stockTone = "critical"; }
+                          else if (stock < LOW_STOCK_THRESHOLD) { stockLabel = `Stock baixo · ${stock}`; stockTone = "warning"; }
+                          else { stockLabel = `Em stock · ${stock}`; stockTone = "success"; }
+
+                          const thumbSize = density === "compact" ? 32 : 56;
+
+                          return (
+                            <IndexTable.Row id={sku} key={sku} position={index} selected={selected}>
+                              <IndexTable.Cell>
+                                <InlineStack gap="200" blockAlign="center" wrap={false}>
+                                  <CatalogProductThumbnail imageUrl={imageUrl} title={title} size={thumbSize} />
+                                  <BlockStack gap="050">
+                                    <Text as="span" variant={density === "compact" ? "bodySm" : "bodyMd"} fontWeight="semibold">
+                                      {title}
                                     </Text>
-                                    {grossPrice > 0 && (
-                                      <Text as="span" tone="subdued">
-                                        {`MSRP: ${formatEur(grossPrice)}`}
-                                      </Text>
-                                    )}
-                                    <Text as="span" tone="subdued">
-                                      {`Retail: ${formatEur(targetRetailPrice)}`}
+                                    <Text as="span" tone="subdued" variant="bodySm">
+                                      {`SKU ${sku}${barcode ? ` · EAN ${barcode}` : ""}`}
                                     </Text>
-                                    {marginPct !== null && (
-                                      <Badge tone={marginPct >= 50 ? "success" : marginPct >= 30 ? "info" : "warning"}>
-                                        {`Margem ${marginPct}%`}
-                                      </Badge>
-                                    )}
-                                  </InlineStack>
-                                  {franchiseList.length > 0 && (
-                                    <InlineStack gap="100">
-                                      {franchiseList.map((f) => (
-                                        <Badge key={f} tone="info">{f}</Badge>
-                                      ))}
+                                    <InlineStack gap="100" blockAlign="center" wrap>
+                                      {vendor && <Badge>{vendor}</Badge>}
+                                      {syncError && (
+                                        <Tooltip content={`${syncError.label}: ${syncError.message}`}>
+                                          <span
+                                            role="img"
+                                            aria-label="Erro de sincronização"
+                                            style={{ color: "var(--p-color-text-critical)", fontWeight: 700, cursor: "help", fontSize: "1.1rem" }}
+                                          >
+                                            !
+                                          </span>
+                                        </Tooltip>
+                                      )}
+                                      {salesUnits30d != null && salesUnits30d > 0 && (
+                                        <Badge tone="info">{`Vendas: ${salesUnits30d} un.`}</Badge>
+                                      )}
+                                      {photoCount > 1 && <Badge tone="info">{`📷 ${photoCount}`}</Badge>}
+                                      {dataConfidence && (
+                                        <Tooltip
+                                          content={`Título: ${dataConfidence.breakdown.titleSource ? "✓" : "✗"} · Categoria: ${dataConfidence.breakdown.category ? "✓" : "✗"} · Dimensões: ${dataConfidence.breakdown.dimensions ? "✓" : "✗"} · Peso: ${dataConfidence.breakdown.weightKg ? "✓" : "✗"} · Pauta: ${dataConfidence.breakdown.hsCode ? "✓" : "✗"}`}
+                                        >
+                                          <Badge
+                                            tone={
+                                              dataConfidence.level === "high"
+                                                ? "success"
+                                                : dataConfidence.level === "medium"
+                                                  ? "warning"
+                                                  : "critical"
+                                            }
+                                          >
+                                            {`Confiança ${dataConfidence.score}%`}
+                                          </Badge>
+                                        </Tooltip>
+                                      )}
                                     </InlineStack>
+                                  </BlockStack>
+                                </InlineStack>
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
+                                <BlockStack gap="050">
+                                  <Badge tone={primaryFranchise ? "info" : undefined}>{primaryFranchise || "—"}</Badge>
+                                  <Text as="span" tone="subdued" variant="bodySm">{categoryLabel}</Text>
+                                </BlockStack>
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
+                                <Text as="span" alignment="end" tone="subdued">{formatEur(netPrice)}</Text>
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
+                                <Text as="span" alignment="end" tone="subdued">{grossPrice > 0 ? formatEur(grossPrice) : "—"}</Text>
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
+                                <Text as="span" alignment="end" fontWeight="semibold">{formatEur(targetRetailPrice)}</Text>
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
+                                <Text
+                                  as="span"
+                                  alignment="end"
+                                  fontWeight="bold"
+                                  tone={marginPct === null ? "subdued" : isLowMargin ? "critical" : undefined}
+                                >
+                                  {marginPct !== null ? `${marginPct}%` : "—"}
+                                </Text>
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
+                                <Badge tone={stockTone}>{stockLabel}</Badge>
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
+                                <BlockStack gap="050">
+                                  <Badge tone={curationTone}>{curationLabel}</Badge>
+                                  {showReason && (
+                                    <Text as="span" tone="critical" variant="bodySm">
+                                      {reasonLabel(reasonCode)}
+                                    </Text>
                                   )}
                                 </BlockStack>
-                                <InlineStack gap="200" blockAlign="center">
-                                  <Checkbox
-                                    label=""
-                                    checked={selectedSkus.includes(sku)}
-                                    onChange={(checked) => toggleSelectSku(sku, checked)}
-                                  />
-                                  {syncError && (
-                                    <Tooltip content={`${syncError.label}: ${syncError.message}`}>
-                                      <span
-                                        role="img"
-                                        aria-label="Erro de sincronização"
-                                        style={{
-                                          color: "var(--p-color-text-critical)",
-                                          fontWeight: 700,
-                                          cursor: "help",
-                                          fontSize: "1.1rem",
-                                        }}
-                                      >
-                                        !
-                                      </span>
-                                    </Tooltip>
-                                  )}
-                                  {salesUnits30d != null && salesUnits30d > 0 && (
-                                    <Badge tone="info">{`Vendas: ${salesUnits30d} un.`}</Badge>
-                                  )}
-                                  {smartAction === "AUTO_APPROVE" && (
-                                    <Badge tone="success">Smart-Approved</Badge>
-                                  )}
-                                  {smartAction === "AI_APPROVE" && (
-                                    <Badge tone="success">AI-Approved</Badge>
-                                  )}
-                                  {smartAction === "AUTO_REJECT" && (
-                                    <Badge tone="warning">Smart-Rejected</Badge>
-                                  )}
-                                  {status === "APPROVED" && !smartAction && (
-                                    <Badge tone="success">Aprovado</Badge>
-                                  )}
-                                  {status === "PUBLISHED" && (
-                                    <Badge tone="success">Publicado Shopify</Badge>
-                                  )}
-                                  {status === "SYNC_ERROR" && (
-                                    <Badge tone="critical">Erro sync</Badge>
-                                  )}
-                                  {status === "REJECTED" && !smartAction && (
-                                    <Badge tone="critical">Rejeitado</Badge>
-                                  )}
-                                  {(() => {
-                                     const count = (imageUrl || "").split(/[,;|\n\r]+/).filter((u) => /^https?:\/\//i.test(u.trim())).length;
-                                     return count > 1 ? (
-                                       <Badge tone="info">{`📷 ${count} Fotos`}</Badge>
-                                     ) : null;
-                                   })()}
-                                  <Badge tone={stock > 0 ? "success" : undefined}>
-                                    {stock > 0 ? `Stock ${stock}` : "Sem stock"}
-                                  </Badge>
-                                  {dataConfidence && (
-                                    <Tooltip
-                                      content={`Título: ${dataConfidence.breakdown.titleSource ? "✓" : "✗"} · Categoria: ${dataConfidence.breakdown.category ? "✓" : "✗"} · Dimensões: ${dataConfidence.breakdown.dimensions ? "✓" : "✗"} · Peso: ${dataConfidence.breakdown.weightKg ? "✓" : "✗"} · Pauta: ${dataConfidence.breakdown.hsCode ? "✓" : "✗"}`}
-                                    >
-                                      <Badge
-                                        tone={
-                                          dataConfidence.level === "high"
-                                            ? "success"
-                                            : dataConfidence.level === "medium"
-                                              ? "warning"
-                                              : "critical"
-                                        }
-                                      >
-                                        {`Confiança ${dataConfidence.score}%`}
-                                      </Badge>
-                                    </Tooltip>
-                                  )}
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
+                                <InlineStack gap="100" align="center" blockAlign="center">
+                                  <Button
+                                    size="slim"
+                                    variant="primary"
+                                    accessibilityLabel="Aprovar"
+                                    onClick={() => postCuration(sku, "approve")}
+                                  >
+                                    ✓
+                                  </Button>
+                                  <Button
+                                    size="slim"
+                                    tone="critical"
+                                    accessibilityLabel="Rejeitar"
+                                    onClick={() => postCuration(sku, "reject")}
+                                  >
+                                    ✕
+                                  </Button>
                                 </InlineStack>
-                              </InlineStack>
-                              <InlineStack gap="200">
-                                <Button
-                                  size="slim"
-                                  variant="primary"
-                                  onClick={() => postCuration(sku, "approve")}
-                                >
-                                  Aprovar
-                                </Button>
-                                <Button
-                                  size="slim"
-                                  tone="critical"
-                                  onClick={() => postCuration(sku, "reject")}
-                                >
-                                  Rejeitar
-                                </Button>
-                              </InlineStack>
-                            </BlockStack>
-                          </ResourceItem>
-                        );
-                      }}
-                    />
+                              </IndexTable.Cell>
+                            </IndexTable.Row>
+                          );
+                        })}
+                      </IndexTable>
+                    )}
 
                     {totalCount > PAGE_SIZE && (
                       <Pagination

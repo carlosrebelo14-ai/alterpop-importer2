@@ -2,31 +2,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { Card, TextField } from "@shopify/polaris";
 import "../styles/faceted-search.css";
-
-/**
- * Motivos reais gerados por evaluateCurationRules() (lib/importer/curation/
- * visibilityGatekeeper.js) — o gate que corre em cada produto indexado; ordem e
- * volumes confirmados contra a fila de curadoria em produção (2026-08-12,
- * 29.601 itens): brand_not_allowed 16.651, approved 9.097, elite_brand_not_premium
- * 2.100, blocked_category 1.224, priority_franchise_exception 433. Os "structured_*"
- * vêm de evaluateStructuredCatalogFilter() (caminho legado/paralelo, muito menos
- * usado hoje — ~100 itens no total) mas mantidos porque ainda aparecem. A
- * comparação ignora o sufixo ":valor" dos motivos parametrizados.
- */
-const REASON_OPTIONS = [
-  { value: "", label: "Todos" },
-  { value: "brand_not_allowed", label: "Marca não permitida" },
-  { value: "approved", label: "Aprovado automaticamente (gate)" },
-  { value: "elite_brand_not_premium", label: "Marca elite, mas não premium" },
-  { value: "blocked_category", label: "Categoria bloqueada" },
-  { value: "priority_franchise_exception", label: "Exceção por franquia prioritária" },
-  { value: "pending_review", label: "Pendente de revisão" },
-  { value: "manual_dashboard", label: "Decisão manual" },
-  { value: "manual_dashboard_bulk", label: "Decisão manual em massa" },
-  { value: "structured_no_brand_no_stock", label: "(legado) Sem marca e sem stock" },
-  { value: "structured_min_price", label: "(legado) Abaixo do preço mínimo" },
-  { value: "structured_junk_category", label: "(legado) Categoria excluída" },
-];
+import { REASON_OPTIONS } from "../utils/curationReasonLabels.js";
 
 /**
  * @param {{
