@@ -39,8 +39,7 @@ import { loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { countSmartRuleDecisions } from "../../lib/importer/curation/smartRules.server.js";
 import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
 import { translateCategoryLabel } from "../../lib/importer/catalog/categoryLabel.js";
-import { FacetedSearchSidebar } from "../components/FacetedSearchSidebar.jsx";
-import { ActiveFilterPills } from "../components/ActiveFilterPills.jsx";
+import { CurationFiltersBar } from "../components/CurationFiltersBar.jsx";
 import { SyncStagingModal } from "../components/SyncStagingModal.jsx";
 import { ShopifyPublishModal } from "../components/ShopifyPublishModal.jsx";
 import { CuratorChatWidget } from "../components/CuratorChatWidget.jsx";
@@ -52,6 +51,8 @@ import { useImportJobPolling } from "../hooks/useImportJobPolling.js";
 const PAGE_SIZE = 50;
 /** Redesign da Curadoria (2026-08-12) — limiar do badge "Stock baixo" na tabela. */
 const LOW_STOCK_THRESHOLD = 10;
+/** Redesign da Curadoria — margem abaixo disto é sempre crítica, independente do limiar configurável. */
+const MARGIN_CRITICAL_THRESHOLD = 15;
 /** IndexTable: índice de coluna sortável → mesmo campo já usado pelo <select> de ordenação. */
 const SORT_COLUMN_TO_FIELD = { 0: "title", 4: "netPrice", 5: "margin", 6: "stock" };
 const SORT_FIELD_TO_COLUMN = { title: 0, netPrice: 4, margin: 5, stock: 6 };
@@ -1685,46 +1686,6 @@ export default function CurationDashboard() {
         )}
 
         <Layout>
-          <Layout.Section variant="oneThird">
-            {metaLoading ? (
-              <Card>
-                <BlockStack gap="200">
-                  <SkeletonDisplayText size="small" />
-                  <SkeletonBodyText lines={6} />
-                </BlockStack>
-              </Card>
-            ) : (
-              <FacetedSearchSidebar
-                licences={facetLicences}
-                brands={facetBrands}
-                productTypes={facetProductTypes}
-                selectedLicenceIds={selectedLicenceIds}
-                onLicenceIdsChange={handleLicenceIdsChange}
-                selectedProductTypeIds={selectedProductTypeIds}
-                onProductTypeIdsChange={handleProductTypeIdsChange}
-                selectedBrand={selectedBrand}
-                onBrandChange={handleBrandChange}
-                minPrice={minPrice}
-                maxPrice={maxPrice}
-                onMinPriceChange={handleMinPriceChange}
-                onMaxPriceChange={handleMaxPriceChange}
-                inStockOnly={inStockOnly}
-                onInStockOnlyChange={handleInStockOnlyChange}
-                searchQuery={searchQuery}
-                onSearchChange={handleSearchChange}
-                searchScope={searchScope}
-                onSearchScopeChange={handleSearchScopeChange}
-                curationStatus={curationStatus}
-                onCurationStatusChange={(v) => { setCurationStatus(v); setPage(1); }}
-                reasonFilter={reasonFilter}
-                onReasonFilterChange={handleReasonFilterChange}
-                savedFilters={savedFilters}
-                onApplySavedFilter={handleApplySavedFilter}
-                onDeleteSavedFilter={handleDeleteSavedFilter}
-                onSaveCurrentFilter={handleSaveCurrentFilter}
-              />
-            )}
-          </Layout.Section>
 
           <Layout.Section>
             <Card>
@@ -1753,6 +1714,20 @@ export default function CurationDashboard() {
                     />
                   </div>
                   <InlineStack gap="200" blockAlign="center">
+                    {activeSegmentId !== "all" && (
+                      <Button
+                        size="slim"
+                        variant="plain"
+                        tone="critical"
+                        onClick={() => {
+                          const target = savedFilters.find((f) => f.id === activeSegmentId);
+                          if (target) handleDeleteSavedFilter(target.id);
+                          setActiveSegmentId("all");
+                        }}
+                      >
+                        Apagar filtro
+                      </Button>
+                    )}
                     {savingFilterOpen ? (
                       <InlineStack gap="100" blockAlign="center">
                         <div style={{ width: 180 }}>
@@ -1831,6 +1806,37 @@ export default function CurationDashboard() {
                     </div>
                   </InlineStack>
                 </InlineStack>
+
+                {metaLoading ? (
+                  <SkeletonBodyText lines={2} />
+                ) : (
+                  <CurationFiltersBar
+                    licences={facetLicences}
+                    brands={facetBrands}
+                    productTypes={facetProductTypes}
+                    selectedLicenceIds={selectedLicenceIds}
+                    onLicenceIdsChange={handleLicenceIdsChange}
+                    selectedProductTypeIds={selectedProductTypeIds}
+                    onProductTypeIdsChange={handleProductTypeIdsChange}
+                    selectedBrand={selectedBrand}
+                    onBrandChange={handleBrandChange}
+                    minPrice={minPrice}
+                    maxPrice={maxPrice}
+                    onMinPriceChange={handleMinPriceChange}
+                    onMaxPriceChange={handleMaxPriceChange}
+                    inStockOnly={inStockOnly}
+                    onInStockOnlyChange={handleInStockOnlyChange}
+                    searchQuery={searchQuery}
+                    onSearchChange={handleSearchChange}
+                    searchScope={searchScope}
+                    onSearchScopeChange={handleSearchScopeChange}
+                    curationStatus={curationStatus}
+                    onCurationStatusChange={(v) => { setCurationStatus(v); setPage(1); }}
+                    reasonFilter={reasonFilter}
+                    onReasonFilterChange={handleReasonFilterChange}
+                    onClearAll={clearAllFilters}
+                  />
+                )}
 
                 <InlineStack align="space-between" blockAlign="center">
                   <InlineStack gap="300" blockAlign="center">
@@ -1952,10 +1958,6 @@ export default function CurationDashboard() {
                   </BlockStack>
                 ) : (
                   <>
-                    <ActiveFilterPills
-                      pills={activeFilterPills}
-                      onClearAll={clearAllFilters}
-                    />
                     {products.length === 0 ? (
                       <EmptyState
                         heading="Sem produtos para este filtro"
@@ -2019,7 +2021,14 @@ export default function CurationDashboard() {
                           const marginPct = grossPrice && netPrice && grossPrice > 0
                             ? Math.round(((grossPrice - netPrice) / grossPrice) * 100)
                             : null;
-                          const isLowMargin = marginPct !== null && marginPct < marginWarnThresholdPct;
+                          const marginTone =
+                            marginPct === null
+                              ? "subdued"
+                              : marginPct < MARGIN_CRITICAL_THRESHOLD
+                                ? "critical"
+                                : marginPct < marginWarnThresholdPct
+                                  ? "caution"
+                                  : "success";
                           const franchiseList = (() => {
                             try {
                               const parsed = typeof franchises === "string" ? JSON.parse(franchises) : franchises;
@@ -2118,7 +2127,7 @@ export default function CurationDashboard() {
                                   as="span"
                                   alignment="end"
                                   fontWeight="bold"
-                                  tone={marginPct === null ? "subdued" : isLowMargin ? "critical" : undefined}
+                                  tone={marginTone}
                                 >
                                   {marginPct !== null ? `${marginPct}%` : "—"}
                                 </Text>
