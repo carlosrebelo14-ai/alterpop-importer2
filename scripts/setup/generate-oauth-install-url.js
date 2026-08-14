@@ -14,7 +14,8 @@ function main() {
   getRequiredEnv("SHOPIFY_API_SECRET");
 
   const scopes = (
-    process.env.SCOPES || "write_products,read_products,write_inventory,read_inventory"
+    process.env.SCOPES ||
+      "read_products,write_products,read_inventory,write_inventory,read_locations,read_orders,read_publications,write_publications"
   )
     .split(",")
     .map((scope) => scope.trim())

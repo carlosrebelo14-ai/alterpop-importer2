@@ -64,9 +64,39 @@ export function useImportJobPolling({
       onTerminal?.(data);
     };
 
+    const notifySessionExpired = () => {
+      const key = `${jobId}:session_expired`;
+      if (notifiedKeyRef.current === key) return;
+      notifiedKeyRef.current = key;
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "visible" &&
+        mountedRef.current
+      ) {
+        shopify.toast.show(
+          "A sessão expirou — a importação continua a correr no servidor, mas esta página parou de a acompanhar. Atualiza a página para veres o progresso atual.",
+          { isError: true }
+        );
+      }
+    };
+
+    let timer;
+
     const poll = async () => {
       try {
         const res = await fetch(`/api/import/status/${encodeURIComponent(jobId)}`);
+
+        // 401/403 = sessão embutida expirou. O import corre no servidor independente
+        // desta aba — isto só significa que a UI parou de o conseguir consultar.
+        // Sem isto, o fetch falhava a ler JSON, caía no catch e ficava a repetir a
+        // tentativa para sempre, em silêncio (parecia que a importação "morreu").
+        // Pára de sondar — insistir contra uma sessão morta não a vai reviver.
+        if (res.status === 401 || res.status === 403) {
+          if (!cancelled && mountedRef.current) notifySessionExpired();
+          clearInterval(timer);
+          return;
+        }
+
         const data = await res.json();
         if (cancelled || !mountedRef.current || !data?.ok) return;
 
@@ -76,12 +106,12 @@ export function useImportJobPolling({
           notifyTerminal(data);
         }
       } catch {
-        /* retry */
+        /* rede momentaneamente em baixo — tenta de novo no próximo intervalo */
       }
     };
 
     poll();
-    const timer = setInterval(poll, pollMs);
+    timer = setInterval(poll, pollMs);
     return () => {
       cancelled = true;
       clearInterval(timer);

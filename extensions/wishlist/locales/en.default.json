@@ -1,0 +1,10 @@
+{
+  "pageHeading": "Wishlist",
+  "savedHeading": "Saved items",
+  "suggestionsHeading": "You might like",
+  "loading": "Loading…",
+  "loadError": "We couldn't load your wishlist. Please try again later.",
+  "empty": "You haven't saved anything yet — add items from the suggestions below.",
+  "add": "Add to wishlist",
+  "remove": "Remove"
+}

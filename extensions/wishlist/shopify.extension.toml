@@ -1,0 +1,31 @@
+# Learn more about configuring your Customer account UI extension:
+# https://shopify.dev/api/customer-account-ui-extensions/unstable/configuration
+
+# The version of APIs your extension will receive. Learn more:
+# https://shopify.dev/docs/api/usage/versioning
+api_version = "2026-07"
+
+[[extensions]]
+name = "wishlist"
+handle = "wishlist"
+type = "ui_extension"
+uid = "234feb9f-8893-736d-284b-526fbb593a51121496b2"
+
+# Controls where in Shopify your extension will be injected,
+# and the file that contains your extension’s source code. Learn more:
+# https://shopify.dev/docs/api/customer-account-ui-extensions/unstable/extension-targets-overview
+
+[[extensions.targeting]]
+module = "./src/WishlistPage.jsx"
+target = "customer-account.page.render"
+
+[extensions.capabilities]
+# Usa a Storefront API (via shopify.query) para mostrar produtos que o cliente pode
+# adicionar à wishlist.
+# https://shopify.dev/docs/api/customer-account-ui-extensions/unstable/configuration#api-access
+api_access = true
+
+# Chama o backend da app (alterpop-importer-app.fly.dev) para ler/gravar o metafield
+# custom.wishlist do cliente.
+# https://shopify.dev/docs/api/customer-account-ui-extensions/unstable/configuration#network-access
+network_access = true

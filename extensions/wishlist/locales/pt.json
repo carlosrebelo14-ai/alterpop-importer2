@@ -1,0 +1,10 @@
+{
+  "pageHeading": "Wishlist",
+  "savedHeading": "Itens guardados",
+  "suggestionsHeading": "Talvez gostes",
+  "loading": "A carregar…",
+  "loadError": "Não foi possível carregar a tua wishlist. Tenta novamente mais tarde.",
+  "empty": "Ainda não guardaste nada — adiciona itens das sugestões abaixo.",
+  "add": "Adicionar à wishlist",
+  "remove": "Remover"
+}

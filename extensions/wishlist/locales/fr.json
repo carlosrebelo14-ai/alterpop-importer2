@@ -1,0 +1,10 @@
+{
+  "pageHeading": "Liste de souhaits",
+  "savedHeading": "Articles enregistrés",
+  "suggestionsHeading": "Vous pourriez aimer",
+  "loading": "Chargement…",
+  "loadError": "Impossible de charger votre liste de souhaits. Veuillez réessayer plus tard.",
+  "empty": "Vous n'avez encore rien enregistré — ajoutez des articles ci-dessous.",
+  "add": "Ajouter à la liste de souhaits",
+  "remove": "Retirer"
+}

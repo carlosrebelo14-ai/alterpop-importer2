@@ -230,6 +230,24 @@ model AutoCollectionLicence {
   @@id([shop, licenceKey])
 }
 
+/// Token de download único para a fatura de uma encomenda, emitido depois de validar
+/// (via session token do Customer Account UI Extension) que o cliente autenticado é o
+/// dono da encomenda. O snapshot da encomenda (JSON) é buscado UMA vez, no momento do
+/// pedido, e guardado aqui — o resgate do token (rota pública) nunca volta a chamar a
+/// Admin API, por isso nunca pode falhar a meio depois de o token já ter sido gasto.
+model InvoiceDownloadToken {
+  token             String    @id @default(cuid())
+  shop              String
+  orderId           String
+  customerId        String
+  orderSnapshotJson String
+  expiresAt         DateTime
+  usedAt            DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([shop, orderId])
+}
+
 /// Um registo por ciclo completo de indexação (não resumido) — alimenta o banner de
 /// novidades na Curadoria e a secção de descontinuados em Relatórios. Histórico mantido
 /// para tendência; a UI normalmente só lê o mais recente por shop.
