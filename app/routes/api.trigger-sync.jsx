@@ -12,6 +12,7 @@ import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionF
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { ensureOciostockMetafieldDefinitions } from "../../lib/importer/shopify/metafieldSetup.js";
+import { syncFranchiseCatalog } from "../../lib/importer/shopify/franchiseCatalogSync.server.js";
 
 /**
  * POST /api/trigger-sync — dispara indexação + publicação sem sessão OAuth.
@@ -202,6 +203,23 @@ export const action = async ({ request }) => {
         );
       } catch (err) {
         console.error("[trigger-sync] sync de stock de publicados falhou:", err?.message || err);
+      }
+
+      // Catálogo de franquias com stock, para a grelha de /pages/franquias no tema.
+      // Corre depois do sync de stock de publicados (item 18b), para refletir o
+      // stock mais recente. Nunca bloqueia nem falha o ciclo.
+      try {
+        const franchiseClient = createShopifyClientFromSession(session);
+        const franchiseResult = await syncFranchiseCatalog(franchiseClient, shop);
+        if (franchiseResult.ok) {
+          console.log(
+            `[trigger-sync] catálogo de franquias: ${franchiseResult.franchiseCount} franquias, ${franchiseResult.inStockCount} com stock.`
+          );
+        } else {
+          console.error("[trigger-sync] catálogo de franquias falhou:", franchiseResult.error);
+        }
+      } catch (err) {
+        console.error("[trigger-sync] catálogo de franquias falhou:", err?.message || err);
       }
     } catch (err) {
       console.error("[trigger-sync] ciclo falhou:", err?.message || err);
