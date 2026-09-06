@@ -27,10 +27,16 @@ function check(name, fn) {
 const r = (product) => resolveFranchise(product);
 
 // ── config da tabela ────────────────────────────────────────────────────────────
-check("tabela tem 40 universos, 30 ativos / 10 dormentes", () => {
-  assert.equal(FRANCHISE_UNIVERSES.length, 40);
-  assert.equal(FRANCHISE_UNIVERSES.filter((u) => u.active).length, 30);
+check("tabela tem 41 universos (40 + Lord of the Rings), 31 ativos / 10 dormentes", () => {
+  assert.equal(FRANCHISE_UNIVERSES.length, 41);
+  assert.equal(FRANCHISE_UNIVERSES.filter((u) => u.active).length, 31);
   assert.equal(FRANCHISE_UNIVERSES.filter((u) => !u.active).length, 10);
+});
+
+check("Lord of the Rings: ref e títulos (incl. produtos 'Hobbit … El Señor de los Anillos')", () => {
+  assert.equal(r({ franchiseRefs: ["EL SEÑOR DE LOS ANILLOS"], title: "x" }).handle, "lord-of-the-rings");
+  assert.equal(r({ franchiseRefs: [], title: "POP figure Lord of the Rings Pippin Took" }).handle, "lord-of-the-rings");
+  assert.equal(r({ franchiseRefs: [], title: "Set regalo cartera Hobbit El Señor de los Anillos" }).handle, "lord-of-the-rings");
 });
 
 check("handles únicos", () => {
