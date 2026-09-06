@@ -132,15 +132,27 @@ async function loadFromCsv(t) {
     "../../lib/importer/connectors/ociostock/index.js"
   );
   let stop = false;
+  let rawRows = 0;
+  let mapped = 0;
   await streamOcioStockRows({
     shouldStop: () => stop,
     onRow: (row) => {
+      rawRows += 1;
       const rec = mapOcioStockRow(row);
       if (!rec) return;
+      mapped += 1;
       record(t, rec);
       if (LIMIT && t.total >= LIMIT) stop = true;
     },
   });
+  if (mapped === 0) {
+    throw new Error(
+      `stream do CSV devolveu 0 produtos utilizáveis (${rawRows} linhas lidas). ` +
+      `Provável: o endpoint OcioStock devolveu HTML em vez de CSV (página "GESIO muy cansado" / ` +
+      `manutenção / throttle), ou o URL/token expirou. Confirma o URL num browser e tenta mais tarde. ` +
+      `Alternativa: descarrega o CSV e corre com OCIOSTOCK_CSV_PATH=/caminho/para.csv`
+    );
+  }
 }
 
 async function loadFromDb(t) {
