@@ -14,9 +14,10 @@
 - [x] **Fase 3** — `lib/importer/catalog/franchiseResolver.server.js` (3 camadas, puro) +
       `scripts/catalog/franchise-resolve-report.js` (REPORT MODE, zero escrita) +
       `scripts/tests/franchise-resolver.test.js`. `npm run franchise:report`.
-- [x] **PORTÃO A** — passagem real `--from-csv` a 2026-09-06 (feed de pé, 29 430 produtos).
-      Ver **§A**. Resultado: tabela dos 40 está boa; 3 ajustes menores; falta re-baselinar
-      `estRange` e decidir sobre alguns universos candidatos. Nada bloqueia as Fases 4–6.
+- [x] **PORTÃO A** — passagem real `--from-csv` a 2026-09-06 (feed de pé, 29 430 produtos)
+      + revisão do Carlos (6 passos). Ver **§A**. Resultado: tabela boa; ajustes feitos
+      (Ghibli, refs mortas, +#41 Lord of the Rings). Falta re-baselinar `estRange` (1º
+      passo da Fase 4) e o Carlos confirmar o handle da LOTR. Nada bloqueia as Fases 4–6.
 - [ ] Fases 4–8.
 
 ---
@@ -35,7 +36,9 @@ vazio: 15 576 (52,9 %).
    feed são códigos tipo `POKEMON`, `HELLOKITTY`, `DRAGON BALL`, `KimetsunoYaiba`,
    `MastersoftheUniverse`. A tabela tem `Pokemon`, `Hello Kitty`, `Dragon Ball`,
    `Kimetsuno Yaiba`, `Mastersofthe Universe`. O `normRef` (lowercase + tira pontuação/
-   espaços) faz os dois bater. **37 dos 40 universos** casam com ≥ 1 ref do feed.
+   espaços) faz os dois bater. **37 dos 40 universos originais** casam com ≥ 1 ref do feed
+   (os 3 sem ref — Ghibli, Final Fantasy, Resident Evil — dependem da camada 2). Com a
+   entrada #41 (Lord of the Rings, ref `EL SEÑOR DE LOS ANILLOS`) são 38/41.
 2. **`xml_info_familias` é `<categories><category gesioid=".." ref="CÓDIGO">CDATA</category>`.**
    O `ref` é o código do nó de categoria do fornecedor (492 distintos), não um vocabulário
    de franquia à parte — inclui franquias (`MICKEY`, `STITCH`, `ONEPIECE`) e ruído
@@ -47,34 +50,48 @@ vazio: 15 576 (52,9 %).
    mais limpa mas não muda a atribuição — os identificadores de franquia estão tanto nos
    `ref=` como no CDATA. O valor da Fase 1 é não gravar `MANGA`/`FUNKO` como franquia.
 
-### 3 ajustes à tabela (menores, não bloqueiam)
+### Ajustes à tabela — feitos (commits `1eb5aed`, `4dec5dd`)
 
-- **Entradas de ref mortas** (o universo casa na mesma pela outra ref — cosmético):
-  `Demon Slayer` → `"Demon Slayer"` não existe no feed (só `KimetsunoYaiba`);
-  `Mickey & Friends` → `"Pato Donald"` não existe (só `Donald`).
-- **Re-baselinar `estRange`** — medido em 5575 publicados; catálogo real 29 430. Todos
-  os ativos resolvem 3–15× acima da banda. Ex.: One Piece 379→**935**, Stitch 105→**1721**,
-  Hello Kitty 72→**1329**, Harry Potter 144→**1221**. Substituir a coluna pelos números
-  reais deste run e trocar os avisos "fora de banda" por um desvio relativo.
-- **Studio Ghibli sub-resolvido** (12) — os filmes vêm com `ref="MANGA"` e títulos
-  "Porco Rosso", "Castle in the Sky", "The Wind Rises", "Princess Mononoke",
-  "Kiki's Delivery Service". Os `titlePatterns` só têm `Ghibli/Totoro/Spirited Away/Howl`.
-  Se Ghibli interessa, alargar os padrões. É a única lacuna real da camada 2.
+- [x] **Entradas de ref mortas removidas**: `Demon Slayer` → só `KimetsunoYaiba`;
+      `Mickey & Friends` → sem `Pato Donald`. Cosmético, sem regressão (1154 / 209).
+- [x] **Studio Ghibli** — padrões alargados aos títulos dos filmes (Porco Rosso, Castle
+      in the Sky, Princess Mononoke, Kikis Delivery Service, Ponyo, Nausicaa, Arrietty,
+      The Wind Rises, Grave of the Fireflies, My Neighbor Totoro). Guardas: `Mononoke`
+      só "Princess Mononoke"; `Howl` só "Howls Moving Castle". **12 → 28**, passa a ativo.
+- [x] **#41 The Lord of the Rings** (Carlos) — ref `EL SEÑOR DE LOS ANILLOS` (157) estava
+      a resolver p/ vazio; era o exemplo original do briefing. O feed não separa O Hobbit
+      (mesmo ref). Resolve **162** (157 L1 + 5 L2). Tabela: 41 universos, 31 ativos.
+      ⚠️ handle `lord-of-the-rings` **a confirmar pelo Carlos** antes de publicar (SEO).
+- [ ] **Re-baselinar `estRange`** — dentro da Fase 4 (ver §6 abaixo). Medido em 5575
+      publicados; catálogo real 29 430; ativos resolvem 3–15× acima da banda. Ao
+      re-baselinar, a semântica da coluna muda: *"estimativa por título / 5575 publicados"*
+      → *"resolvidos na última passagem completa / 29 430"* (comentário do campo a dizê-lo).
 
-### Decisões de negócio que o run levanta (não são bugs da tabela)
+### Amostra do vazio (200 títulos) — vazio validado como correto
 
-Refs do feed fora dos 40, por contagem — candidatos ou confirmação de exclusão:
-`MARVEL` (1786), `DC COMICS` (411) → órfãos Marvel/DC, **adiados** (§B).
-`REALMADRID` (541), `FCBARCELONA` (397) → futebol, **fora** (§B).
-`KPopDemonHunters` (646), `PAWPATROL` (330), `blueyfriends` (336), `MINECRAFT` (307),
-`PRINCESAS` (300) → **não estão nos 40**; decisão do Carlos se entram.
-`ichibansho` (385), `BittyPop` (322), `LOUNGEFLY` (611) → são **Lines**, corretamente fora.
+Nenhuma das 41 é perdida por padrão fraco. O ~53 % vazio é: Disney sub-marcas não
+promovidas (Winnie 161, NBX 251, Princesas 283, Moana, Bela e o Monstro…), futebol,
+Marvel/DC órfãos, dezenas de franquias reais fora da lista (Snoopy 209, Minions,
+Jurassic 160, FNAF, GoT/HotD, Godzilla, Gremlins, Saint Seiya, Haikyu, JoJo, Hunter×Hunter…)
+e a ala de brinquedos/papelaria (Clementoni 722, Erik 534, safta 632, Hot Wheels, Barbie 244).
+
+### Decisões de negócio (fechadas pelo Carlos, 2026-09-06)
+
+- **Nenhum entra**: `KPopDemonHunters` (646), `blueyfriends` (336), `PAWPATROL` (330),
+  `PRINCESAS` (300). ~1600 produtos resolvem p/ vazio e nunca entram na lista de
+  candidatos (Fase 9) — **consequência aceite, não é problema a corrigir**.
+- **`MINECRAFT` (307) NÃO está nos 41** (#17 = Wonder Woman; Minecraft só na lista antiga
+  de 96). Não é bug — a ref não mapeada é comportamento correto.
+- **Lista fechada nas 41.** `MARVEL`/`DC`/futebol → vazio por design.
+- Pendente (não bloqueia): Gudetama/Sumikko Gurashi vêm com `ref="MANGA"` e são
+  tecnicamente Sanrio — os padrões de Hello Kitty/Sanrio não os apanham. Alargar? (Carlos)
+- `ichibansho` (385), `BittyPop` (322), `LOUNGEFLY` (611) → são **Lines**, corretamente fora.
 
 ### Fecho do Portão A
-- [ ] Re-baselinar `estRange` em `franchiseUniverses.js` (faço no arranque da Fase 4).
-- [ ] Limpar as 2 entradas de ref mortas.
-- [ ] Carlos: alargar padrões Ghibli? entram Paw Patrol / Bluey / Minecraft / Princesas / KPop Demon Hunters?
-- [x] Tudo o resto validado — **Fases 4–6 podem arrancar.**
+- [x] Passos 1–5 da revisão do Carlos concluídos. Report v3 (`--from-csv`) validado.
+- [ ] Carlos: confirmar handle `lord-of-the-rings`. Alargar Sanrio (Gudetama/Sumikko)?
+- [ ] Re-baselinar `estRange` — **primeiro passo da Fase 4**.
+- [x] **Fases 4–6 podem arrancar.**
 
 ---
 
