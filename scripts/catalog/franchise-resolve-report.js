@@ -25,6 +25,7 @@ import {
 } from "../../lib/importer/catalog/franchiseUniverses.js";
 import {
   resolveFranchise,
+  lookupRef,
   checkPrecedenceInvariants,
   checkRefIndexCollisions,
 } from "../../lib/importer/catalog/franchiseResolver.server.js";
@@ -56,6 +57,11 @@ function newTally() {
     forbidden: [],         // { sku, title, franchise }
     mandalorianInStarWars: [], // sanity: precedência
     emptySamples: [],
+    // sanity: produto com refs mas NÃO resolvido pela camada 1
+    layer2WithRefs: 0,     // resolveu por título apesar de ter refs
+    emptyWithRefs: 0,      // não resolveu de todo apesar de ter refs
+    refShouldHaveMatched: [], // { sku, title, ref, universe } — CONTRADIÇÃO: ref na tabela mas foi p/ camada 2/3
+    unmappedRefsOnMiss: new Map(), // ref cru -> count, em produtos não resolvidos pela camada 1
   };
   for (const u of FRANCHISE_UNIVERSES) {
     t.byUniverse.set(u.handle, { name: u.name, handle: u.handle, active: u.active, estRange: u.estRange, total: 0, layer1: 0, layer2: 0, samples: [] });
@@ -70,13 +76,33 @@ function record(t, product) {
     titleSource: product.titleSource,
   });
 
+  const refs = Array.isArray(product.franchiseRefs) ? product.franchiseRefs : [];
+
+  // Sanity: refs presentes mas a camada 1 não resolveu. Se um desses refs ESTÁ na
+  // tabela, é contradição (bug do resolver). Se não está, é candidato a entrada nova.
+  if (refs.length && res.layer !== 1) {
+    for (const ref of refs) {
+      const u = lookupRef(ref);
+      if (u) {
+        if (t.refShouldHaveMatched.length < 40) {
+          t.refShouldHaveMatched.push({ sku: product.sku, title: product.title, ref, universe: u.name, gotLayer: res.layer });
+        }
+      } else {
+        t.unmappedRefsOnMiss.set(ref, (t.unmappedRefsOnMiss.get(ref) || 0) + 1);
+      }
+    }
+  }
+
   if (res.layer === 3 || !res.handle) {
     t.empty += 1;
+    if (refs.length) t.emptyWithRefs += 1;
     if (t.emptySamples.length < 40) {
-      t.emptySamples.push({ sku: product.sku, title: product.title, refs: product.franchiseRefs || [] });
+      t.emptySamples.push({ sku: product.sku, title: product.title, refs });
     }
     return;
   }
+
+  if (res.layer === 2 && refs.length) t.layer2WithRefs += 1;
 
   if (res.layer === 1) t.layer1 += 1;
   else t.layer2 += 1;
@@ -151,7 +177,13 @@ function printReport(t) {
   console.log("\n=== Franchise resolve report ===");
   console.log(`fonte: ${FROM_DB ? `BD (${SHOP})` : "CSV stream"}${LIMIT ? ` · limit ${LIMIT}` : ""}${SUPPLIER_ONLY ? " · camada 2 só p/ titleSource=supplier" : ""}`);
   console.log(`produtos analisados: ${t.total}`);
-  console.log(`resolvidos: ${t.total - t.empty} (${pct(t.total - t.empty, t.total)})  ·  camada 1: ${t.layer1}  ·  camada 2: ${t.layer2}  ·  vazio: ${t.empty} (${pct(t.empty, t.total)})`);
+  const resolved = t.total - t.empty;
+  console.log(`resolvidos: ${resolved} (${pct(resolved, t.total)})  ·  camada 1: ${t.layer1} (${pct(t.layer1, resolved)})  ·  camada 2: ${t.layer2} (${pct(t.layer2, resolved)})  ·  vazio: ${t.empty} (${pct(t.empty, t.total)})`);
+  console.log(
+    "  leitura: L1 muito > L2 é o esperado. L2 quase nulo ⇒ padrões de título fracos, franquias\n" +
+    "  escondidas por apanhar (o caso LOTR). L2 alto ⇒ a separação de refs da Fase 1 não está a\n" +
+    "  funcionar e a camada 1 está a perder matches que devia fazer."
+  );
 
   console.log("\n-- por universo (ordenado por nº resolvido) --");
   const pad = (s, n) => String(s).padEnd(n);
@@ -193,6 +225,36 @@ function printReport(t) {
   const zeros = rows.filter((r) => r.active && r.total === 0);
   if (zeros.length) console.log(`  ⚠ universos ativos com 0 resolvidos: ${zeros.map((z) => z.name).join(", ")}`);
 
+  // Camada 1 a falhar matches que devia fazer — bug silencioso (o resultado final até
+  // fica certo, mas via camada 2). O rácio abaixo é o sinal mais informativo do report.
+  if (t.refShouldHaveMatched.length) {
+    console.log(`  ✗ ERRO: ${t.refShouldHaveMatched.length} produto(s) tinham um ref QUE ESTÁ na tabela mas foram resolvidos pela camada ${"2/3"} — contradição no resolver. Amostra:`);
+    t.refShouldHaveMatched.slice(0, 10).forEach((x) => console.log(`      ${x.sku}  ref="${x.ref}" (→ ${x.universe})  got L${x.gotLayer}  "${x.title}"`));
+  }
+  const l2Ratio = t.layer2 ? t.layer2WithRefs / t.layer2 : 0;
+  if (t.layer2WithRefs) {
+    const sev = l2Ratio > 0.05 ? "⚠" : "·";
+    console.log(`  ${sev} ${t.layer2WithRefs} produto(s) resolvidos pela camada 2 TINHAM refs (${pct(t.layer2WithRefs, t.layer2)} da camada 2). ${t.emptyWithRefs} vazios também tinham refs.`);
+    console.log(`      Se relevante: a camada 1 está a perder match — normalmente ref do feed com grafia que a tabela não prevê.`);
+  } else {
+    console.log("  ✓ nenhum produto resolvido pela camada 2 tinha refs (camada 1 não está a perder matches)");
+  }
+  if (t.unmappedRefsOnMiss.size) {
+    const top = [...t.unmappedRefsOnMiss.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25);
+    console.log(`  refs em produtos NÃO resolvidos pela camada 1, sem entrada na tabela (top 25 — candidatos a rever):`);
+    top.forEach(([ref, n]) => console.log(`      ${String(n).padStart(5)}  ${ref}`));
+  }
+
+  // estRange: nos casos de sobreposição (low != high), o valor real deve ficar perto do
+  // LOW. Se resolver perto/acima do HIGH, confirmar que os padrões não contam o mesmo
+  // produto duas vezes (o report conta produtos distintos, mas um universo pode herdar
+  // produtos de outro por precedência mal afinada).
+  const overlapHot = rows.filter((r) => r.estRange[0] !== r.estRange[1] && r.total >= r.estRange[1]);
+  if (overlapHot.length) {
+    console.log("  ⚠ universos de banda larga a resolver no topo/acima — confirmar que não há dupla contagem:");
+    overlapHot.forEach((r) => console.log(`      ${r.name}: ${r.total}  (estRange ${r.estRange[0]}-${r.estRange[1]}, esperado perto de ${r.estRange[0]})`));
+  }
+
   const active = rows.filter((r) => r.total >= 10).length;
   console.log(`\n-- resumo coleções --`);
   console.log(`  universos que cruzariam o limiar de 10: ${active}  (tabela prevê 30 ativos)`);
@@ -211,13 +273,20 @@ function writeJson(t) {
     source: FROM_DB ? `db:${SHOP}` : "csv",
     limit: LIMIT || null,
     supplierOnly: SUPPLIER_ONLY,
-    totals: { total: t.total, layer1: t.layer1, layer2: t.layer2, empty: t.empty },
+    totals: {
+      total: t.total, layer1: t.layer1, layer2: t.layer2, empty: t.empty,
+      layer2WithRefs: t.layer2WithRefs, emptyWithRefs: t.emptyWithRefs,
+    },
     byUniverse: [...t.byUniverse.values()].map((r) => ({
       name: r.name, handle: r.handle, active: r.active, estRange: r.estRange,
       resolved: r.total, layer1: r.layer1, layer2: r.layer2, samples: r.samples,
     })),
     forbidden: t.forbidden,
     mandalorianInStarWars: t.mandalorianInStarWars,
+    refShouldHaveMatched: t.refShouldHaveMatched,
+    unmappedRefsOnMiss: [...t.unmappedRefsOnMiss.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([ref, count]) => ({ ref, count })),
     emptySamples: t.emptySamples,
   };
   fs.writeFileSync(file, JSON.stringify(payload, null, 2));
@@ -230,7 +299,9 @@ async function main() {
   else await loadFromCsv(t);
   printReport(t);
   if (AS_JSON) writeJson(t);
-  if (t.forbidden.length || t.mandalorianInStarWars.length) process.exitCode = 1;
+  if (t.forbidden.length || t.mandalorianInStarWars.length || t.refShouldHaveMatched.length) {
+    process.exitCode = 1;
+  }
 }
 
 main().catch((err) => {

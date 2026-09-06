@@ -258,14 +258,25 @@ Ficheiro novo: `scripts/catalog/franchise-resolve-report.js`
 - Corre `resolveFranchise` por produto. **Não escreve nada.**
 - Imprime:
   1. Tabela por universo: `nome | estRange [low,high] | resolvidos | dentro/fora do range | camada 1 | camada 2`.
-  2. Totais: `% catálogo resolvido`, `# camada 1`, `# camada 2`, `# vazio`.
-  3. **Alertas de sanidade** (spec §"Critérios de validação"):
+  2. Totais: `% catálogo resolvido`, `# camada 1 (%)`, `# camada 2 (%)`, `# vazio`, com
+     nota de leitura: **o rácio L1/L2 é o número mais informativo**. L2 quase nulo ⇒
+     padrões fracos, franquias escondidas (o caso LOTR). L2 alto ⇒ a separação de refs
+     da Fase 1 não está a funcionar.
+  3. **Alertas de sanidade** (spec §"Critérios de validação" + revisão do Carlos):
      - produto com franquia `Funko` / `Pop` / `Exclusive` / `Anime & Manga` → ERRO
-       (tokens de categoria a entrar nos refs).
+       (tokens de categoria a entrar nos refs). Sai com código 1.
+     - `POP figure Star Wars The Mandalorian Grogu` em Star Wars → ERRO de precedência. Código 1.
+     - **ref que ESTÁ na tabela mas o produto foi resolvido por camada 2/3** → ERRO:
+       contradição no resolver (bug silencioso — o resultado final até fica certo). Código 1.
+     - **produtos resolvidos por camada 2 que tinham refs** → aviso se > 5 % da camada 2;
+       normalmente ref do feed com grafia que a tabela não prevê. Acompanha a lista das
+       refs não mapeadas mais frequentes (candidatas a acrescentar a `refs[]`).
      - `One Piece` ~379, `Stitch` ~105 — desvio > 25 % → aviso.
-     - universo da tabela com 0 resolvidos → aviso ("depende só da camada 2" ou ref errado).
-     - `POP figure Star Wars The Mandalorian Grogu` → tem de dar `The Mandalorian`.
-  4. Amostra de 20 títulos por universo (para leitura humana) e 30 "vazios" aleatórios.
+     - universo da tabela com 0 resolvidos → aviso.
+     - **universo de banda larga (estRange low≠high) a resolver no topo/acima** → aviso:
+       nos casos de sobreposição o real deve ficar perto do LOW (ex.: Mandalorian ~54,
+       não ~82); perto do topo ⇒ confirmar que não há dupla contagem / precedência mal afinada.
+  4. Amostra de 12 títulos por universo (com camada + padrão que bateu) e 30 "vazios".
 - `--json` escreve `results/franchise-report-<timestamp>.json` para diff entre corridas.
 
 **PORTÃO A** — o Carlos revê estas contagens contra a tabela antes de qualquer escrita.
