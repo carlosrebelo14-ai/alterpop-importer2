@@ -1,8 +1,33 @@
 # Plano de implementação — normalização de franquias
 
-**Repo:** `carlosrebelo14-ai/alterpop-importer2` · HEAD `0f73628` (15 ago)
+**Repo:** `carlosrebelo14-ai/alterpop-importer2`
 **Spec de origem:** `docs/normalizacao-franquias.md` + `docs/contexto-tema-novo.md` (no repo do tema)
-**Estado:** plano para revisão — nada escrito ainda.
+**Estado:** branch `feat/franchise-normalization` — Fases 1–3 implementadas, à espera do PORTÃO A.
+
+### Progresso
+
+- [x] **Fase 1** — `parseFamilySignals()` separa `franchiseRefs` de `categoryTokens`;
+      `csvFieldMap` expõe `record.franchiseRefs`; `parseFranchiseRefs` mantido como wrapper;
+      guarda em `translate.js`. Teste: `scripts/tests/parse-family-signals.test.js`.
+- [x] **Fase 2** — `lib/importer/catalog/franchiseUniverses.js`: tabela dos 40 (30 ativos /
+      10 dormentes), `FRANCHISE_PRECEDENCE`, constantes de limiar/template.
+- [x] **Fase 3** — `lib/importer/catalog/franchiseResolver.server.js` (3 camadas, puro) +
+      `scripts/catalog/franchise-resolve-report.js` (REPORT MODE, zero escrita) +
+      `scripts/tests/franchise-resolver.test.js`. `npm run franchise:report`.
+- [ ] **PORTÃO A** — correr `npm run franchise:report` em produção e rever contagens.
+- [ ] Fases 4–8.
+
+### Como correr o report (PORTÃO A)
+
+```bash
+# na máquina/host com .env (OCIOSTOCK_CSV_URL ou OCIOSTOCK_CSV_PATH):
+npm run franchise:report                 # catálogo todo, via stream do CSV
+npm run franchise:report -- --limit 3000 # amostra rápida
+npm run franchise:report -- --supplier-only --json   # camada 2 só p/ títulos do fornecedor + dump JSON
+```
+
+Não toca na BD nem na Shopify. `--from-db` só depois da migração da Fase 4.
+Sai com código 1 se detetar categoria-como-franquia ou Mandalorian em Star Wars.
 
 ---
 
