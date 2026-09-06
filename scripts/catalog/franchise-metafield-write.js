@@ -16,6 +16,12 @@
  * → mapa SKU → universo. Cruzado com os produtos da loja pelo SKU da variante
  * (= `referencia` do feed).
  *
+ * ⚠️ LIMITAÇÃO CONHECIDA: o lookup lê só `variants(first: 1)`. Um produto Shopify com
+ * várias variantes cujo SKU do feed corresponda a uma variante que NÃO a primeira fica
+ * de fora (nem "já correto" nem "a escrever" — cai em "sem resolução"). No lote de
+ * 2026-09-06 foi 1 produto (Harry Potter). Se a contagem final vier abaixo do esperado,
+ * é aqui que se procura — alargar para `variants(first: 5)` e testar cada SKU.
+ *
  * Uso (precisa de sessão OAuth offline em Prisma — correr na Fly ou local com .env):
  *   node scripts/catalog/franchise-metafield-write.js --dry-run --limit 300
  *   node scripts/catalog/franchise-metafield-write.js --limit 300

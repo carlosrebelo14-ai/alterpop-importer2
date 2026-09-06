@@ -43,10 +43,28 @@
         a atualizar devagar após escrita em massa (os 34 estavam ACTIVE quando escritos).
       - `scripts/catalog/franchise-metafield-write.js` — bulk: stream do feed → mapa
         SKU→universo → páginas de produtos → `metafieldsSet` 25/lote, idempotente,
-        `--dry-run` / `--limit` / `--universe`. **Corre na Fly, depois do merge + deploy.**
-        Sequência: (1) `--dry-run` completo, rever distribuição por universo; (2)
-        `--universe "Harry Potter"` a sério; (3) o resto. **Não seguir por MCP** (~100
-        confirmações para 2500 produtos).
+        `--dry-run` / `--limit` / `--universe`. Merge (`ad22635` em `main`) + `fly deploy`
+        feitos 2026-09-06.
+      - **Dry-run na Fly:** 5575 vistos · 3044 sem resolução · 40 já corretos (lote 1) ·
+        **2491 a escrever** em 38 universos.
+      - **`--universe "Harry Potter"` na Fly:** 33 já corretos, **117 escritos, 0 falhados**.
+        `metafieldDefinition.metafieldsCount` = **157** (= 40 + 117, sem sobreposição — a
+        idempotência funciona). O 34.º HP do lote 1 não bate no lookup por SKU do script
+        (provável multi-variante) → é saltado mas mantém a tag do lote 1; a matemática
+        fecha (157 = 151 HP + 2 LOTR + 2 Naruto + 2 DBZ).
+      - Nota: `productsCount(query: "metafields.alterpop.franchise:…")` devolve o total
+        (5575) — o filtro de metafield não se aplica a `productsCount`. Verificação por
+        universo faz-se no conector / com `products(first:… query:…)`. A regra de smart
+        collection (mecanismo diferente) já foi confirmada a funcionar.
+      - **Bulk completo na Fly (2026-09-06):** 2374 escritos, 0 falhados. `metafieldsCount`
+        final = **2531** (= 157 + 2374, exato — nada perdido). Verificado: amostra dos 250
+        produtos mais recentes cobre ~25 universos, **todos os valores `["<Nome canónico EN>"]`**,
+        um elemento, zero espanhol (nada de "Los Vengadores", "Tortugas Ninja", "Miercoles",
+        "El Señor…"). `Pokémon` (é) e `Hello Kitty / Sanrio` (/) são os nomes canónicos da tabela.
+      - **Limitação conhecida do script:** lookup lê só `variants(first: 1)`; produtos
+        multi-variante cujo SKU do feed seja de outra variante ficam de fora (1 caso no HP).
+        Documentado no cabeçalho do script.
+      - **Fase 6 concluída.**
       - Alcance real: ~2500–3000 dos ~5575 publicados, não os 14 163 do feed. Os restantes
         ficam com `resolvedFranchise` na BD local e recebem o metafield quando forem publicados.
 - [ ] **Fase 6b (não perder entre 6 e 9)** — a escrita de `alterpop.franchise` tem de

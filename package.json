@@ -37,7 +37,8 @@
     "sync:daemon:resilient": "bash scripts/run-with-restart.sh \"npm run sync:daemon\"",
     "dev:resilient": "bash scripts/run-with-restart.sh \"npm run dev\"",
     "start:resilient": "bash scripts/run-with-restart.sh \"npm run start\"",
-    "franchise:write-metafields": "node scripts/catalog/franchise-metafield-write.js"
+    "franchise:write-metafields": "node scripts/catalog/franchise-metafield-write.js",
+    "universe:plan": "node scripts/catalog/universe-collections-plan.js"
   },
   "type": "module",
   "engines": {
