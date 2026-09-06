@@ -14,8 +14,45 @@
 - [x] **Fase 3** — `lib/importer/catalog/franchiseResolver.server.js` (3 camadas, puro) +
       `scripts/catalog/franchise-resolve-report.js` (REPORT MODE, zero escrita) +
       `scripts/tests/franchise-resolver.test.js`. `npm run franchise:report`.
-- [ ] **PORTÃO A** — correr `npm run franchise:report` em produção e rever contagens.
+- [~] **PORTÃO A** — 1ª passagem feita a 2026-09-06 em **modo degradado** (feed OcioStock
+      em baixo — "GESIO muy cansado"; corrido contra o `dev.sqlite` puxado da Fly, que é
+      pré-Fase 1 e tem `franchises[]` = soup de refs+categorias+marcas). Falta a passagem
+      real `--from-csv` quando o feed voltar. Ver **§A. Achados do Portão A** abaixo.
 - [ ] Fases 4–8.
+
+---
+
+## §A. Achados do Portão A (1ª passagem, degradada, 2026-09-06)
+
+Fonte: `dev.sqlite` da Fly (27 000 produtos, shop `jyr17t-wr`), modo degradado.
+
+1. **As `estRange` da tabela estão 3–17× abaixo do real.** Foram medidas sobre os 5575
+   produtos *publicados*; o catálogo indexado tem **27 000**. Exemplos:
+   One Piece 379 → **1033** · Stitch 105 → **1760** · Dragon Ball 263 → **1049** ·
+   Harry Potter 144 → **1304** · Mickey & Friends 71–138 → **1313**.
+   ⇒ **Re-baselinar a coluna `estRange` a partir da passagem real `--from-csv`.** Não
+   bloqueia nada (o limiar de 10 é folgado), mas os avisos "fora de banda" são todos
+   ruído até isso acontecer.
+2. **51 % do catálogo mapeia para um dos 40; 49 % fica vazio** — e o vazio é
+   maioritariamente a "ala dos brinquedos" (Hot Wheels, Barbie, MGA/Miniverse, Rainbow
+   High, WWE, Slime, Playmobil…), corretamente fora dos 40. Não é alarme.
+3. **Bug encontrado e corrigido (commit `8906668`): a camada 1 não respeitava a
+   precedência.** 231 produtos com o token `STAR WARS` e título "Star Wars Grogu /
+   Mandalorian …" caíam em Star Wars. Agora a camada 1 recolhe todos os refs que batem,
+   escolhe por `[priority, ordem]`, e cede a um vencedor por precedência apontado pelo
+   título. The Mandalorian: 73 → 305.
+4. **Muitos produtos só têm licenciador/marca, sem franquia** — `DISNEY` (1840),
+   `MARVEL` (906), `FUNKO` (3426), `banpresto` (782) aparecem como único sinal em
+   milhares de linhas. Confirma o §7 do briefing do tema.
+5. **Split camada 1 vs camada 2 (97,8 % / 2,2 %) NÃO é fiável aqui** — em modo degradado
+   a camada 1 recebe `franchises[]` inteiro, que já traz os nomes de franquia como
+   tokens. O número real só sai da passagem `--from-csv` com `franchiseRefs` separados.
+   É esse run que valida a Fase 1 e revela LOTRs escondidas.
+
+### O que falta para fechar o Portão A
+- [ ] Feed OcioStock de pé → `npm run franchise:report -- --json` (passagem real).
+- [ ] Re-baselinar `estRange` em `franchiseUniverses.js` com os números reais.
+- [ ] Rever a lista de refs não mapeadas dessa passagem (candidatas a `refs[]`).
 
 ### Como correr o report (PORTÃO A)
 
