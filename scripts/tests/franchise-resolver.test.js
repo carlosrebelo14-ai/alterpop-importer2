@@ -27,10 +27,15 @@ function check(name, fn) {
 const r = (product) => resolveFranchise(product);
 
 // ── config da tabela ────────────────────────────────────────────────────────────
-check("tabela tem 41 universos (40 + Lord of the Rings), 31 ativos / 10 dormentes", () => {
+check("tabela: 41 universos, active coerente com baseline ≥ 10", () => {
   assert.equal(FRANCHISE_UNIVERSES.length, 41);
-  assert.equal(FRANCHISE_UNIVERSES.filter((u) => u.active).length, 31);
-  assert.equal(FRANCHISE_UNIVERSES.filter((u) => !u.active).length, 10);
+  // baseline da passagem real de 2026-09-06; active === (baseline >= 10)
+  for (const u of FRANCHISE_UNIVERSES) {
+    assert.equal(typeof u.baseline, "number", `${u.handle} sem baseline`);
+    assert.equal(u.active, u.baseline >= 10, `${u.handle}: active=${u.active} mas baseline=${u.baseline}`);
+  }
+  assert.equal(FRANCHISE_UNIVERSES.filter((u) => u.active).length, 36);
+  assert.equal(FRANCHISE_UNIVERSES.filter((u) => !u.active).length, 5);
 });
 
 check("Lord of the Rings: ref e títulos (incl. produtos 'Hobbit … El Señor de los Anillos')", () => {
@@ -163,6 +168,11 @@ check("Ghibli: 'Mononoke' sozinho NÃO resolve (colide com a série Mononoke)", 
 
 check("Ghibli: 'Howl' sozinho NÃO resolve (palavra comum)", () => {
   assert.equal(r({ franchiseRefs: [], title: "Werewolf Howl at the Moon plush" }).franchise, null);
+});
+
+check("Spidey (linha pré-escolar) → Spider-Man, por ref e por título", () => {
+  assert.equal(r({ franchiseRefs: ["MARVEL", "spidey"], title: "Marvel Spidey lights sneakers" }).handle, "spider-man");
+  assert.equal(r({ franchiseRefs: [], title: "Spidey and His Amazing Friends backpack 27cm" }).handle, "spider-man");
 });
 
 check("Sanrio alargado: Gudetama / Sumikko Gurashi / Rilakkuma → Hello Kitty / Sanrio", () => {

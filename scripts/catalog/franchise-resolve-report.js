@@ -65,7 +65,7 @@ function newTally() {
     unmappedRefsOnMiss: new Map(), // ref cru -> count, em produtos não resolvidos pela camada 1
   };
   for (const u of FRANCHISE_UNIVERSES) {
-    t.byUniverse.set(u.handle, { name: u.name, handle: u.handle, active: u.active, estRange: u.estRange, total: 0, layer1: 0, layer2: 0, samples: [] });
+    t.byUniverse.set(u.handle, { name: u.name, handle: u.handle, active: u.active, baseline: u.baseline, total: 0, layer1: 0, layer2: 0, samples: [] });
   }
   return t;
 }
@@ -208,12 +208,15 @@ function printReport(t) {
   console.log("\n-- por universo (ordenado por nº resolvido) --");
   const pad = (s, n) => String(s).padEnd(n);
   const lpad = (s, n) => String(s).padStart(n);
-  console.log(`${pad("universo", 26)} ${lpad("estRange", 12)} ${lpad("resolv", 7)} ${lpad("L1", 6)} ${lpad("L2", 6)}  range?`);
+  console.log(`${pad("universo", 26)} ${lpad("baseline", 9)} ${lpad("resolv", 7)} ${lpad("Δ", 7)} ${lpad("L1", 6)} ${lpad("L2", 6)}`);
   for (const r of rows) {
-    const [lo, hi] = r.estRange;
-    const within = r.total >= lo && r.total <= hi ? "ok" : r.total < lo ? `-${lo - r.total}` : `+${r.total - hi}`;
-    const flag = !r.active && r.total >= 10 ? "  ⇧ passou dormente→ativo" : r.active && r.total <= 1 ? "  ⇩ ativo mas ≤1" : r.total === 0 ? "  (0)" : "";
-    console.log(`${pad(r.name, 26)} ${lpad(`${lo}-${hi}`, 12)} ${lpad(r.total, 7)} ${lpad(r.layer1, 6)} ${lpad(r.layer2, 6)}  ${within}${flag}`);
+    const base = r.baseline ?? 0;
+    const d = r.total - base;
+    const dpct = base ? ` ${d >= 0 ? "+" : ""}${((d / base) * 100).toFixed(0)}%` : "";
+    const delta = `${d >= 0 ? "+" : ""}${d}${dpct}`;
+    const big = base >= 20 && Math.abs(d) / base > 0.15 ? "  ⚠ desvio" : "";
+    const flag = !r.active && r.total >= 10 ? "  ⇧ dormente→ativo" : r.active && r.total <= 1 ? "  ⇩ ativo mas ≤1" : r.total === 0 ? "  (0)" : "";
+    console.log(`${pad(r.name, 26)} ${lpad(base, 9)} ${lpad(r.total, 7)} ${lpad(delta, 12)} ${lpad(r.layer1, 6)} ${lpad(r.layer2, 6)}${big}${flag}`);
   }
 
   console.log("\n-- alertas de sanidade --");
@@ -237,11 +240,13 @@ function printReport(t) {
     console.log("  ✓ nenhum produto Mandalorian/Grogu/Ahsoka caiu em Star Wars");
   }
 
-  const onePiece = t.byUniverse.get("one-piece").total;
-  const stitch = t.byUniverse.get("stitch").total;
-  const outOfBand = (v, [lo, hi]) => v < lo * 0.75 || v > hi * 1.25;
-  if (outOfBand(onePiece, [379, 379])) console.log(`  ⚠ One Piece resolveu ${onePiece} (esperado ~379)`);
-  if (outOfBand(stitch, [105, 105])) console.log(`  ⚠ Stitch resolveu ${stitch} (esperado ~105)`);
+  const drift = rows.filter((r) => (r.baseline ?? 0) >= 20 && Math.abs(r.total - r.baseline) / r.baseline > 0.15);
+  if (drift.length) {
+    console.log(`  ⚠ ${drift.length} universo(s) com desvio > 15% face à baseline (ver coluna Δ) — feed mudou ou a tabela regrediu:`);
+    drift.forEach((r) => console.log(`      ${r.name}: ${r.total} vs baseline ${r.baseline}`));
+  } else {
+    console.log("  ✓ nenhum universo com desvio > 15% face à baseline");
+  }
   const zeros = rows.filter((r) => r.active && r.total === 0);
   if (zeros.length) console.log(`  ⚠ universos ativos com 0 resolvidos: ${zeros.map((z) => z.name).join(", ")}`);
 
@@ -263,16 +268,6 @@ function printReport(t) {
     const top = [...t.unmappedRefsOnMiss.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25);
     console.log(`  refs em produtos NÃO resolvidos pela camada 1, sem entrada na tabela (top 25 — candidatos a rever):`);
     top.forEach(([ref, n]) => console.log(`      ${String(n).padStart(5)}  ${ref}`));
-  }
-
-  // estRange: nos casos de sobreposição (low != high), o valor real deve ficar perto do
-  // LOW. Se resolver perto/acima do HIGH, confirmar que os padrões não contam o mesmo
-  // produto duas vezes (o report conta produtos distintos, mas um universo pode herdar
-  // produtos de outro por precedência mal afinada).
-  const overlapHot = rows.filter((r) => r.estRange[0] !== r.estRange[1] && r.total >= r.estRange[1]);
-  if (overlapHot.length) {
-    console.log("  ⚠ universos de banda larga a resolver no topo/acima — confirmar que não há dupla contagem:");
-    overlapHot.forEach((r) => console.log(`      ${r.name}: ${r.total}  (estRange ${r.estRange[0]}-${r.estRange[1]}, esperado perto de ${r.estRange[0]})`));
   }
 
   const active = rows.filter((r) => r.total >= 10).length;
@@ -298,7 +293,7 @@ function writeJson(t) {
       layer2WithRefs: t.layer2WithRefs, emptyWithRefs: t.emptyWithRefs,
     },
     byUniverse: [...t.byUniverse.values()].map((r) => ({
-      name: r.name, handle: r.handle, active: r.active, estRange: r.estRange,
+      name: r.name, handle: r.handle, active: r.active, baseline: r.baseline,
       resolved: r.total, layer1: r.layer1, layer2: r.layer2, samples: r.samples,
     })),
     forbidden: t.forbidden,
