@@ -67,10 +67,15 @@
       - **Fase 6 concluída.**
       - Alcance real: ~2500–3000 dos ~5575 publicados, não os 14 163 do feed. Os restantes
         ficam com `resolvedFranchise` na BD local e recebem o metafield quando forem publicados.
-- [ ] **Fase 6b (não perder entre 6 e 9)** — a escrita de `alterpop.franchise` tem de
-      entrar no **fluxo de publicação** (`shopifyProductPublisher.server.js` /
-      `runApprovedShopifySync`), ao lado do `setLicenceMetafield` que já lá está. Senão
-      cada produto novo que o Carlos publique nasce sem franquia.
+- [x] **Fase 6b** — escrita de `alterpop.franchise` no fluxo de publicação.
+      `mapCatalogProductToShopifyPayload` passa `resolvedFranchise` (o publisher lê a linha
+      `CatalogProduct` completa via `findMany` sem `select`, já traz a coluna da Fase 4).
+      `setProductMetafieldsSafe` ganha `setFranchiseMetafield()` — grava
+      `alterpop.franchise = ["<nome>"]` (list) ao lado do `setLicenceMetafield`, com o
+      mesmo wrapper try/catch (metafield nunca derruba o publish). Sem universo → não grava.
+      Prod: 13 138/25 310 linhas já têm `resolvedFranchise` (re-index correu pós-Fase 4).
+      Nota: os SELECT explícitos em `catalogProductsDb.server.js` (418/543/627/707) não
+      trazem `resolvedFranchise` — só interessa quando a UI de catálogo o mostrar (Fase 9).
 - [~] **Fase 7** — coleções Universe. `lib/importer/shopify/universeCollections.server.js`
       + `npm run universe:plan` (dry-run / `--create` / `--adopt <handles>`). Nunca publica.
       - **Dry-run:** 62 coleções na loja. 22 `toCreate`, 14 `toAdopt` (smart collections da
