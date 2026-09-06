@@ -64,7 +64,15 @@ model CatalogProduct {
   vendor           String?
   vendorNorm       String   @default("")
   stock            Int      @default(0)
+  // Sinais de família do feed, separados (parseFamilySignals):
+  //  - franchises: refs + tokens de categoria achatados (histórico, alimenta facetas/filtros)
+  //  - franchiseRefs: SÓ os ref="..." do fornecedor, sem tradução (chave da camada 1 do resolver)
   franchises       String   @default("[]")
+  franchiseRefs    String   @default("[]")
+  // Universo resolvido pelo franchiseResolver (nome canónico da tabela dos 41), ou NULL.
+  // resolvedFranchiseLayer: 1 = ref, 2 = título, para auditoria. NULL até à Fase 4.
+  resolvedFranchise      String?
+  resolvedFranchiseLayer Int?
   netPrice         Float?
   grossPrice       Float?
   imageUrl         String?
@@ -87,6 +95,7 @@ model CatalogProduct {
   @@index([shop, categoryMain])
   @@index([shop, netPrice])
   @@index([shop, barcode])
+  @@index([shop, resolvedFranchise])
 }
 
 /// Tags de filtro sitemap (OR na UI — produto pode ter várias tags).
