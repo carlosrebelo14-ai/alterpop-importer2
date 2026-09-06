@@ -23,9 +23,16 @@
       migração `20260906180000_franchise_resolution` (+`franchiseRefs`, `+resolvedFranchise`,
       `+resolvedFranchiseLayer`, índice); `toLiteProduct()` chama `resolveFranchise()` e os
       2 escritores de `CatalogProduct` gravam os 3 campos. E2E ok. **Zero writes Shopify.**
-- [ ] **Fase 5** — definição de metafield `alterpop.franchise` com `useAsCollectionCondition`
-      (1º write Shopify — a confirmar com o Carlos). Verificar a flag em `list.single_line_text_field`.
-- [ ] Fases 6–9.
+- [x] **Fase 5** — definição `alterpop.franchise` criada em jyr17t-wr
+      (`gid://shopify/MetafieldDefinition/1520603857226`), tipo `list.single_line_text_field`,
+      pinned, `smartCollectionCondition` **eligible: true, enabled: true**. Contraria a doc
+      (que só lista o escalar) — verificado por probe transitório + na definição real.
+      Forma documentada em `lib/importer/shopify/franchiseMetafieldDefinition.js`.
+      **Aberto:** confirmar que uma regra `EQUALS` real casa contra valores de lista
+      (Carlos vê no conector / sai no dry-run da Fase 7). Se não casar → `collectionAddProducts`.
+- [ ] **Fase 6** — escrever `alterpop.franchise` em ~14 k produtos (1ª operação irreversível).
+      **Gate do Carlos: não avançar sem OK.**
+- [ ] Fases 7–9.
 
 ---
 
