@@ -71,7 +71,27 @@
       entrar no **fluxo de publicação** (`shopifyProductPublisher.server.js` /
       `runApprovedShopifySync`), ao lado do `setLicenceMetafield` que já lá está. Senão
       cada produto novo que o Carlos publique nasce sem franquia.
-- [ ] Fases 7–9.
+- [~] **Fase 7** — coleções Universe. `lib/importer/shopify/universeCollections.server.js`
+      + `npm run universe:plan` (dry-run / `--create` / `--adopt <handles>`). Nunca publica.
+      - **Dry-run:** 62 coleções na loja. 22 `toCreate`, 14 `toAdopt` (smart collections da
+        era Crave com regra TITLE/TAG), 5 dormentes.
+      - **22 `toCreate` — feitas na Fly (`ea8157d` deployed):** criadas em rascunho,
+        `templateSuffix: universe-room`, regra `alterpop.franchise EQUALS <nome>`
+        (`appliedDisjunctively: false`), `resourcePublicationsCount: 0`. Verificado por
+        `products(first:3)`: Spider-Man / Mickey & Friends / Stitch / LOTR / Zelda puxam
+        os produtos certos. GIDs 723076907338 … 723077595466.
+      - **14 `toAdopt` — decidido (A) adotar, adiado.** `collectionUpdate` troca a regra
+        para `alterpop.franchise EQUALS` + põe `templateSuffix`, mantém handle/URL.
+        Consequência: contagens descem (ex. `star-wars` 249→~175) — sai a inferência por
+        título, entra o dado estruturado. Confirmar que o `templateSuffix` não colide com
+        o que "Pokémon Universe" já tem. **Carlos vê as 22 primeiro.**
+      - Quase-duplicados: `senhor-dos-aneis` (manual, 10 prod) e `hellokitty` (regra
+        `licence`) ficam intactos ao lado das novas `lord-of-the-rings` / `hello-kitty`.
+        Feio, inofensivo. Limpeza num passo próprio.
+- [ ] **Limpeza (depois da Fase 8)** — a loja fica com dois sistemas: `alterpop.franchise`
+      (novo) e `ociostock.licence` (~34 coleções, `auto-licenca-*` + outras). Passo de
+      limpeza quando o novo estiver a funcionar e se souber o que desligar sem risco.
+- [ ] Fases 8–9.
 
 ---
 
