@@ -28,19 +28,31 @@
       pinned, `smartCollectionCondition` **eligible: true, enabled: true**. Contraria a doc
       (que só lista o escalar) — verificado por probe transitório + na definição real.
       Forma documentada em `lib/importer/shopify/franchiseMetafieldDefinition.js`.
-      **Aberto:** confirmar que uma regra `EQUALS` real casa contra valores de lista
-      (Carlos vê no conector / sai no dry-run da Fase 7). Se não casar → `collectionAddProducts`.
+      **FECHADO (Carlos, 2026-09-06):** regra `EQUALS "Harry Potter"` contra
+      `list.single_line_text_field` casou e puxou produtos numa coleção de teste (criada,
+      verificada, apagada). Smart collections com condição de metafield de lista funcionam
+      nesta loja no Basic. O desenho das coleções Universe mantém-se — **não** se cai para
+      `collectionAddProducts`.
 - [~] **Fase 6** — escrever `alterpop.franchise` nos produtos.
-      - **Lote 1 (2026-09-06): 40 produtos escritos via MCP** — 34 Harry Potter, 2 The
-        Lord of the Rings, 2 Naruto, 2 Dragon Ball. Valor `["<Nome>"]` (array 1 elemento,
-        nome canónico). `metafieldsCount` da definição = 40. Zero userErrors. **Parado
-        para o Carlos verificar forma + testar uma regra `EQUALS` no conector.**
-      - `scripts/catalog/franchise-metafield-write.js` — script do bulk: stream do feed →
-        mapa SKU→universo → páginas de produtos Shopify → `metafieldsSet` (25/lote),
-        idempotente, `--dry-run`, `--limit`, `--universe`. Precisa de sessão OAuth
-        (correr na Fly ou local com `.env`). **Não corrido.**
-      - Alcance real: dos ~5575 produtos publicados, só um subconjunto resolve (~2500–3000
-        estimado) — não os 14 163 do feed inteiro.
+      - **Lote 1 (2026-09-06): 40 produtos via MCP** — 34 Harry Potter, 2 The Lord of the
+        Rings, 2 Naruto, 2 Dragon Ball. Valor `["<Nome>"]`. `metafieldsCount` = 40, zero
+        userErrors. **Confirmado pelo Carlos:** forma certa, nomes canónicos, sem espanhol,
+        produtos que não resolvem sem campo.
+      - Discrepância pequena, a confirmar na próxima passagem (não bloqueia): coleção de
+        teste `EQUALS "Harry Potter"` deu 33, foram escritos 34. Provável `productsCount`
+        a atualizar devagar após escrita em massa (os 34 estavam ACTIVE quando escritos).
+      - `scripts/catalog/franchise-metafield-write.js` — bulk: stream do feed → mapa
+        SKU→universo → páginas de produtos → `metafieldsSet` 25/lote, idempotente,
+        `--dry-run` / `--limit` / `--universe`. **Corre na Fly, depois do merge + deploy.**
+        Sequência: (1) `--dry-run` completo, rever distribuição por universo; (2)
+        `--universe "Harry Potter"` a sério; (3) o resto. **Não seguir por MCP** (~100
+        confirmações para 2500 produtos).
+      - Alcance real: ~2500–3000 dos ~5575 publicados, não os 14 163 do feed. Os restantes
+        ficam com `resolvedFranchise` na BD local e recebem o metafield quando forem publicados.
+- [ ] **Fase 6b (não perder entre 6 e 9)** — a escrita de `alterpop.franchise` tem de
+      entrar no **fluxo de publicação** (`shopifyProductPublisher.server.js` /
+      `runApprovedShopifySync`), ao lado do `setLicenceMetafield` que já lá está. Senão
+      cada produto novo que o Carlos publique nasce sem franquia.
 - [ ] Fases 7–9.
 
 ---
