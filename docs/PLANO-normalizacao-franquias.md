@@ -30,8 +30,17 @@
       Forma documentada em `lib/importer/shopify/franchiseMetafieldDefinition.js`.
       **Aberto:** confirmar que uma regra `EQUALS` real casa contra valores de lista
       (Carlos vê no conector / sai no dry-run da Fase 7). Se não casar → `collectionAddProducts`.
-- [ ] **Fase 6** — escrever `alterpop.franchise` em ~14 k produtos (1ª operação irreversível).
-      **Gate do Carlos: não avançar sem OK.**
+- [~] **Fase 6** — escrever `alterpop.franchise` nos produtos.
+      - **Lote 1 (2026-09-06): 40 produtos escritos via MCP** — 34 Harry Potter, 2 The
+        Lord of the Rings, 2 Naruto, 2 Dragon Ball. Valor `["<Nome>"]` (array 1 elemento,
+        nome canónico). `metafieldsCount` da definição = 40. Zero userErrors. **Parado
+        para o Carlos verificar forma + testar uma regra `EQUALS` no conector.**
+      - `scripts/catalog/franchise-metafield-write.js` — script do bulk: stream do feed →
+        mapa SKU→universo → páginas de produtos Shopify → `metafieldsSet` (25/lote),
+        idempotente, `--dry-run`, `--limit`, `--universe`. Precisa de sessão OAuth
+        (correr na Fly ou local com `.env`). **Não corrido.**
+      - Alcance real: dos ~5575 produtos publicados, só um subconjunto resolve (~2500–3000
+        estimado) — não os 14 163 do feed inteiro.
 - [ ] Fases 7–9.
 
 ---

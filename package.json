@@ -29,14 +29,15 @@
     "catalog:purge": "node scripts/catalog/catalog-purge-reindex.js",
     "catalog:reindex": "node scripts/catalog/full-catalog-reindex.js",
     "catalog:dedupe": "node scripts/catalog/catalog-dedupe.js",
-  "franchise:report": "node scripts/catalog/franchise-resolve-report.js",
-  "test:franchise": "node scripts/tests/parse-family-signals.test.js && node scripts/tests/franchise-resolver.test.js",
+    "franchise:report": "node scripts/catalog/franchise-resolve-report.js",
+    "test:franchise": "node scripts/tests/parse-family-signals.test.js && node scripts/tests/franchise-resolver.test.js",
     "curation:elite-purge": "node scripts/curation/elite-curation-purge.js",
     "oauth:url": "node scripts/setup/generate-oauth-install-url.js",
     "sync:daemon": "node scripts/sync/live-sync-daemon.js",
     "sync:daemon:resilient": "bash scripts/run-with-restart.sh \"npm run sync:daemon\"",
     "dev:resilient": "bash scripts/run-with-restart.sh \"npm run dev\"",
-    "start:resilient": "bash scripts/run-with-restart.sh \"npm run start\""
+    "start:resilient": "bash scripts/run-with-restart.sh \"npm run start\"",
+    "franchise:write-metafields": "node scripts/catalog/franchise-metafield-write.js"
   },
   "type": "module",
   "engines": {
