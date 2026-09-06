@@ -14,45 +14,88 @@
 - [x] **Fase 3** — `lib/importer/catalog/franchiseResolver.server.js` (3 camadas, puro) +
       `scripts/catalog/franchise-resolve-report.js` (REPORT MODE, zero escrita) +
       `scripts/tests/franchise-resolver.test.js`. `npm run franchise:report`.
-- [~] **PORTÃO A** — 1ª passagem feita a 2026-09-06 em **modo degradado** (feed OcioStock
-      em baixo — "GESIO muy cansado"; corrido contra o `dev.sqlite` puxado da Fly, que é
-      pré-Fase 1 e tem `franchises[]` = soup de refs+categorias+marcas). Falta a passagem
-      real `--from-csv` quando o feed voltar. Ver **§A. Achados do Portão A** abaixo.
+- [x] **PORTÃO A** — passagem real `--from-csv` a 2026-09-06 (feed de pé, 29 430 produtos).
+      Ver **§A**. Resultado: tabela dos 40 está boa; 3 ajustes menores; falta re-baselinar
+      `estRange` e decidir sobre alguns universos candidatos. Nada bloqueia as Fases 4–6.
 - [ ] Fases 4–8.
 
 ---
 
-## §A. Achados do Portão A (1ª passagem, degradada, 2026-09-06)
+## §A. Achados do Portão A — passagem real (2026-09-06)
 
-Fonte: `dev.sqlite` da Fly (27 000 produtos, shop `jyr17t-wr`), modo degradado.
+`npm run franchise:report` sobre o feed OcioStock (`OCIOSTOCK_CSV_PATH`), 29 430 produtos.
+JSON: `results/franchise-report-2026-09-06T14-11-*.json`.
 
-1. **As `estRange` da tabela estão 3–17× abaixo do real.** Foram medidas sobre os 5575
-   produtos *publicados*; o catálogo indexado tem **27 000**. Exemplos:
-   One Piece 379 → **1033** · Stitch 105 → **1760** · Dragon Ball 263 → **1049** ·
-   Harry Potter 144 → **1304** · Mickey & Friends 71–138 → **1313**.
-   ⇒ **Re-baselinar a coluna `estRange` a partir da passagem real `--from-csv`.** Não
-   bloqueia nada (o limiar de 10 é folgado), mas os avisos "fora de banda" são todos
-   ruído até isso acontecer.
-2. **51 % do catálogo mapeia para um dos 40; 49 % fica vazio** — e o vazio é
-   maioritariamente a "ala dos brinquedos" (Hot Wheels, Barbie, MGA/Miniverse, Rainbow
-   High, WWE, Slime, Playmobil…), corretamente fora dos 40. Não é alarme.
-3. **Bug encontrado e corrigido (commit `8906668`): a camada 1 não respeitava a
-   precedência.** 231 produtos com o token `STAR WARS` e título "Star Wars Grogu /
-   Mandalorian …" caíam em Star Wars. Agora a camada 1 recolhe todos os refs que batem,
-   escolhe por `[priority, ordem]`, e cede a um vencedor por precedência apontado pelo
-   título. The Mandalorian: 73 → 305.
-4. **Muitos produtos só têm licenciador/marca, sem franquia** — `DISNEY` (1840),
-   `MARVEL` (906), `FUNKO` (3426), `banpresto` (782) aparecem como único sinal em
-   milhares de linhas. Confirma o §7 do briefing do tema.
-5. **Split camada 1 vs camada 2 (97,8 % / 2,2 %) NÃO é fiável aqui** — em modo degradado
-   a camada 1 recebe `franchises[]` inteiro, que já traz os nomes de franquia como
-   tokens. O número real só sai da passagem `--from-csv` com `franchiseRefs` separados.
-   É esse run que valida a Fase 1 e revela LOTRs escondidas.
+**Totais:** 13 854 resolvidos (47,1 %) · camada 1: 13 550 (97,8 %) · camada 2: 304 (2,2 %) ·
+vazio: 15 576 (52,9 %).
 
-### O que falta para fechar o Portão A
-- [ ] Feed OcioStock de pé → `npm run franchise:report -- --json` (passagem real).
-- [ ] Re-baselinar `estRange` em `franchiseUniverses.js` com os números reais.
-- [ ] Rever a lista de refs não mapeadas dessa passagem (candidatas a `refs[]`).
+### O que correu bem
+
+1. **A previsão do casing não se confirmou — `normRef()` já resolve.** Os `ref="…"` do
+   feed são códigos tipo `POKEMON`, `HELLOKITTY`, `DRAGON BALL`, `KimetsunoYaiba`,
+   `MastersoftheUniverse`. A tabela tem `Pokemon`, `Hello Kitty`, `Dragon Ball`,
+   `Kimetsuno Yaiba`, `Mastersofthe Universe`. O `normRef` (lowercase + tira pontuação/
+   espaços) faz os dois bater. **37 dos 40 universos** casam com ≥ 1 ref do feed.
+2. **`xml_info_familias` é `<categories><category gesioid=".." ref="CÓDIGO">CDATA</category>`.**
+   O `ref` é o código do nó de categoria do fornecedor (492 distintos), não um vocabulário
+   de franquia à parte — inclui franquias (`MICKEY`, `STITCH`, `ONEPIECE`) e ruído
+   (`MANGA`, `FUNKO`, `XON`, `pop`, `ofertas`). O `franchiseRefs` da Fase 1 apanha-os todos;
+   o resolver ignora os que não estão na tabela. Correto.
+3. **Precedência na camada 1 (bug do 1º pass) — corrigida** (`8906668`). 0 produtos
+   Mandalorian/Grogu em Star Wars (eram 231). The Mandalorian: 293 via camada 1.
+4. **Passagem real ≈ passagem degradada** (L1 13 550 vs 13 548). A separação da Fase 1 é
+   mais limpa mas não muda a atribuição — os identificadores de franquia estão tanto nos
+   `ref=` como no CDATA. O valor da Fase 1 é não gravar `MANGA`/`FUNKO` como franquia.
+
+### 3 ajustes à tabela (menores, não bloqueiam)
+
+- **Entradas de ref mortas** (o universo casa na mesma pela outra ref — cosmético):
+  `Demon Slayer` → `"Demon Slayer"` não existe no feed (só `KimetsunoYaiba`);
+  `Mickey & Friends` → `"Pato Donald"` não existe (só `Donald`).
+- **Re-baselinar `estRange`** — medido em 5575 publicados; catálogo real 29 430. Todos
+  os ativos resolvem 3–15× acima da banda. Ex.: One Piece 379→**935**, Stitch 105→**1721**,
+  Hello Kitty 72→**1329**, Harry Potter 144→**1221**. Substituir a coluna pelos números
+  reais deste run e trocar os avisos "fora de banda" por um desvio relativo.
+- **Studio Ghibli sub-resolvido** (12) — os filmes vêm com `ref="MANGA"` e títulos
+  "Porco Rosso", "Castle in the Sky", "The Wind Rises", "Princess Mononoke",
+  "Kiki's Delivery Service". Os `titlePatterns` só têm `Ghibli/Totoro/Spirited Away/Howl`.
+  Se Ghibli interessa, alargar os padrões. É a única lacuna real da camada 2.
+
+### Decisões de negócio que o run levanta (não são bugs da tabela)
+
+Refs do feed fora dos 40, por contagem — candidatos ou confirmação de exclusão:
+`MARVEL` (1786), `DC COMICS` (411) → órfãos Marvel/DC, **adiados** (§B).
+`REALMADRID` (541), `FCBARCELONA` (397) → futebol, **fora** (§B).
+`KPopDemonHunters` (646), `PAWPATROL` (330), `blueyfriends` (336), `MINECRAFT` (307),
+`PRINCESAS` (300) → **não estão nos 40**; decisão do Carlos se entram.
+`ichibansho` (385), `BittyPop` (322), `LOUNGEFLY` (611) → são **Lines**, corretamente fora.
+
+### Fecho do Portão A
+- [ ] Re-baselinar `estRange` em `franchiseUniverses.js` (faço no arranque da Fase 4).
+- [ ] Limpar as 2 entradas de ref mortas.
+- [ ] Carlos: alargar padrões Ghibli? entram Paw Patrol / Bluey / Minecraft / Princesas / KPop Demon Hunters?
+- [x] Tudo o resto validado — **Fases 4–6 podem arrancar.**
+
+---
+
+## §B. Delta ao briefing (`docs/normalizacao-franquias.md` continua válido no essencial)
+
+Decisões novas desde a versão que o briefing tem:
+
+- **Tier** — `premium` se `vendor ∈ {Tamashii Nations, Megahouse, Noble Collection}` **ou**
+  o título tiver `Statue` / `Bust` / `Diorama` / `Replica` / uma escala (ex. `1/7`, `1:6`).
+  `impulse` no resto. **Nunca por preço.** A escala de 4 níveis fica adiada até haver
+  `collectible_type`.
+- **Publicação é sempre manual.** Zero regras de elegibilidade no publisher. **Peça nova,
+  fora do faseamento atual:** desenhar a *lista de candidatos* — produtos resolvidos para
+  um dos 40 e ainda não publicados, agrupados por universo, com o tier visível.
+- **Ala de brinquedos fora dos universos, por design.** O ~53 % vazio deixa de ser aviso e
+  passa a linha informativa no report.
+- **Nomes de personagem** — forma curta; longa só para desempate e nomes genéricos.
+- **Selo de autenticidade incondicional** — todos os produtos são licenciados; texto fixo
+  no tema, sem campo da app.
+- **Órfãos Marvel/DC adiados** — resolvem para vazio, nunca aparecem na lista de candidatos.
+- **Futebol fora** — sem objeto (`REALMADRID`/`FCBARCELONA` ficam vazios).
 
 ### Como correr o report (PORTÃO A)
 
@@ -96,6 +139,8 @@ Fase 6  Escrever alterpop.franchise nos produtos a partir de resolvedFranchise [
 Fase 7  Alteração 3  — universeCollections + DRY-RUN         [só lista o que criaria]
         ── PORTÃO B: rever plano de coleções ──
 Fase 8  Executar coleções + wiring no trigger-sync           [cria collections em rascunho, já com produtos]
+Fase 9  Lista de candidatos (peça nova, §B) — produtos resolvidos p/ um dos 40 e não
+        publicados, agrupados por universo, com tier. UI de curadoria, não toca no publisher.
 ```
 
 Fases 1–3 são um PR. Fases 4–6 são outro. Fases 7–8 são um terceiro.
