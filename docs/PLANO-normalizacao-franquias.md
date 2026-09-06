@@ -67,11 +67,42 @@
       - **Fase 6 concluída.**
       - Alcance real: ~2500–3000 dos ~5575 publicados, não os 14 163 do feed. Os restantes
         ficam com `resolvedFranchise` na BD local e recebem o metafield quando forem publicados.
-- [ ] **Fase 6b (não perder entre 6 e 9)** — a escrita de `alterpop.franchise` tem de
-      entrar no **fluxo de publicação** (`shopifyProductPublisher.server.js` /
-      `runApprovedShopifySync`), ao lado do `setLicenceMetafield` que já lá está. Senão
-      cada produto novo que o Carlos publique nasce sem franquia.
-- [ ] Fases 7–9.
+- [x] **Fase 6b** — escrita de `alterpop.franchise` no fluxo de publicação.
+      `mapCatalogProductToShopifyPayload` passa `resolvedFranchise` (o publisher lê a linha
+      `CatalogProduct` completa via `findMany` sem `select`, já traz a coluna da Fase 4).
+      `setProductMetafieldsSafe` ganha `setFranchiseMetafield()` — grava
+      `alterpop.franchise = ["<nome>"]` (list) ao lado do `setLicenceMetafield`, com o
+      mesmo wrapper try/catch (metafield nunca derruba o publish). Sem universo → não grava.
+      Prod: 13 138/25 310 linhas já têm `resolvedFranchise` (re-index correu pós-Fase 4).
+      Nota: os SELECT explícitos em `catalogProductsDb.server.js` (418/543/627/707) não
+      trazem `resolvedFranchise` — só interessa quando a UI de catálogo o mostrar (Fase 9).
+- [~] **Fase 7** — coleções Universe. `lib/importer/shopify/universeCollections.server.js`
+      + `npm run universe:plan` (dry-run / `--create` / `--adopt <handles>`). Nunca publica.
+      - **Dry-run:** 62 coleções na loja. 22 `toCreate`, 14 `toAdopt` (smart collections da
+        era Crave com regra TITLE/TAG), 5 dormentes.
+      - **22 `toCreate` — feitas na Fly (`ea8157d` deployed):** criadas em rascunho,
+        `templateSuffix: universe-room`, regra `alterpop.franchise EQUALS <nome>`
+        (`appliedDisjunctively: false`), `resourcePublicationsCount: 0`. Verificado por
+        `products(first:3)`: Spider-Man / Mickey & Friends / Stitch / LOTR / Zelda puxam
+        os produtos certos. GIDs 723076907338 … 723077595466.
+      - **14 `toAdopt` — feitas (Carlos deu OK).** `collectionUpdate` em pokemon-universe,
+        star-wars, one-piece, dragon-ball, batman, demon-slayer, harry-potter, naruto,
+        jujutsu-kaisen, attack-on-titan, stranger-things, avengers, toystory, chainsaw-man:
+        regra → `alterpop.franchise EQUALS <nome>`, `templateSuffix: universe-room`.
+        Handles/URLs mantidos. Verificado (star-wars, one-piece, harry-potter,
+        pokemon-universe, batman): regra e template certos, produtos com o metafield.
+        ⚠️ **Estas 14 já estavam PUBLICADAS** (era o tema Crave a usá-las) — `star-wars`
+        tem `resourcePublicationsCount: 7`. A adoção não mexeu na publicação, mas o
+        conteúdo mudou AO VIVO agora (Star Wars ~249→~175 por título → por metafield).
+        Ver na storefront, não só no Admin. As 22 novas continuam em rascunho.
+      - Total: **36 coleções Universe** (22 rascunho + 14 live-adotadas).
+      - Quase-duplicados: `senhor-dos-aneis` (manual, 10 prod) e `hellokitty` (regra
+        `licence`) ficam intactos ao lado das novas `lord-of-the-rings` / `hello-kitty`.
+        Feio, inofensivo. Limpeza num passo próprio.
+- [ ] **Limpeza (depois da Fase 8)** — a loja fica com dois sistemas: `alterpop.franchise`
+      (novo) e `ociostock.licence` (~34 coleções, `auto-licenca-*` + outras). Passo de
+      limpeza quando o novo estiver a funcionar e se souber o que desligar sem risco.
+- [ ] Fases 8–9.
 
 ---
 
