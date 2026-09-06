@@ -139,6 +139,26 @@ check("'Lilo & Stitch' → Stitch", () => {
   assert.equal(r({ franchiseRefs: [], title: "POP figure Lilo & Stitch 626" }).handle, "stitch");
 });
 
+check("Ghibli: títulos dos filmes resolvem (ref='MANGA', sem ref de franquia)", () => {
+  for (const t of [
+    "Porco Rosso Savoia S.21 Seaplane model kit",
+    "Castle in the Sky Goliath Flying Battleship model kit",
+    "Kikis Delivery Service Jiji Cat plush toy 15cm",
+    "Princess Mononoke San figure",
+    "The Wind Rises Type 9 Fighter Airplane model kit",
+  ]) {
+    assert.equal(r({ franchiseRefs: ["MANGA"], title: t }).handle, "studio-ghibli", t);
+  }
+});
+
+check("Ghibli: 'Mononoke' sozinho NÃO resolve (colide com a série Mononoke)", () => {
+  assert.equal(r({ franchiseRefs: [], title: "Mononoke Kusuriuri Medicine Seller figure" }).franchise, null);
+});
+
+check("Ghibli: 'Howl' sozinho NÃO resolve (palavra comum)", () => {
+  assert.equal(r({ franchiseRefs: [], title: "Werewolf Howl at the Moon plush" }).franchise, null);
+});
+
 check("padrão não apanha dentro de outra palavra", () => {
   // "Set" é prefixo de formato, não universo; "TMNT" não está em "attmntx"
   assert.equal(r({ franchiseRefs: [], title: "Random attmntx widget" }).franchise, null);
