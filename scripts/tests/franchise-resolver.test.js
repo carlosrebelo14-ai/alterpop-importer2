@@ -95,6 +95,26 @@ check("'POP figure Star Wars The Mandalorian Grogu' → The Mandalorian, NÃO St
   assert.equal(res.handle, "the-mandalorian");
 });
 
+check("ref/token 'Star Wars' + título Mandalorian → The Mandalorian (precedência na camada 1)", () => {
+  // 231 casos no catálogo real: produto com o token 'STAR WARS' em franchises[] mas
+  // título "Star Wars Grogu ...". A camada 1 tem de respeitar a precedência, não
+  // devolver Star Wars só porque o ref bateu primeiro.
+  const res = r({ franchiseRefs: ["STAR WARS", "PELICULAS"], title: "Star Wars Grogu 3D keychain 6cm" });
+  assert.equal(res.handle, "the-mandalorian");
+  assert.equal(res.layer, 1);
+});
+
+check("refs de X-Men + Avengers juntos → X-Men (precedência entre refHits)", () => {
+  const res = r({ franchiseRefs: ["Los Vengadores", "Xmen"], title: "figura" });
+  assert.equal(res.handle, "x-men");
+  assert.equal(res.layer, 1);
+});
+
+check("ref 'Star Wars' sem Mandalorian no título → continua Star Wars", () => {
+  const res = r({ franchiseRefs: ["STAR WARS"], title: "Star Wars Darth Vader helmet" });
+  assert.equal(res.handle, "star-wars");
+});
+
 check("título com Avengers + X-Men → X-Men (padrão curto tem de vencer)", () => {
   const res = r({ franchiseRefs: [], title: "POP figure Avengers X-Men Wolverine" });
   assert.equal(res.handle, "x-men");

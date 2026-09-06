@@ -50,6 +50,7 @@ const FORBIDDEN_AS_FRANCHISE = ["funko", "pop", "exclusive", "anime & manga", "a
 function newTally() {
   const t = {
     total: 0,
+    degraded: false,
     layer1: 0,
     layer2: 0,
     empty: 0,
@@ -156,27 +157,34 @@ async function loadFromCsv(t) {
 }
 
 async function loadFromDb(t) {
-  const { prisma } = await import("../../lib/prisma/prismaSafe.server.js");
-  const PAGE = 1000;
-  let cursor = null;
-  for (;;) {
-    const rows = await prisma.catalogProduct.findMany({
-      where: { shop: SHOP },
-      select: { sku: true, title: true, franchises: true, franchiseRefs: true, titleSource: true },
-      orderBy: { sku: "asc" },
-      take: PAGE,
-      ...(cursor ? { skip: 1, cursor: { shop_sku: { shop: SHOP, sku: cursor } } } : {}),
-    });
-    if (!rows.length) break;
-    for (const r of rows) {
-      let franchiseRefs = [];
-      try { franchiseRefs = JSON.parse(r.franchiseRefs || "[]"); } catch { /* */ }
-      record(t, { sku: r.sku, title: r.title, franchiseRefs, titleSource: r.titleSource });
-      if (LIMIT && t.total >= LIMIT) return;
-    }
-    cursor = rows[rows.length - 1].sku;
-    if (rows.length < PAGE) break;
+  // node:sqlite (Node 22.5+) — sem dependência de Prisma, funciona com qualquer schema.
+  const { DatabaseSync } = await import("node:sqlite");
+  const dbPath = (process.env.DATABASE_URL || "").replace(/^file:/, "") || "./dev.sqlite";
+  const d = new DatabaseSync(dbPath, { readOnly: true });
+
+  const cols = d.prepare("PRAGMA table_info(CatalogProduct)").all().map((c) => c.name);
+  const hasRefs = cols.includes("franchiseRefs");
+  if (!hasRefs) {
+    t.degraded = true;
+    console.log(
+      "\n⚠ MODO DEGRADADO: a coluna CatalogProduct.franchiseRefs não existe nesta BD\n" +
+      "  (pré-migração da Fase 4). A camada 1 vai receber CatalogProduct.franchises, que\n" +
+      "  mistura refs do fornecedor com tokens de categoria, marcas e flags. Consequência:\n" +
+      "  - as CONTAGENS por universo são aproveitáveis (o sinal do universo está lá);\n" +
+      "  - o split camada 1 vs camada 2 NÃO é fiável e não valida a Fase 1.\n" +
+      "  Para o split real: correr --from-csv depois do feed OcioStock voltar.\n"
+    );
   }
+
+  const sql = `SELECT sku, title, titleSource, ${hasRefs ? "franchiseRefs" : "franchises"} AS refsJson
+               FROM CatalogProduct WHERE shop = ? ORDER BY sku`;
+  for (const r of d.prepare(sql).all(SHOP)) {
+    let refs = [];
+    try { refs = JSON.parse(r.refsJson || "[]"); } catch { /* */ }
+    record(t, { sku: r.sku, title: r.title, franchiseRefs: refs, titleSource: r.titleSource });
+    if (LIMIT && t.total >= LIMIT) break;
+  }
+  d.close();
 }
 
 function pct(n, d) {
@@ -187,7 +195,7 @@ function printReport(t) {
   const rows = [...t.byUniverse.values()].sort((a, b) => b.total - a.total);
 
   console.log("\n=== Franchise resolve report ===");
-  console.log(`fonte: ${FROM_DB ? `BD (${SHOP})` : "CSV stream"}${LIMIT ? ` · limit ${LIMIT}` : ""}${SUPPLIER_ONLY ? " · camada 2 só p/ titleSource=supplier" : ""}`);
+  console.log(`fonte: ${FROM_DB ? `BD (${SHOP})` : "CSV stream"}${t.degraded ? " · MODO DEGRADADO (refs de franchises[])" : ""}${LIMIT ? ` · limit ${LIMIT}` : ""}${SUPPLIER_ONLY ? " · camada 2 só p/ titleSource=supplier" : ""}`);
   console.log(`produtos analisados: ${t.total}`);
   const resolved = t.total - t.empty;
   console.log(`resolvidos: ${resolved} (${pct(resolved, t.total)})  ·  camada 1: ${t.layer1} (${pct(t.layer1, resolved)})  ·  camada 2: ${t.layer2} (${pct(t.layer2, resolved)})  ·  vazio: ${t.empty} (${pct(t.empty, t.total)})`);
