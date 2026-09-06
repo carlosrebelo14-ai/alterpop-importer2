@@ -165,6 +165,17 @@ check("Ghibli: 'Howl' sozinho NÃO resolve (palavra comum)", () => {
   assert.equal(r({ franchiseRefs: [], title: "Werewolf Howl at the Moon plush" }).franchise, null);
 });
 
+check("Sanrio alargado: Gudetama / Sumikko Gurashi / Rilakkuma → Hello Kitty / Sanrio", () => {
+  for (const t of [
+    "Gudetama surprise cup assorted plush toy 26cm",
+    "Sumikko Gurashi Friends assorted figure",
+    "Rilakkuma Friends surprise figure 5cm",
+    "Aggretsuko adult socks",
+  ]) {
+    assert.equal(r({ franchiseRefs: ["MANGA"], title: t }).handle, "hello-kitty", t);
+  }
+});
+
 check("padrão não apanha dentro de outra palavra", () => {
   // "Set" é prefixo de formato, não universo; "TMNT" não está em "attmntx"
   assert.equal(r({ franchiseRefs: [], title: "Random attmntx widget" }).franchise, null);
