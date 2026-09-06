@@ -18,7 +18,14 @@
       + revisão do Carlos (6 passos). Ver **§A**. Resultado: tabela boa; ajustes feitos
       (Ghibli, refs mortas, +#41 Lord of the Rings). Falta re-baselinar `estRange` (1º
       passo da Fase 4) e o Carlos confirmar o handle da LOTR. Nada bloqueia as Fases 4–6.
-- [ ] Fases 4–8.
+- [x] **Fase 4** — `spidey` no Spider-Man; re-baseline `estRange` → `baseline` (semântica
+      nova: resolvidos na última passagem completa / 29 430; 36 ativos / 5 dormentes);
+      migração `20260906180000_franchise_resolution` (+`franchiseRefs`, `+resolvedFranchise`,
+      `+resolvedFranchiseLayer`, índice); `toLiteProduct()` chama `resolveFranchise()` e os
+      2 escritores de `CatalogProduct` gravam os 3 campos. E2E ok. **Zero writes Shopify.**
+- [ ] **Fase 5** — definição de metafield `alterpop.franchise` com `useAsCollectionCondition`
+      (1º write Shopify — a confirmar com o Carlos). Verificar a flag em `list.single_line_text_field`.
+- [ ] Fases 6–9.
 
 ---
 
