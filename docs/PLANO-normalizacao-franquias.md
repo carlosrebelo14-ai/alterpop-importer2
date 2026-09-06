@@ -80,11 +80,17 @@
         (`appliedDisjunctively: false`), `resourcePublicationsCount: 0`. Verificado por
         `products(first:3)`: Spider-Man / Mickey & Friends / Stitch / LOTR / Zelda puxam
         os produtos certos. GIDs 723076907338 … 723077595466.
-      - **14 `toAdopt` — decidido (A) adotar, adiado.** `collectionUpdate` troca a regra
-        para `alterpop.franchise EQUALS` + põe `templateSuffix`, mantém handle/URL.
-        Consequência: contagens descem (ex. `star-wars` 249→~175) — sai a inferência por
-        título, entra o dado estruturado. Confirmar que o `templateSuffix` não colide com
-        o que "Pokémon Universe" já tem. **Carlos vê as 22 primeiro.**
+      - **14 `toAdopt` — feitas (Carlos deu OK).** `collectionUpdate` em pokemon-universe,
+        star-wars, one-piece, dragon-ball, batman, demon-slayer, harry-potter, naruto,
+        jujutsu-kaisen, attack-on-titan, stranger-things, avengers, toystory, chainsaw-man:
+        regra → `alterpop.franchise EQUALS <nome>`, `templateSuffix: universe-room`.
+        Handles/URLs mantidos. Verificado (star-wars, one-piece, harry-potter,
+        pokemon-universe, batman): regra e template certos, produtos com o metafield.
+        ⚠️ **Estas 14 já estavam PUBLICADAS** (era o tema Crave a usá-las) — `star-wars`
+        tem `resourcePublicationsCount: 7`. A adoção não mexeu na publicação, mas o
+        conteúdo mudou AO VIVO agora (Star Wars ~249→~175 por título → por metafield).
+        Ver na storefront, não só no Admin. As 22 novas continuam em rascunho.
+      - Total: **36 coleções Universe** (22 rascunho + 14 live-adotadas).
       - Quase-duplicados: `senhor-dos-aneis` (manual, 10 prod) e `hellokitty` (regra
         `licence`) ficam intactos ao lado das novas `lord-of-the-rings` / `hello-kitty`.
         Feio, inofensivo. Limpeza num passo próprio.
