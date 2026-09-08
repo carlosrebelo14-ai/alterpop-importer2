@@ -21,3 +21,4 @@ ps_now.txt
 
 .cursor/
 .gemini/
+server/data/curation-queue.json
