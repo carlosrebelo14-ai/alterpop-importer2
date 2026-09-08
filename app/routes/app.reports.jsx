@@ -11,7 +11,6 @@ import { LastSyncRunBanner } from "../components/LastSyncRunBanner.jsx";
 import { OrderStockAlertsPanel } from "../components/OrderStockAlertsPanel.jsx";
 import { listSkusForReview } from "../../lib/importer/catalog/skuLifecycle.server.js";
 import { computeMarginErosionAlerts } from "../../lib/importer/curation/marginErosion.server.js";
-import { listAutoCollections } from "../../lib/importer/shopify/autoCollections.server.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
 
 export const loader = async ({ request }) => {
@@ -20,17 +19,15 @@ export const loader = async ({ request }) => {
     getDashboardStats(session.shop),
     loadShopSettings(session.shop),
   ]);
-  const [discontinuedForReview, marginErosionAlerts, autoCollections] = await Promise.all([
+  const [discontinuedForReview, marginErosionAlerts] = await Promise.all([
     listSkusForReview(session.shop),
     computeMarginErosionAlerts(session.shop, { thresholdPct: settings.marginErosionThresholdPct }),
-    listAutoCollections(session.shop),
   ]);
   return {
     shop: session.shop,
     dashboardStats,
     discontinuedForReview,
     marginErosionAlerts,
-    autoCollections,
     marginErosionThresholdPct: settings.marginErosionThresholdPct,
   };
 };
@@ -40,7 +37,6 @@ export default function ReportsPage() {
     dashboardStats,
     discontinuedForReview,
     marginErosionAlerts,
-    autoCollections,
     marginErosionThresholdPct,
   } = useLoaderData();
   const shopify = useAppBridge();
@@ -293,34 +289,6 @@ export default function ReportsPage() {
                       {marginErosionAlerts.length > 30 && (
                         <Text as="p" tone="subdued">{`+ ${marginErosionAlerts.length - 30} outro(s)…`}</Text>
                       )}
-                    </BlockStack>
-                  )}
-                </BlockStack>
-              </Card>
-            </Layout.Section>
-          </Layout>
-
-          <Layout>
-            <Layout.Section>
-              <Card>
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">
-                    {`Coleções automáticas por licença (${autoCollections.length})`}
-                  </Text>
-                  <Text as="p" tone="subdued">
-                    Criadas em rascunho quando uma licença atinge 10+ produtos publicados. Nunca
-                    ficam visíveis na loja sem confirmares e publicares manualmente num canal de
-                    vendas no Admin.
-                  </Text>
-                  {autoCollections.length === 0 ? (
-                    <Text as="p" tone="subdued">Nenhuma licença atingiu o limiar ainda.</Text>
-                  ) : (
-                    <BlockStack gap="150">
-                      {autoCollections.map((c) => (
-                        <Text as="p" key={c.licenceKey} tone="subdued">
-                          {`${c.licenceLabel} — ${c.productCountAtCreate} produtos (criada ${new Date(c.createdAt).toLocaleDateString("pt-PT")})`}
-                        </Text>
-                      ))}
                     </BlockStack>
                   )}
                 </BlockStack>

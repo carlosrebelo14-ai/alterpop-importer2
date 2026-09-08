@@ -175,18 +175,9 @@ export const action = async ({ request }) => {
         console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
       }
 
-      // Item 5 — coleções automáticas por licença. Corre depois do publish (precisa
-      // de ver os PUBLISHED mais recentes) e nunca bloqueia nem falha o ciclo; a
-      // coleção fica sempre em rascunho (ver aviso de segurança no módulo).
-      try {
-        const collectionsClient = createShopifyClientFromSession(session);
-        const { checkAndCreateLicenceCollections } = await import(
-          "../../lib/importer/shopify/autoCollections.server.js"
-        );
-        await checkAndCreateLicenceCollections(collectionsClient, shop);
-      } catch (err) {
-        console.warn("[trigger-sync] coleções automáticas por licença falharam:", err?.message || err);
-      }
+      // As coleções automáticas por licença (ociostock.licence) foram substituídas pelas
+      // coleções Universe (alterpop.franchise, ver universeCollections.server.js) e
+      // apagadas na limpeza de 2026-09-08. O módulo autoCollections.server.js foi removido.
 
       // Item 18b — produtos já PUBLISHED não entram no runApprovedShopifySync acima
       // (esse só processa status APPROVED). Sem isto, um produto que esgota e o

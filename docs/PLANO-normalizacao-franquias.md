@@ -99,9 +99,28 @@
       - Quase-duplicados: `senhor-dos-aneis` (manual, 10 prod) e `hellokitty` (regra
         `licence`) ficam intactos ao lado das novas `lord-of-the-rings` / `hello-kitty`.
         Feio, inofensivo. Limpeza num passo próprio.
-- [ ] **Limpeza (depois da Fase 8)** — a loja fica com dois sistemas: `alterpop.franchise`
-      (novo) e `ociostock.licence` (~34 coleções, `auto-licenca-*` + outras). Passo de
-      limpeza quando o novo estiver a funcionar e se souber o que desligar sem risco.
+- [~] **Limpeza de coleções (2026-09-08, aprovada pelo Carlos)** — a loja vai ser esvaziada
+      (5575 produtos placeholder, sem público, o Carlos republica por curadoria).
+      - **Inventário:** 81 coleções → MANTER 36 Universe + `new-arrivals` ; APAGAR 44
+        (grupo A 32 `ociostock.licence` · grupo B 9 TITLE/TAG · 3 manuais). Ver
+        `scratchpad/collections-inventory.txt`.
+      - **Código feito** (branch `feat/franchise-cleanup`): removida a chamada
+        `checkAndCreateLicenceCollections` do `api.trigger-sync.jsx`; apagado
+        `lib/importer/shopify/autoCollections.server.js`; removido o painel
+        `listAutoCollections` de `app.reports.jsx`. Build + testes verdes.
+      - **`scripts/catalog/collections-cleanup.js`** — apaga tudo o que não é
+        `templateSuffix: universe-room` nem `new-arrivals`. `--dry-run` default, `--execute`
+        apaga. **Não corrido.** Corre na Fly depois do merge + deploy do código.
+      - **NÃO mexer no `syncFranchiseCatalog`** (metafield de loja p/ `/pages/franquias`) —
+        resolve-se com o frontend.
+      - **Renascem noutra fase:** `premium-collectibles` → `alterpop.tier EQUALS premium`;
+        `ichibansho` → coleção Line (`templateSuffix: line`).
+      - **Correção ao briefing (`docs/contexto-tema-novo.md §1`, repo do TEMA — a corrigir
+        lá):** `checkAndCreateLicenceCollections` **corre a cada ciclo**, mas
+        `toCreate = qualifying.filter(([key]) => !existingKeys.has(key))` — a tabela
+        `autoCollectionLicence` filtra tudo o que já foi registado. Catálogo estável ⇒
+        nada novo cruza o limiar ⇒ nada criado ⇒ `updatedAt` parados desde agosto. A
+        leitura do Carlos está certa: o módulo corre, a tabela impede a recriação.
 - [ ] Fases 8–9.
 
 ---
