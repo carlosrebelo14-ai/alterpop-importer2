@@ -99,7 +99,7 @@
       - Quase-duplicados: `senhor-dos-aneis` (manual, 10 prod) e `hellokitty` (regra
         `licence`) ficam intactos ao lado das novas `lord-of-the-rings` / `hello-kitty`.
         Feio, inofensivo. Limpeza num passo próprio.
-- [~] **Limpeza de coleções (2026-09-08, aprovada pelo Carlos)** — a loja vai ser esvaziada
+- [x] **Limpeza de coleções (2026-09-08, aprovada pelo Carlos · EXECUTADA 2026-09-09)** — a loja vai ser esvaziada
       (5575 produtos placeholder, sem público, o Carlos republica por curadoria).
       - **Inventário:** 81 coleções → MANTER 36 Universe + `new-arrivals` ; APAGAR 44
         (grupo A 32 `ociostock.licence` · grupo B 9 TITLE/TAG · 3 manuais). Ver
@@ -110,7 +110,9 @@
         `listAutoCollections` de `app.reports.jsx`. Build + testes verdes.
       - **`scripts/catalog/collections-cleanup.js`** — apaga tudo o que não é
         `templateSuffix: universe-room` nem `new-arrivals`. `--dry-run` default, `--execute`
-        apaga. **Não corrido.** Corre na Fly depois do merge + deploy do código.
+        apaga. **Corrido na Fly 2026-09-09** (PR #5 → merge `becaa20` → deploy):
+        dry-run bateu certo com a lista aprovada (32+9+3=44); `--execute` → `apagadas: 44 · falhadas: 0`.
+        Verificação pós: `total 37 · MANTER 36 Universe + 1 protegida · APAGAR 0`.
       - **NÃO mexer no `syncFranchiseCatalog`** (metafield de loja p/ `/pages/franquias`) —
         resolve-se com o frontend.
       - **Renascem noutra fase:** `premium-collectibles` → `alterpop.tier EQUALS premium`;
