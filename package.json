@@ -39,7 +39,8 @@
     "start:resilient": "bash scripts/run-with-restart.sh \"npm run start\"",
     "franchise:write-metafields": "node scripts/catalog/franchise-metafield-write.js",
     "universe:plan": "node scripts/catalog/universe-collections-plan.js",
-    "collections:cleanup": "node scripts/catalog/collections-cleanup.js"
+    "collections:cleanup": "node scripts/catalog/collections-cleanup.js",
+    "shopify:products-purge": "node scripts/catalog/shopify-products-purge.js"
   },
   "type": "module",
   "engines": {
