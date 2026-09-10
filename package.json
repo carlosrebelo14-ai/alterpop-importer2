@@ -49,7 +49,8 @@
     "collections:or-probe": "node scripts/catalog/or-rule-probe.js",
     "collections:delete": "node scripts/catalog/collection-delete.js",
     "franchise:throughput-probe": "node scripts/catalog/franchise-throughput-probe.js",
-    "franchise:e2e-probe": "node scripts/catalog/franchise-e2e-probe.js"
+    "franchise:e2e-probe": "node scripts/catalog/franchise-e2e-probe.js",
+    "line:publish-verify": "node scripts/catalog/line-publish-verify.js"
   },
   "type": "module",
   "engines": {
