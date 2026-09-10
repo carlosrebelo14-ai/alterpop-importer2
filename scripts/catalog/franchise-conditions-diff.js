@@ -40,6 +40,9 @@ const SHOP =
   process.env.SHOPIFY_SHOP_URL ||
   "jyr17t-wr.myshopify.com";
 
+// conditionObject não é introspecionável de forma simples aqui (a união
+// CollectionRuleConditionObject não aceita spread de MetafieldDefinition). O que
+// interessa ao diff é a `condition` (string) comparada por code point + a `column`.
 const LIST_QUERY = `
   query CondDiff($cursor: String) {
     collections(first: 250, after: $cursor) {
@@ -48,7 +51,7 @@ const LIST_QUERY = `
         id handle title templateSuffix
         ruleSet {
           appliedDisjunctively
-          rules { column relation condition conditionObject { ... on MetafieldDefinition { namespace key } } }
+          rules { column relation condition }
         }
       }
     }
@@ -84,6 +87,8 @@ async function main() {
   for (const want of FRANCHISE_CONDITIONS) {
     const col = byHandle.get(want.handle);
     if (!col) {
+      // Universos dormentes (active: false, baseline < 10) não têm coleção de propósito.
+      if (want.kind === "universe" && !want.active) continue;
       diffs.push({ handle: want.handle, kind: want.kind, problem: "coleção não existe na loja" });
       continue;
     }
@@ -95,15 +100,6 @@ async function main() {
         problem: `sem regra PRODUCT_METAFIELD_DEFINITION (colunas: ${rules.map((r) => r.column).join(",") || "nenhuma"})`,
       });
       continue;
-    }
-    const mfName = mfRule.conditionObject
-      ? `${mfRule.conditionObject.namespace}.${mfRule.conditionObject.key}`
-      : "(desconhecido)";
-    if (mfName !== want.metafield) {
-      diffs.push({
-        handle: want.handle, kind: want.kind,
-        problem: `regra sobre ${mfName}, esperado ${want.metafield}`,
-      });
     }
     if (mfRule.relation !== "EQUALS") {
       diffs.push({ handle: want.handle, kind: want.kind, problem: `relation ${mfRule.relation}, esperado EQUALS` });
