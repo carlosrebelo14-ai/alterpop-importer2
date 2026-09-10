@@ -69,10 +69,13 @@ model CatalogProduct {
   //  - franchiseRefs: SÓ os ref="..." do fornecedor, sem tradução (chave da camada 1 do resolver)
   franchises       String   @default("[]")
   franchiseRefs    String   @default("[]")
-  // Universo resolvido pelo franchiseResolver (nome canónico da tabela dos 41), ou NULL.
+  // Universo resolvido pelo franchiseResolver (nome canónico da tabela dos 39), ou NULL.
   // resolvedFranchiseLayer: 1 = ref, 2 = título, para auditoria. NULL até à Fase 4.
   resolvedFranchise      String?
   resolvedFranchiseLayer Int?
+  // Line resolvida (sub-divisão dentro do universo — ex.: "The Mandalorian" dentro de
+  // "Star Wars"), ou NULL. ENTREGA 2, 2026-09-10. Alimenta alterpop.line + coleção Line.
+  resolvedLine           String?
   netPrice         Float?
   grossPrice       Float?
   imageUrl         String?
@@ -96,6 +99,7 @@ model CatalogProduct {
   @@index([shop, netPrice])
   @@index([shop, barcode])
   @@index([shop, resolvedFranchise])
+  @@index([shop, resolvedLine])
 }
 
 /// Tags de filtro sitemap (OR na UI — produto pode ter várias tags).
