@@ -50,7 +50,8 @@
     "collections:delete": "node scripts/catalog/collection-delete.js",
     "franchise:throughput-probe": "node scripts/catalog/franchise-throughput-probe.js",
     "franchise:e2e-probe": "node scripts/catalog/franchise-e2e-probe.js",
-    "line:publish-verify": "node scripts/catalog/line-publish-verify.js"
+    "line:publish-verify": "node scripts/catalog/line-publish-verify.js",
+    "franchise:list-multivalue-probe": "node scripts/catalog/list-multivalue-probe.js"
   },
   "type": "module",
   "engines": {
