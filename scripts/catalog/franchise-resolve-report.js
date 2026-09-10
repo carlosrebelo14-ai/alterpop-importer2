@@ -120,9 +120,12 @@ function record(t, product) {
   if (FORBIDDEN_AS_FRANCHISE.includes(fLower)) {
     t.forbidden.push({ sku: product.sku, title: product.title, franchise: res.franchise });
   }
-  if (res.handle === "star-wars") {
+  // ENTREGA 2: Mandalorian/Grogu/Ahsoka DEVEM cair em Star Wars, mas SEMPRE com
+  // line = "The Mandalorian". Um produto assim sem line é a regressão a apanhar.
+  {
     const tl = String(product.title || "").toLowerCase();
-    if (/(mandalorian|grogu|ahsoka)/.test(tl)) {
+    const looksMandalorian = /(mandalorian|grogu|ahsoka)/.test(tl) || (product.franchiseRefs || []).some((x) => /mandalorian/i.test(x));
+    if (looksMandalorian && res.line !== "The Mandalorian") {
       t.mandalorianInStarWars.push({ sku: product.sku, title: product.title });
     }
   }
@@ -234,10 +237,10 @@ function printReport(t) {
   }
 
   if (t.mandalorianInStarWars.length) {
-    console.log(`  ✗ ${t.mandalorianInStarWars.length} produto(s) Mandalorian/Grogu/Ahsoka caíram em Star Wars (precedência falhou). Amostra:`);
+    console.log(`  ✗ ${t.mandalorianInStarWars.length} produto(s) Mandalorian/Grogu/Ahsoka SEM line "The Mandalorian" (Line perdida). Amostra:`);
     t.mandalorianInStarWars.slice(0, 8).forEach((f) => console.log(`      ${f.sku}  "${f.title}"`));
   } else {
-    console.log("  ✓ nenhum produto Mandalorian/Grogu/Ahsoka caiu em Star Wars");
+    console.log('  ✓ todos os produtos Mandalorian/Grogu/Ahsoka levam line "The Mandalorian"');
   }
 
   const drift = rows.filter((r) => (r.baseline ?? 0) >= 20 && Math.abs(r.total - r.baseline) / r.baseline > 0.15);

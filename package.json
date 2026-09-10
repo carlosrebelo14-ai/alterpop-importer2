@@ -40,7 +40,14 @@
     "franchise:write-metafields": "node scripts/catalog/franchise-metafield-write.js",
     "universe:plan": "node scripts/catalog/universe-collections-plan.js",
     "collections:cleanup": "node scripts/catalog/collections-cleanup.js",
-    "shopify:products-purge": "node scripts/catalog/shopify-products-purge.js"
+    "shopify:products-purge": "node scripts/catalog/shopify-products-purge.js",
+    "curation:revert-published": "node scripts/catalog/curation-revert-published.js",
+    "line:metafield-definition": "node scripts/catalog/line-metafield-definition.js",
+    "line:mandalorian-collection": "node scripts/catalog/mandalorian-collection-to-line.js",
+    "franchise:conditions-diff": "node scripts/catalog/franchise-conditions-diff.js",
+    "franchise:reresolve-db": "node scripts/catalog/franchise-reresolve-db.js",
+    "collections:or-probe": "node scripts/catalog/or-rule-probe.js",
+    "collections:delete": "node scripts/catalog/collection-delete.js"
   },
   "type": "module",
   "engines": {
