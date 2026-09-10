@@ -52,7 +52,9 @@
     "franchise:e2e-probe": "node scripts/catalog/franchise-e2e-probe.js",
     "line:publish-verify": "node scripts/catalog/line-publish-verify.js",
     "franchise:list-multivalue-probe": "node scripts/catalog/list-multivalue-probe.js",
-    "theme:template-audit": "node scripts/catalog/theme-template-audit.js"
+    "theme:template-audit": "node scripts/catalog/theme-template-audit.js",
+    "franchise:run-approved-sync": "node scripts/catalog/run-approved-sync.js",
+    "franchise:reconcile": "node scripts/catalog/franchise-reconcile.js"
   },
   "type": "module",
   "engines": {
