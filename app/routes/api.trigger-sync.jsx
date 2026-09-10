@@ -13,6 +13,7 @@ import { loadShopSettings } from "../../lib/importer/settings.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { ensureOciostockMetafieldDefinitions } from "../../lib/importer/shopify/metafieldSetup.js";
 import { syncFranchiseCatalog } from "../../lib/importer/shopify/franchiseCatalogSync.server.js";
+import { syncNewArrivalsTag } from "../../lib/importer/shopify/newArrivalsSync.server.js";
 
 /**
  * POST /api/trigger-sync — dispara indexação + publicação sem sessão OAuth.
@@ -211,6 +212,24 @@ export const action = async ({ request }) => {
         }
       } catch (err) {
         console.error("[trigger-sync] catálogo de franquias falhou:", err?.message || err);
+      }
+
+      // new-arrivals — janela de N dias por published_at (ENTREGA 2 · Tarefa 6). A
+      // coleção é smart TAG EQUALS "new-arrival"; este reconciliador põe/tira a tag
+      // consoante a data de publicação real. Nunca bloqueia o ciclo.
+      try {
+        const naClient = createShopifyClientFromSession(session);
+        // N = 30 por defeito (decisão do Carlos); override por NEW_ARRIVALS_WINDOW_DAYS.
+        const naResult = await syncNewArrivalsTag(naClient, shop);
+        if (naResult.ok) {
+          console.log(
+            `[trigger-sync] new-arrivals (${naResult.windowDays}d): +${naResult.tagged} / -${naResult.untagged} tag (${naResult.scanned} verificados).`
+          );
+        } else {
+          console.error("[trigger-sync] new-arrivals falhou:", naResult.error);
+        }
+      } catch (err) {
+        console.error("[trigger-sync] new-arrivals falhou:", err?.message || err);
       }
     } catch (err) {
       console.error("[trigger-sync] ciclo falhou:", err?.message || err);
