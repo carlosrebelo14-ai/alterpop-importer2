@@ -124,9 +124,21 @@ async function main() {
 
   // 2. polling da pertença às coleções
   const handlesToCheck = ["star-wars", "the-mandalorian", "harry-potter", "one-piece", "hello-kitty"];
-  console.log(`\n── a aguardar avaliação das regras (polling até 90s) ──`);
+  console.log(`\n── a aguardar avaliação das regras (polling até 180s) ──`);
+
+  // Pertença esperada por produto — a Shopify avalia as regras de forma assíncrona e a
+  // propagação NÃO é uniforme entre produtos; só paramos quando TODOS os que devem
+  // entrar em alguma coleção já lá estão (ou ao fim do tempo).
+  const expectedHandles = (m) => {
+    if (m.resolved.line === "The Mandalorian") return ["star-wars", "the-mandalorian"];
+    if (m.resolved.franchise === "Star Wars") return ["star-wars"];
+    if (m.resolved.franchise === "Harry Potter") return ["harry-potter"];
+    if (m.resolved.franchise === "One Piece") return ["one-piece"];
+    return []; // órfão: não espera nenhuma
+  };
+
   let snapshot = {};
-  for (let attempt = 1; attempt <= 9; attempt++) {
+  for (let attempt = 1; attempt <= 18; attempt++) {
     await sleep(10);
     snapshot = {};
     for (const h of handlesToCheck) {
@@ -139,11 +151,14 @@ async function main() {
         members: new Set((col.products?.nodes || []).map((n) => n.id)),
       };
     }
-    const swHit = made.find((m) => m.resolved.franchise === "Star Wars" && m.resolved.line === "The Mandalorian");
-    if (swHit && snapshot["star-wars"]?.members.has(swHit.id) && snapshot["the-mandalorian"]?.members.has(swHit.id)) {
-      console.log(`  (regras avaliadas ao fim de ~${attempt * 10}s)`);
+    const allSettled = made.every((m) =>
+      expectedHandles(m).every((h) => snapshot[h]?.members.has(m.id))
+    );
+    if (allSettled) {
+      console.log(`  (todas as regras avaliadas ao fim de ~${attempt * 10}s)`);
       break;
     }
+    if (attempt === 18) console.log(`  (timeout de 180s — reporta o estado atual)`);
   }
 
   // 3. relatório produto a produto
