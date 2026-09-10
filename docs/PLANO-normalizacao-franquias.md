@@ -641,3 +641,105 @@ de `franchises`.
 passa por `translate.js`. Os refs são vocabulário controlado do fornecedor
 (`BLACKCLOVER`, `STAR_WARS_EP`); traduzi-los destrói a chave de mapeamento da camada 1.
 `translate.js:140` só toca em `record.franchises` — manter o comentário-guarda lá.
+
+---
+
+## ENTREGA 2 — Lines, taxonomia 41→39, condições versionadas (2026-09-10)
+
+Infra montada ANTES do primeiro produto real. Loja vazia, publicação manual.
+PRs #9 #10 #11 #12. Tudo executado na Fla.
+
+### Estado inicial verificado (portão)
+- **Prisma intacta** — não foi limpa com a Shopify. 25 374 `CatalogProduct`.
+- **Publisher = estado LOCAL** — `runApprovedShopifySync` seleciona por
+  `listCurationQueueItems("APPROVED")`, zero consulta à Shopify. Fila tinha 5 420
+  `PUBLISHED` com `shopifyProductId` morto e 0 `APPROVED` ⇒ ciclo importava nada.
+
+### Tarefa 1 — revert da fila ✓
+`revertAllPublishedInQueue({ targetStatus: "PENDING" })`. 5 420 `PUBLISHED → PENDING`
+(não APPROVED: publicação é manual), `shopifyProductId`/`publishedAt` limpos, sync
+errors desativados. Fila: 30 493 PENDING / 113 REJECTED / 0 outros.
+
+### Tarefa 2 — The Mandalorian passa a Line dentro de Star Wars ✓
+- `franchiseUniverses.js`: entrada removida; precedência `the-mandalorian>star-wars` removida.
+- `franchiseLines.js` (novo): `{ line, parent, handle, condition, refs, titlePatterns }`.
+  Deteção por ref/título (mesma máquina das camadas 1/2); quando bate, o **parent**
+  ganha `franchise` e o produto leva `line`. Refs/patterns idênticos à antiga entrada.
+- `franchiseResolver`: `resolveUniverse` (camadas 1–3, intacto) + `resolveFranchise`
+  (Line + NFC). Exports novos: `checkLineInvariants`.
+- Metafield `alterpop.line` (`list.single_line_text_field`, `smartCollectionCondition`):
+  **GID `gid://shopify/MetafieldDefinition/1523245318474`** (criado na Fla).
+- Publisher: `setLineMetafield` escreve `alterpop.line` no publish. Mapper: `resolvedLine`.
+- Prisma: `CatalogProduct.resolvedLine` + índice (`prisma db push` na Fla).
+- Coleção `the-mandalorian`: regra → `alterpop.line EQUALS "The Mandalorian"`,
+  `templateSuffix: line`. ✓ aplicado.
+
+### Tarefa 3 — Hello Kitty / Sanrio eliminado ✓
+Entrada removida. Coleção `hello-kitty` apagada. **506 registos ficam órfãos**
+(camada 3), **2 reatribuídos** a outro universo (`5055371628921`→Pokémon,
+`8412688667536`→Mickey & Friends — ambos melhorias: títulos reais afloram sem o ref HK).
+
+### Tarefa 4 — condições versionadas ✓
+`franchiseConditions.js` (novo): fonte única `handle`+`condition` (39 universos + 1 line),
+tudo NFC. `assertConditionsNFC()` apanha NFD/NBSP na origem.
+`franchise-conditions-diff.js`: compara por **code point** contra as regras reais da loja.
+Resultado final: **"tudo alinhado — pode escrever metafields"**. As 34 condições ativas +
+a Line batem byte a byte, incluindo `Pokémon` (U+00E9), `Spy × Family` (U+00D7),
+`G.I. Joe`, `Mickey & Friends`.
+Drift corrigido: handles `pokemon`→`pokemon-universe`, `toy-story`→`toystory` (handles
+reais na loja desde a Fase 7; a tabela alinha-se à loja — URL/SEO permanente).
+
+### NFC — investigação (bloqueio do Carlos)
+Zero ruído NFC. Forense sobre 25 374: 0 registos `old≠new` com mesmo nome canónico,
+0 `resolvedFranchise` fora de NFC, 0 valores novos fora de NFC. Matriz de transições
+tem exatamente 4 entradas = 799: 506 (HK→∅) + 291 (Manda→SW) + 1 (HK→Pokémon) +
+1 (HK→Mickey). Não há segundo caminho de alteração. O `franchise` nunca vem do feed —
+é sempre `universe.name` da tabela (NFC), agora também via `nfc()`.
+
+### Tarefa 5 — re-resolução da Prisma ✓ (--execute)
+| Critério | Esperado | Obtido |
+|---|--:|--:|
+| valores distintos de franquia | 39 | 39 ✓ |
+| `The Mandalorian` como franquia | 0 | 0 ✓ |
+| `line = "The Mandalorian"` | 291 | 291 ✓ |
+| — com `franchise = "Star Wars"` | 291 | 291 ✓ |
+| `Hello Kitty / Sanrio` como franquia | 0 | 0 ✓ |
+| ex-Mandalorian sem franquia nem line | 0 | 0 ✓ |
+
+`resolvedFranchise` não-nulo: 13 177 → **12 671** (−506 órfãos HK). `resolvedLine`: **291**.
+Star Wars: 583 → **874** (+291).
+
+### Tarefa 6 — new-arrivals por janela de `published_at` ✓
+Shopify não tem coluna de data em smart collections. `newArrivalsSync.server.js`:
+reconciliador em cada ciclo (`trigger-sync`) — publicados nos últimos **N=30** dias
+ganham a tag `new-arrival`, mais antigos perdem-na. Coleção fica `TAG EQUALS
+"new-arrival"`. Override: `NEW_ARRIVALS_WINDOW_DAYS`. Reimport em massa não mete a tag.
+
+### Tarefa 7 — teste OR ✓
+Basic **ACEITA** `appliedDisjunctively: true` + 2 regras `PRODUCT_METAFIELD_DEFINITION
+EQUALS`. Sub-universos Disney podem usar OR de metafields. (Coleção-teste criada+apagada.)
+
+### Tarefa 8 — throughput ✓
+50 produtos descartáveis: `metafieldsSet` 25/lote → **54 ms/metafield**, 0 throttle
+retries. Extrapolação: ~2 500 publicados ≈ 2,3 min; ~12 700 resolvidos ≈ 11,5 min.
+Backoff existente: 429 (Retry-After/exp), 5xx (exp), HTTP-200 THROTTLED (usa
+`throttleStatus`), `MAX_RETRIES=5`, `runThrottled` = p-limit + min-interval. O publish
+corre num IIFE destacado no `trigger-sync`, sem timeout de HTTP.
+
+### Tarefa 9 — e2e com descartáveis ✓ (6 pass / 0 fail)
+| Produto | resolvido | coleções |
+|---|---|---|
+| Star Wars Darth Vader (ref SW) | SW / ∅ | `star-wars` ✓ |
+| Star Wars Mandalorian Grogu (ref SW) | SW / The Mandalorian | `star-wars` + `the-mandalorian` ✓ |
+| Grogu plush (SEM ref, só título) | SW / The Mandalorian (L2) | `star-wars` + `the-mandalorian` ✓ |
+| Harry Potter (ref HP) | Harry Potter / ∅ | `harry-potter` ✓ |
+| One Piece (ref) | One Piece / ∅ | `one-piece` ✓ |
+| Hello Kitty classic plush | ∅ / ∅ | nenhuma (órfão) ✓ |
+
+Mandalorian **em simultâneo** em `star-wars` e `the-mandalorian`, por ref e por
+título isolado. Regras avaliadas em ~30s. 6 produtos-teste apagados.
+
+### Fora de âmbito (mantido)
+Seleção de produtos reais. Coleções novas. `best-sellers`/`premium-collectibles`
+(premium só volta por `alterpop.tier`). Órfãos Marvel/DC. Sub-franquias Disney
+(modelo OR validado, decisão pendente).
