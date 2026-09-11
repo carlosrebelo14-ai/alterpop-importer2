@@ -102,13 +102,15 @@ model CatalogProduct {
   originalTitle    String?
   cleanTitle       String?
   titleOverride    String?
-  // INCIDENTE 2026-09-11 — restaurado de emergência. Tarefa 27 tentou apagar esta
-  // coluna, mas tinha @default(false) (NOT NULL): "prisma db push" recusou o DROP
-  // COLUMN sem --accept-data-loss (que o Dockerfile CMD não passa) e a máquina entrou
-  // em crash-loop até ao limite de restarts (app ficou em baixo ~20 min). Nenhum
-  // código lê/escreve este campo — a remoção real fica para um passo à parte, com o
-  // --accept-data-loss aplicado deliberadamente, não como efeito secundário de um
-  // "npm run build" normal.
+  // OBSOLETO (Decisão 14, Tarefa 29, 2026-09-11) — NENHUM código lê/escreve este
+  // campo. A camada de chapéu que o preenchia foi arquivada na Tarefa 27
+  // (franchiseResolver.server.js não tem resolveUmbrella nem resolveFranchiseWithUmbrella).
+  // Continua na BD só por causa do INCIDENTE 2026-09-11: a Tarefa 27 tentou apagá-lo,
+  // mas tinha @default(false) (NOT NULL) — "prisma db push" recusou o DROP COLUMN sem
+  // --accept-data-loss e a máquina entrou em crash-loop até ao limite de restarts (app
+  // em baixo ~20 min). Sem migração aqui de propósito (Decisão 14) — a remoção real
+  // fica para um passo à parte, com --accept-data-loss aplicado deliberadamente,
+  // nunca como efeito secundário de um deploy normal (ver Tarefa 28 / Decisão 13).
   resolvedUmbrella Boolean  @default(false)
   indexedAt        DateTime @default(now())
 
