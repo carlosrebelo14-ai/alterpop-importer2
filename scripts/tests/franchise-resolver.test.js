@@ -130,8 +130,16 @@ check("'POP figure Ghost Face' → vazio (Scream fora da lista)", () => {
   assert.equal(r({ franchiseRefs: [], title: "POP figure Ghost Face" }).franchise, null);
 });
 
-check("Deadpool → vazio (Marvel fora da lista de universos)", () => {
-  assert.equal(r({ franchiseRefs: [], title: "POP figure Marvel Deadpool 30th" }).franchise, null);
+check("Deadpool → X-Men (Tarefa 13b); 'Marvel' sozinho continua fora da lista", () => {
+  const res = r({ franchiseRefs: [], title: "POP figure Marvel Deadpool 30th" });
+  assert.equal(res.franchise, "X-Men");
+  assert.equal(r({ franchiseRefs: ["DEADPOOL"], title: "x" }).franchise, "X-Men");
+});
+
+check("Iron Man → Avengers (Tarefa 13b)", () => {
+  const res = r({ franchiseRefs: [], title: "Marvel Iron Man metal figure 10cm" });
+  assert.equal(res.franchise, "Avengers");
+  assert.equal(r({ franchiseRefs: ["IRON MAN"], title: "x" }).franchise, "Avengers");
 });
 
 check("Joker → vazio (DC fora da lista)", () => {
