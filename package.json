@@ -60,6 +60,7 @@
     "franchise:orphans-report": "node scripts/catalog/franchise-orphans-report.js",
     "franchise:missing-refs-dryrun": "node scripts/catalog/franchise-missing-refs-dryrun.js",
     "franchise:orphans-profile": "node scripts/catalog/franchise-orphans-profile.js",
+    "franchise:table-store-audit": "node scripts/catalog/franchise-table-store-audit.js",
     "kpop:overlap": "node scripts/catalog/kpop-demon-hunters-overlap.js",
     "kpop:collection-create": "node scripts/catalog/kpop-collection-create.js"
   },
