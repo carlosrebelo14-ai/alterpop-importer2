@@ -66,6 +66,58 @@ check("título vazio não rebenta", () => {
   assert.equal(cleanProductTitle({}), "");
 });
 
+// ── Decisão 8 — portão dirigido: 5 casos obrigatórios (títulos reais da loja) ──────
+
+check("Decisão 8 · caso 1 — prefixo de fornecedor (Latino)", () => {
+  assert.equal(
+    cleanProductTitle({
+      title: "Latino Pokemon Mega-Charizard X Ultra Premium collectible cards case",
+      resolvedFranchise: "Pokémon",
+    }),
+    "Pokemon Mega-Charizard X Ultra Premium collectible cards case"
+  );
+});
+
+check("Decisão 8 · caso 2 — marca contraditória com a ref", () => {
+  assert.equal(
+    cleanProductTitle({
+      title: "Transformers Star Wars The Mandalorian N-1 Starfighter figure 19cm",
+      resolvedFranchise: "Star Wars",
+      resolvedLine: "The Mandalorian",
+    }),
+    "Star Wars The Mandalorian N-1 Starfighter figure 19cm"
+  );
+});
+
+check("Decisão 8 · caso 3 — franquia repetida (segmento ' - X' redundante)", () => {
+  assert.equal(
+    cleanProductTitle({
+      title: "Star Wars The Mandalorian & Grogu - The Mandalorian & Grogu Deluxe figure 9,5cm",
+      resolvedFranchise: "Star Wars",
+      resolvedLine: "The Mandalorian",
+    }),
+    "Star Wars The Mandalorian & Grogu Deluxe figure 9,5cm"
+  );
+});
+
+check("Decisão 8 · caso 4 — preço e unidade", () => {
+  assert.equal(
+    cleanProductTitle({ title: "Batman offer pack 3.50€ x unit", resolvedFranchise: "Batman" }),
+    "Batman offer pack"
+  );
+});
+
+check("Decisão 8 · caso 5 — repetição interna (alias bare 'Mandalorian')", () => {
+  assert.equal(
+    cleanProductTitle({
+      title: "POP figure Rides Deluxe Star Wars Mandalorian 9 the Mandalorian in N-1 Starfighter",
+      resolvedFranchise: "Star Wars",
+      resolvedLine: "The Mandalorian",
+    }),
+    "Rides Deluxe Star Wars Mandalorian 9 in N-1 Starfighter"
+  );
+});
+
 if (failures) {
   console.error(`\n${failures} falha(s)`);
   process.exit(1);
