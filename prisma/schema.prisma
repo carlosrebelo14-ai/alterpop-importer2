@@ -102,6 +102,14 @@ model CatalogProduct {
   originalTitle    String?
   cleanTitle       String?
   titleOverride    String?
+  // INCIDENTE 2026-09-11 — restaurado de emergência. Tarefa 27 tentou apagar esta
+  // coluna, mas tinha @default(false) (NOT NULL): "prisma db push" recusou o DROP
+  // COLUMN sem --accept-data-loss (que o Dockerfile CMD não passa) e a máquina entrou
+  // em crash-loop até ao limite de restarts (app ficou em baixo ~20 min). Nenhum
+  // código lê/escreve este campo — a remoção real fica para um passo à parte, com o
+  // --accept-data-loss aplicado deliberadamente, não como efeito secundário de um
+  // "npm run build" normal.
+  resolvedUmbrella Boolean  @default(false)
   indexedAt        DateTime @default(now())
 
   @@id([shop, sku])
