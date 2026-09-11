@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import {
   resolveFranchise,
   stripFormatPrefix,
+  matchFormatPrefix,
   checkPrecedenceInvariants,
   checkRefIndexCollisions,
   checkLineInvariants,
@@ -310,6 +311,13 @@ check("stripFormatPrefix remove um prefixo conhecido", () => {
   assert.equal(stripFormatPrefix("POP figure One Piece Luffy"), "One Piece Luffy");
   assert.equal(stripFormatPrefix("Pocket POP Keychain Batman"), "Batman");
   assert.equal(stripFormatPrefix("Dragon Ball Z Goku"), "Dragon Ball Z Goku"); // sem prefixo, intacto
+});
+
+check("Tarefa 31 · matchFormatPrefix identifica QUAL prefixo bateu (censo)", () => {
+  assert.equal(matchFormatPrefix("POP figure One Piece Luffy"), "POP figure");
+  assert.equal(matchFormatPrefix("Pocket POP Keychain Batman"), "Pocket POP Keychain");
+  assert.equal(matchFormatPrefix("Latino Pokemon Mega-Charizard"), "Latino");
+  assert.equal(matchFormatPrefix("Dragon Ball Z Goku"), null);
 });
 
 if (failures) {
