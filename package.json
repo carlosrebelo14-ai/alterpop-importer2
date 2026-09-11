@@ -45,6 +45,7 @@
     "curation:revert-published": "node scripts/catalog/curation-revert-published.js",
     "line:metafield-definition": "node scripts/catalog/line-metafield-definition.js",
     "line:mandalorian-collection": "node scripts/catalog/mandalorian-collection-to-line.js",
+    "format:metafield-definition": "node scripts/catalog/format-metafield-definition.js",
     "franchise:conditions-diff": "node scripts/catalog/franchise-conditions-diff.js",
     "franchise:reresolve-db": "node scripts/catalog/franchise-reresolve-db.js",
     "collections:or-probe": "node scripts/catalog/or-rule-probe.js",
