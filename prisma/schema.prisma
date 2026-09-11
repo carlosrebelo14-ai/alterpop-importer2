@@ -102,12 +102,6 @@ model CatalogProduct {
   originalTitle    String?
   cleanTitle       String?
   titleOverride    String?
-  // Decisão 9 / Tarefa 14b (2026-09-11) — true quando resolvedFranchise veio da camada
-  // 3 "chapéu" (Disney/Marvel, franchiseResolver.server.js § resolveFranchiseWithUmbrella),
-  // não de um universo próprio. Coluna existe já; NULA/false em todo o catálogo até a
-  // camada de chapéu ser efetivamente ligada a resolveFranchise() — essa ligação ainda
-  // não aconteceu (as 4 condições da Decisão 9 têm de estar verdes primeiro).
-  resolvedUmbrella Boolean  @default(false)
   indexedAt        DateTime @default(now())
 
   @@id([shop, sku])

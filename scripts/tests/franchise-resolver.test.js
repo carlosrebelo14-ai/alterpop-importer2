@@ -8,8 +8,6 @@
 import assert from "node:assert/strict";
 import {
   resolveFranchise,
-  resolveUmbrella,
-  resolveFranchiseWithUmbrella,
   stripFormatPrefix,
   checkPrecedenceInvariants,
   checkRefIndexCollisions,
@@ -77,49 +75,6 @@ check("Lord of the Rings: ref e títulos (incl. produtos 'Hobbit … El Señor d
 check("KPop Demon Hunters revertida (Tarefa 24): ref/título voltam a órfão", () => {
   assert.equal(r({ franchiseRefs: ["KPopDemonHunters"], title: "x" }).franchise, null);
   assert.equal(r({ franchiseRefs: [], title: "KPop Demon Hunters Mira doll" }).franchise, null);
-});
-
-check("Tarefa 14b · resolveFranchiseWithUmbrella: não mexe quando camada 1/2/Line já resolveu", () => {
-  const cases = [
-    { franchiseRefs: ["Onepiece"], title: "x" },
-    { franchiseRefs: [], title: "Batman figure" },
-    { franchiseRefs: ["Mandalorian"], title: "x" },
-  ];
-  for (const c of cases) {
-    const before = resolveFranchise(c);
-    const after = resolveFranchiseWithUmbrella(c);
-    assert.equal(after.franchise, before.franchise);
-    assert.equal(after.handle, before.handle);
-    assert.equal(after.layer, before.layer);
-    assert.equal(after.line, before.line);
-    assert.equal(after.isUmbrella, false);
-  }
-});
-
-check("Tarefa 14b · resolveFranchiseWithUmbrella: chapéu só quando camada 1/2/Line falha", () => {
-  const r1 = resolveFranchiseWithUmbrella({ franchiseRefs: ["MARVEL"], title: "x" });
-  assert.equal(r1.franchise, "Marvel");
-  assert.equal(r1.isUmbrella, true);
-  const r2 = resolveFranchiseWithUmbrella({ franchiseRefs: [], title: "Disney generic backpack" });
-  assert.equal(r2.franchise, "Disney");
-  assert.equal(r2.isUmbrella, true);
-  const r3 = resolveFranchiseWithUmbrella({ franchiseRefs: [], title: "generic neutral widget" });
-  assert.equal(r3.franchise, null);
-  assert.equal(r3.isUmbrella, false);
-});
-
-check("Tarefa 14b · reversibilidade: produto que cairia no chapéu Marvel antes da Tarefa 13b agora resolve X-Men, nunca chega ao chapéu", () => {
-  const product = { franchiseRefs: ["MARVEL", "DEADPOOL"], title: "Marvel Deadpool money box" };
-  // camada 1 já apanha "DEADPOOL" (Tarefa 13b) antes de "MARVEL" alguma vez ser tentado
-  // como chapéu — a ordem de resolveFranchiseWithUmbrella nunca chega a resolveUmbrella.
-  const res = resolveFranchiseWithUmbrella(product);
-  assert.equal(res.franchise, "X-Men");
-  assert.equal(res.isUmbrella, false);
-  // prova negativa: SE não houvesse a entrada Deadpool em X-Men, o mesmo produto
-  // cairia no chapéu Marvel — confirma que resolveUmbrella() sozinho ainda apanha
-  // este caso (o "antes" da Tarefa 13b), fechando a prova de reversibilidade.
-  const umbrellaOnly = resolveUmbrella({ franchiseRefs: ["MARVEL"], title: "Marvel money box" });
-  assert.equal(umbrellaOnly.franchise, "Marvel");
 });
 
 check("handles únicos", () => {
