@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 /**
  * ENTREGA 2 · Tarefa 4 — diff das condições versionadas vs as regras REAIS da Shopify.
- *
- * Corre ANTES de qualquer escrita de metafields (franchise-metafield-write, publish em
- * lote, etc.). Se a condição EQUALS de uma coleção Universe/Line não bater byte a byte
- * com franchiseConditions.js, o metafield escrito nunca casa e a sala fica vazia sem
- * erro visível — este script apanha isso.
+ * Tarefa 26 (2026-09-11) — a lógica viveu aqui sozinha; agora é
+ * lib/importer/shopify/franchiseConditionsGuard.server.js, reutilizada também como
+ * portão obrigatório dentro de runApprovedShopifySync (shopifyApprovedSync.server.js),
+ * ANTES de qualquer escrita de metafields — não só um script que alguém corre à mão.
  *
  * Comparação por CODE POINT: NÃO normaliza a condição da Shopify antes de comparar.
- * Também assinala:
- *   - coleção em falta (handle da lista sem coleção na loja)
- *   - regra PRODUCT_METAFIELD_DEFINITION em falta ou com metafield errado
+ * Assinala:
+ *   - universo/line ATIVO na tabela sem coleção na loja (dormentes ficam de fora)
+ *   - regra PRODUCT_METAFIELD_DEFINITION em falta, com relation/condição errada
  *   - templateSuffix diferente do esperado
  *   - coleção universe-room / line na loja sem entrada na lista versionada
  *   - NBSP / NFD dentro da lista versionada (assertConditionsNFC)
@@ -23,15 +22,8 @@
  */
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
-import {
-  FRANCHISE_CONDITIONS,
-  FRANCHISE_CONDITION_HANDLES,
-  assertConditionsNFC,
-} from "../../lib/importer/catalog/franchiseConditions.js";
-import {
-  UNIVERSE_TEMPLATE_SUFFIX,
-} from "../../lib/importer/catalog/franchiseUniverses.js";
-import { LINE_TEMPLATE_SUFFIX } from "../../lib/importer/catalog/franchiseLines.js";
+import { computeFranchiseConditionsDiff } from "../../lib/importer/shopify/franchiseConditionsGuard.server.js";
+import { FRANCHISE_CONDITIONS } from "../../lib/importer/catalog/franchiseConditions.js";
 
 const args = process.argv.slice(2);
 const JSON_OUT = args.includes("--json");
@@ -40,97 +32,17 @@ const SHOP =
   process.env.SHOPIFY_SHOP_URL ||
   "jyr17t-wr.myshopify.com";
 
-// conditionObject não é introspecionável de forma simples aqui (a união
-// CollectionRuleConditionObject não aceita spread de MetafieldDefinition). O que
-// interessa ao diff é a `condition` (string) comparada por code point + a `column`.
-const LIST_QUERY = `
-  query CondDiff($cursor: String) {
-    collections(first: 250, after: $cursor) {
-      pageInfo { hasNextPage endCursor }
-      nodes {
-        id handle title templateSuffix
-        ruleSet {
-          appliedDisjunctively
-          rules { column relation condition }
-        }
-      }
-    }
-  }
-`;
-
-async function fetchAll(client) {
-  const out = [];
-  let cursor = null;
-  for (let p = 0; p < 20; p++) {
-    const data = await client.graphql(LIST_QUERY, { cursor });
-    const conn = data?.collections;
-    for (const n of conn?.nodes || []) out.push(n);
-    if (!conn?.pageInfo?.hasNextPage) break;
-    cursor = conn.pageInfo.endCursor;
-  }
-  return out;
-}
-
-/** code points de uma string, para diagnóstico ("Pokémon" vs "Pokémon"). */
-const cps = (s) => [...String(s)].map((c) => "U+" + c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")).join(" ");
-
 async function main() {
-  const nfcProblems = assertConditionsNFC();
-
   const session = await loadOfflineSessionForShop(SHOP);
   const client = createShopifyClientFromSession(session);
-  const collections = await fetchAll(client);
-  const byHandle = new Map(collections.map((c) => [c.handle, c]));
 
-  const diffs = [];
-
-  for (const want of FRANCHISE_CONDITIONS) {
-    const col = byHandle.get(want.handle);
-    if (!col) {
-      // Universos dormentes (active: false, baseline < 10) não têm coleção de propósito.
-      if (want.kind === "universe" && !want.active) continue;
-      diffs.push({ handle: want.handle, kind: want.kind, problem: "coleção não existe na loja" });
-      continue;
-    }
-    const rules = col.ruleSet?.rules || [];
-    const mfRule = rules.find((r) => r.column === "PRODUCT_METAFIELD_DEFINITION");
-    if (!mfRule) {
-      diffs.push({
-        handle: want.handle, kind: want.kind,
-        problem: `sem regra PRODUCT_METAFIELD_DEFINITION (colunas: ${rules.map((r) => r.column).join(",") || "nenhuma"})`,
-      });
-      continue;
-    }
-    if (mfRule.relation !== "EQUALS") {
-      diffs.push({ handle: want.handle, kind: want.kind, problem: `relation ${mfRule.relation}, esperado EQUALS` });
-    }
-    if (mfRule.condition !== want.condition) {
-      diffs.push({
-        handle: want.handle, kind: want.kind,
-        problem: "condição não bate por code point",
-        want: want.condition, wantCps: cps(want.condition),
-        got: mfRule.condition, gotCps: cps(mfRule.condition),
-      });
-    }
-    if ((col.templateSuffix || null) !== want.templateSuffix) {
-      diffs.push({
-        handle: want.handle, kind: want.kind,
-        problem: `templateSuffix "${col.templateSuffix || ""}", esperado "${want.templateSuffix}"`,
-      });
-    }
-  }
-
-  // Coleções Universe/Line na loja sem entrada na lista versionada.
-  const strayTemplates = new Set([UNIVERSE_TEMPLATE_SUFFIX, LINE_TEMPLATE_SUFFIX]);
-  const stray = collections.filter(
-    (c) => strayTemplates.has(c.templateSuffix) && !FRANCHISE_CONDITION_HANDLES.has(c.handle)
-  );
+  const { nfcProblems, diffs, stray, collectionsCount } = await computeFranchiseConditionsDiff(client);
 
   if (JSON_OUT) {
     console.log(JSON.stringify({ shop: SHOP, nfcProblems, diffs, stray: stray.map((c) => c.handle) }, null, 2));
   } else {
     console.log(`=== franchise-conditions-diff (${SHOP}) ===`);
-    console.log(`lista versionada: ${FRANCHISE_CONDITIONS.length} entradas · coleções na loja: ${collections.length}`);
+    console.log(`lista versionada: ${FRANCHISE_CONDITIONS.length} entradas · coleções na loja: ${collectionsCount}`);
     if (nfcProblems.length) {
       console.log(`\n⚠️  problemas na lista versionada (corrigir no repo):`);
       for (const p of nfcProblems) console.log(`  - ${p}`);
