@@ -32,23 +32,20 @@ function check(name, fn) {
 const r = (product) => resolveFranchise(product);
 
 // ── config da tabela ────────────────────────────────────────────────────────────
-check("tabela: 40 universos (ENTREGA 2: -Mandalorian -HelloKitty; Decisão 7: +KPop Demon Hunters), active === baseline ≥ 10", () => {
-  assert.equal(FRANCHISE_UNIVERSES.length, 40);
+check("tabela: 39 universos (ENTREGA 2: -Mandalorian -HelloKitty), active === baseline ≥ 10", () => {
+  assert.equal(FRANCHISE_UNIVERSES.length, 39);
   for (const u of FRANCHISE_UNIVERSES) {
     assert.equal(typeof u.baseline, "number", `${u.handle} sem baseline`);
     assert.equal(u.active, u.baseline >= 10, `${u.handle}: active=${u.active} mas baseline=${u.baseline}`);
   }
-  // 34 ativos depois da ENTREGA 2; Decisão 7 acrescenta KPop Demon Hunters (ativo) → 35.
-  assert.equal(FRANCHISE_UNIVERSES.filter((u) => u.active).length, 35);
+  // 36 ativos antes; saíram Mandalorian e Hello Kitty (ambos ativos) → 34 ativos, 5 dormentes.
+  assert.equal(FRANCHISE_UNIVERSES.filter((u) => u.active).length, 34);
   assert.equal(FRANCHISE_UNIVERSES.filter((u) => !u.active).length, 5);
   // universos removidos não voltam pela porta das traseiras
   assert.equal(FRANCHISE_UNIVERSES.some((u) => u.handle === "the-mandalorian"), false);
   assert.equal(FRANCHISE_UNIVERSES.some((u) => u.handle === "hello-kitty"), false);
-  // Decisão 7 — KPop Demon Hunters, universo próprio, não toca no demon-slayer existente
-  const kpop = FRANCHISE_UNIVERSES.find((u) => u.handle === "kpop-demon-hunters");
-  assert.ok(kpop, "kpop-demon-hunters em falta");
-  assert.equal(kpop.name, "KPop Demon Hunters");
-  assert.deepEqual(kpop.refs, ["KPopDemonHunters"]);
+  // Decisão 7 revertida na Tarefa 24 — não volta pela porta das traseiras
+  assert.equal(FRANCHISE_UNIVERSES.some((u) => u.handle === "kpop-demon-hunters"), false);
   const demonSlayer = FRANCHISE_UNIVERSES.find((u) => u.handle === "demon-slayer");
   assert.deepEqual(demonSlayer.refs, ["Kimetsuno Yaiba"]);
 });
@@ -62,8 +59,8 @@ check("tabela de Lines: The Mandalorian dentro de Star Wars; invariantes ok", ()
   assert.deepEqual(checkLineInvariants(), []);
 });
 
-check("condições versionadas: 41 entradas (40 universos + 1 line), todas NFC", () => {
-  assert.equal(FRANCHISE_CONDITIONS.length, 41);
+check("condições versionadas: 40 entradas (39 universos + 1 line), todas NFC", () => {
+  assert.equal(FRANCHISE_CONDITIONS.length, 40);
   assert.deepEqual(assertConditionsNFC(), []);
   const manda = FRANCHISE_CONDITIONS.find((c) => c.handle === "the-mandalorian");
   assert.equal(manda.metafield, "alterpop.line");
@@ -77,10 +74,9 @@ check("Lord of the Rings: ref e títulos (incl. produtos 'Hobbit … El Señor d
   assert.equal(r({ franchiseRefs: [], title: "Set regalo cartera Hobbit El Señor de los Anillos" }).handle, "lord-of-the-rings");
 });
 
-check("KPop Demon Hunters: ref e título; 'kpop' isolado não resolve (Decisão 7)", () => {
-  assert.equal(r({ franchiseRefs: ["KPopDemonHunters"], title: "x" }).handle, "kpop-demon-hunters");
-  assert.equal(r({ franchiseRefs: [], title: "KPop Demon Hunters Mira doll" }).handle, "kpop-demon-hunters");
-  assert.equal(r({ franchiseRefs: [], title: "Kpop Diva Squad assorted doll 30cm" }).layer, 3);
+check("KPop Demon Hunters revertida (Tarefa 24): ref/título voltam a órfão", () => {
+  assert.equal(r({ franchiseRefs: ["KPopDemonHunters"], title: "x" }).franchise, null);
+  assert.equal(r({ franchiseRefs: [], title: "KPop Demon Hunters Mira doll" }).franchise, null);
 });
 
 check("Tarefa 14b · resolveFranchiseWithUmbrella: não mexe quando camada 1/2/Line já resolveu", () => {
