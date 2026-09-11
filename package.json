@@ -31,7 +31,7 @@
     "catalog:reindex": "node scripts/catalog/full-catalog-reindex.js",
     "catalog:dedupe": "node scripts/catalog/catalog-dedupe.js",
     "franchise:report": "node scripts/catalog/franchise-resolve-report.js",
-    "test:franchise": "node scripts/tests/parse-family-signals.test.js && node scripts/tests/franchise-resolver.test.js && node scripts/tests/title-cleaner.test.js",
+    "test:franchise": "node scripts/tests/parse-family-signals.test.js && node scripts/tests/franchise-resolver.test.js && node scripts/tests/title-cleaner.test.js && node scripts/tests/format-extractor.test.js",
     "curation:elite-purge": "node scripts/curation/elite-curation-purge.js",
     "oauth:url": "node scripts/setup/generate-oauth-install-url.js",
     "sync:daemon": "node scripts/sync/live-sync-daemon.js",
@@ -64,6 +64,7 @@
     "franchise:table-store-audit": "node scripts/catalog/franchise-table-store-audit.js",
     "title:clean-rule-sample": "node scripts/catalog/title-clean-rule-sample.js",
     "title:prefix-census": "node scripts/catalog/title-prefix-census.js",
+    "format:extract-dryrun": "node scripts/catalog/format-extract-dryrun.js",
     "kpop:overlap": "node scripts/catalog/kpop-demon-hunters-overlap.js",
     "kpop:collection-create": "node scripts/catalog/kpop-collection-create.js"
   },

@@ -112,6 +112,13 @@ model CatalogProduct {
   // fica para um passo à parte, com --accept-data-loss aplicado deliberadamente,
   // nunca como efeito secundário de um deploy normal (ver Tarefa 28 / Decisão 13).
   resolvedUmbrella Boolean  @default(false)
+  // Tarefa 34 (Decisão 18) — formatExtractor.server.js. Formato de produto (Figure,
+  // Keychain, Backpack, Plush, Puzzle, Mug, Blind Box), derivado do título — o
+  // vocabulário que saiu de FORMAT_PREFIXES na Tarefa 32. Alimenta o metafield
+  // alterpop.format (Tarefa 35) no publish. NULL até correr o backfill/dry-run
+  // aprovado — sem @default, nullable puro (ADD COLUMN sem dados existentes, sem
+  // risco do incidente da Tarefa 27).
+  resolvedFormat   String?
   indexedAt        DateTime @default(now())
 
   @@id([shop, sku])
