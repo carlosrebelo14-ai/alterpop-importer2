@@ -54,7 +54,9 @@
     "franchise:list-multivalue-probe": "node scripts/catalog/list-multivalue-probe.js",
     "theme:template-audit": "node scripts/catalog/theme-template-audit.js",
     "franchise:run-approved-sync": "node scripts/catalog/run-approved-sync.js",
-    "franchise:reconcile": "node scripts/catalog/franchise-reconcile.js"
+    "franchise:reconcile": "node scripts/catalog/franchise-reconcile.js",
+    "franchise:title-ref-contradiction": "node scripts/catalog/franchise-title-ref-contradiction.js",
+    "franchise:orphans-report": "node scripts/catalog/franchise-orphans-report.js"
   },
   "type": "module",
   "engines": {
