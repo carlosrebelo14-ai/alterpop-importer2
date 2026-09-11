@@ -57,7 +57,8 @@
     "franchise:reconcile": "node scripts/catalog/franchise-reconcile.js",
     "title:clean-dryrun": "node scripts/catalog/title-clean-dryrun.js",
     "franchise:title-ref-contradiction": "node scripts/catalog/franchise-title-ref-contradiction.js",
-    "franchise:orphans-report": "node scripts/catalog/franchise-orphans-report.js"
+    "franchise:orphans-report": "node scripts/catalog/franchise-orphans-report.js",
+    "franchise:missing-refs-dryrun": "node scripts/catalog/franchise-missing-refs-dryrun.js"
   },
   "type": "module",
   "engines": {
