@@ -77,6 +77,18 @@ check("KPop Demon Hunters revertida (Tarefa 24): ref/título voltam a órfão", 
   assert.equal(r({ franchiseRefs: [], title: "KPop Demon Hunters Mira doll" }).franchise, null);
 });
 
+check("Tarefa 30 (Decisão 15) · dormant: true nas 5 entradas abaixo do limiar, ausente nas ativas", () => {
+  const dormantHandles = ["wonder-woman", "sailor-moon", "final-fantasy", "resident-evil", "the-last-of-us"];
+  for (const u of FRANCHISE_UNIVERSES) {
+    if (dormantHandles.includes(u.handle)) {
+      assert.equal(u.dormant, true, `${u.handle} devia ter dormant: true`);
+      assert.equal(u.active, false, `${u.handle} dormente mas active !== false`);
+    } else {
+      assert.ok(!u.dormant, `${u.handle} não devia ter dormant: true`);
+    }
+  }
+});
+
 check("handles únicos", () => {
   const h = FRANCHISE_UNIVERSES.map((u) => u.handle);
   assert.equal(new Set(h).size, h.length);
