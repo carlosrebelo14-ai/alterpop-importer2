@@ -12,14 +12,16 @@
  * soltos). Imprime top 100 por frequência — cada linha é candidato a novo universo/ref
  * na tabela, não uma franquia já resolvida.
  *
- * Lê direto da SQLite (node:sqlite, read-only), mesmo padrão do
- * franchise-resolve-report.js — sem Prisma, sem Shopify.
+ * Percorre CatalogProduct por página de cursor (memória constante — máquina Fly de
+ * 512 MB, mesmo padrão do franchise-reresolve-db.js). Não usa node:sqlite (o runtime
+ * de produção é Node 20, sem esse módulo).
  *
  * Correr na Fly:  node scripts/catalog/franchise-orphans-report.js
  *                 node scripts/catalog/franchise-orphans-report.js --top 200 --json
  */
 import fs from "node:fs";
 import path from "node:path";
+import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 
 const args = process.argv.slice(2);
 const AS_JSON = args.includes("--json");
@@ -29,6 +31,7 @@ const valOf = (f, d) => {
 };
 const SHOP = valOf("--shop", process.env.SPOT_CHECK_SHOP || "jyr17t-wr.myshopify.com");
 const TOP = parseInt(valOf("--top", "100"), 10) || 100;
+const PAGE = 500;
 
 /** Mesma normalização do resolver (franchiseResolver.server.js normText), duplicada
  *  aqui de propósito — este script só lê texto, não precisa da tabela de universos. */
@@ -49,40 +52,47 @@ const STOPWORDS = new Set([
   "set", "pack", "deluxe", "assorted", "exclusive", "edition", "collection",
   "cm", "mm", "kg", "gr", "ml", "l", "xl", "xs", "s", "m",
   "mini", "big", "grande", "pequeno", "peque", "box", "keychain", "plush",
-  "peluche", "figuras", "surtido", "wave", "series", "serie", "vol", "the", "of",
+  "peluche", "surtido", "wave", "series", "serie", "vol", "the", "of",
   "and", "or", "no", "not", "new", "nuevo", "nueva",
 ]);
 
 const NUMERIC_RE = /^[0-9]+$/;
 
 async function main() {
-  const dbPath = (process.env.DATABASE_URL || "").replace(/^file:/, "") || "./dev.sqlite";
-  const { DatabaseSync } = await import("node:sqlite");
-  const d = new DatabaseSync(dbPath, { readOnly: true });
-
-  const rows = d
-    .prepare(
-      `SELECT sku, title FROM CatalogProduct WHERE shop = ? AND resolvedFranchise IS NULL`
-    )
-    .all(SHOP);
-  const totalCatalog = d.prepare(`SELECT COUNT(*) AS n FROM CatalogProduct WHERE shop = ?`).get(SHOP).n;
-  d.close();
-
+  const totalCatalog = await prisma.catalogProduct.count({ where: { shop: SHOP } });
   const tokenCounts = new Map(); // token -> { count, skus: [] }
-  for (const r of rows) {
-    const tokens = new Set(normText(r.title).split(" ").filter(Boolean));
-    for (const tok of tokens) {
-      if (tok.length < 3) continue;
-      if (STOPWORDS.has(tok)) continue;
-      if (NUMERIC_RE.test(tok)) continue;
-      let entry = tokenCounts.get(tok);
-      if (!entry) {
-        entry = { count: 0, skus: [] };
-        tokenCounts.set(tok, entry);
+  let orphans = 0;
+  let cursor = null;
+
+  for (;;) {
+    const rows = await prisma.catalogProduct.findMany({
+      where: { shop: SHOP, resolvedFranchise: null },
+      select: { sku: true, title: true },
+      orderBy: [{ shop: "asc" }, { sku: "asc" }],
+      take: PAGE,
+      ...(cursor ? { cursor: { shop_sku: cursor }, skip: 1 } : {}),
+    });
+    if (!rows.length) break;
+
+    for (const r of rows) {
+      orphans += 1;
+      const tokens = new Set(normText(r.title).split(" ").filter(Boolean));
+      for (const tok of tokens) {
+        if (tok.length < 3) continue;
+        if (STOPWORDS.has(tok)) continue;
+        if (NUMERIC_RE.test(tok)) continue;
+        let entry = tokenCounts.get(tok);
+        if (!entry) {
+          entry = { count: 0, skus: [] };
+          tokenCounts.set(tok, entry);
+        }
+        entry.count += 1;
+        if (entry.skus.length < 3) entry.skus.push(r.sku);
       }
-      entry.count += 1;
-      if (entry.skus.length < 3) entry.skus.push(r.sku);
     }
+
+    cursor = { shop: SHOP, sku: rows[rows.length - 1].sku };
+    if (rows.length < PAGE) break;
   }
 
   const top = [...tokenCounts.entries()]
@@ -91,7 +101,7 @@ async function main() {
 
   console.log(`\n=== franchise-orphans-report (${SHOP}) ===`);
   console.log(`catálogo total: ${totalCatalog}`);
-  console.log(`sem franquia (órfãos): ${rows.length} (${((rows.length / totalCatalog) * 100).toFixed(1)}%)`);
+  console.log(`sem franquia (órfãos): ${orphans} (${((orphans / totalCatalog) * 100).toFixed(1)}%)`);
   console.log(`tokens distintos (após stopwords/números): ${tokenCounts.size}`);
   console.log(`\ntop ${top.length} por frequência — candidatos a universo/ref novo na tabela:\n`);
   console.log(`  ${"freq".padStart(6)}  token              amostra de SKU`);
@@ -110,7 +120,7 @@ async function main() {
         {
           shop: SHOP,
           totalCatalog,
-          orphans: rows.length,
+          orphans,
           top: top.map(([token, e]) => ({ token, count: e.count, sampleSkus: e.skus })),
         },
         null,
@@ -119,9 +129,12 @@ async function main() {
     );
     console.log(`\nJSON: ${path.relative(process.cwd(), file)}`);
   }
+
+  await prisma.$disconnect();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err?.stack || err?.message || err);
+  try { await prisma.$disconnect(); } catch {}
   process.exit(1);
 });

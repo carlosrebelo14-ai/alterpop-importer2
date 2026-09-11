@@ -14,15 +14,16 @@
  * "Mandalorian" → franchise "Star Wars" + line "The Mandalorian": aqui o título E o
  * ref apontam ambos para o mesmo sítio depois da Line entrar, não é contradição).
  *
- * Lê CatalogProduct.title/resolvedFranchise/resolvedFranchiseLayer/resolvedLine
- * diretamente da SQLite (node:sqlite, read-only) — mesmo padrão do
- * franchise-resolve-report.js, sem tocar em Prisma nem em Shopify.
+ * Percorre CatalogProduct por página de cursor (memória constante — máquina Fly de
+ * 512 MB, mesmo padrão do franchise-reresolve-db.js). Não usa node:sqlite (o runtime
+ * de produção é Node 20, sem esse módulo).
  *
  * Correr na Fly:  node scripts/catalog/franchise-title-ref-contradiction.js
  *                 node scripts/catalog/franchise-title-ref-contradiction.js --json
  */
 import fs from "node:fs";
 import path from "node:path";
+import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { titleOnlyUniverse } from "../../lib/importer/catalog/franchiseResolver.server.js";
 import { FRANCHISE_UNIVERSES } from "../../lib/importer/catalog/franchiseUniverses.js";
 import { FRANCHISE_LINES } from "../../lib/importer/catalog/franchiseLines.js";
@@ -34,57 +35,57 @@ const valOf = (f, d) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : d;
 };
 const SHOP = valOf("--shop", process.env.SPOT_CHECK_SHOP || "jyr17t-wr.myshopify.com");
+const PAGE = 500;
 
 const HANDLE_BY_NAME = new Map(FRANCHISE_UNIVERSES.map((u) => [u.name, u.handle]));
 const LINE_BY_NAME = new Map(FRANCHISE_LINES.map((l) => [l.line, l]));
 
 async function main() {
-  const dbPath = (process.env.DATABASE_URL || "").replace(/^file:/, "") || "./dev.sqlite";
-  const { DatabaseSync } = await import("node:sqlite");
-  const d = new DatabaseSync(dbPath, { readOnly: true });
-
-  const rows = d
-    .prepare(
-      `SELECT sku, title, titleSource, resolvedFranchise, resolvedFranchiseLayer, resolvedLine
-       FROM CatalogProduct WHERE shop = ? AND resolvedFranchiseLayer = 1`
-    )
-    .all(SHOP);
-  d.close();
-
   const contradictions = [];
   let checked = 0;
   let lineExcused = 0;
+  let cursor = null;
 
-  for (const r of rows) {
-    checked += 1;
-    const titleHit = titleOnlyUniverse(
-      { title: r.title, titleSource: r.titleSource },
-      {}
-    );
-    if (!titleHit) continue;
+  for (;;) {
+    const rows = await prisma.catalogProduct.findMany({
+      where: { shop: SHOP, resolvedFranchiseLayer: 1 },
+      select: { sku: true, title: true, titleSource: true, resolvedFranchise: true, resolvedLine: true },
+      orderBy: [{ shop: "asc" }, { sku: "asc" }],
+      take: PAGE,
+      ...(cursor ? { cursor: { shop_sku: cursor }, skip: 1 } : {}),
+    });
+    if (!rows.length) break;
 
-    const refHandle = HANDLE_BY_NAME.get(r.resolvedFranchise) || null;
-    if (!refHandle || titleHit.handle === refHandle) continue;
+    for (const r of rows) {
+      checked += 1;
+      const titleHit = titleOnlyUniverse({ title: r.title, titleSource: r.titleSource }, {});
+      if (!titleHit) continue;
 
-    // Line já reconciliada: o título bate no parent da Line que o produto já leva.
-    if (r.resolvedLine) {
-      const line = LINE_BY_NAME.get(r.resolvedLine);
-      const parentHandle = line ? HANDLE_BY_NAME.get(line.parent) : null;
-      if (parentHandle && parentHandle === titleHit.handle) {
-        lineExcused += 1;
-        continue;
+      const refHandle = HANDLE_BY_NAME.get(r.resolvedFranchise) || null;
+      if (!refHandle || titleHit.handle === refHandle) continue;
+
+      if (r.resolvedLine) {
+        const line = LINE_BY_NAME.get(r.resolvedLine);
+        const parentHandle = line ? HANDLE_BY_NAME.get(line.parent) : null;
+        if (parentHandle && parentHandle === titleHit.handle) {
+          lineExcused += 1;
+          continue;
+        }
       }
+
+      contradictions.push({
+        sku: r.sku,
+        title: r.title,
+        refFranchise: r.resolvedFranchise,
+        refHandle,
+        titleFranchise: titleHit.franchise,
+        titleHandle: titleHit.handle,
+        titleMatchedOn: titleHit.matchedOn,
+      });
     }
 
-    contradictions.push({
-      sku: r.sku,
-      title: r.title,
-      refFranchise: r.resolvedFranchise,
-      refHandle,
-      titleFranchise: titleHit.franchise,
-      titleHandle: titleHit.handle,
-      titleMatchedOn: titleHit.matchedOn,
-    });
+    cursor = { shop: SHOP, sku: rows[rows.length - 1].sku };
+    if (rows.length < PAGE) break;
   }
 
   console.log(`\n=== franchise-title-ref-contradiction (${SHOP}) ===`);
@@ -114,9 +115,12 @@ async function main() {
     );
     console.log(`\nJSON: ${path.relative(process.cwd(), file)}`);
   }
+
+  await prisma.$disconnect();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err?.stack || err?.message || err);
+  try { await prisma.$disconnect(); } catch {}
   process.exit(1);
 });
