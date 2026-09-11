@@ -63,6 +63,7 @@
     "franchise:orphans-profile": "node scripts/catalog/franchise-orphans-profile.js",
     "franchise:table-store-audit": "node scripts/catalog/franchise-table-store-audit.js",
     "title:clean-rule-sample": "node scripts/catalog/title-clean-rule-sample.js",
+    "title:prefix-census": "node scripts/catalog/title-prefix-census.js",
     "kpop:overlap": "node scripts/catalog/kpop-demon-hunters-overlap.js",
     "kpop:collection-create": "node scripts/catalog/kpop-collection-create.js"
   },
