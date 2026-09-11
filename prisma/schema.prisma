@@ -91,6 +91,17 @@ model CatalogProduct {
   // Pauta aduaneira (hs_intrastat_code), normalizada para 6 ou 8 dígitos.
   // NULL nos ~9,3% sem valor aproveitável — nesses o campo é omitido no publish.
   hsCode           String?
+  // Tarefa 10 (normalização de títulos, 2026-09-11) — titleCleaner.server.js:
+  //  - originalTitle: cópia do `title` bruto no momento em que o limpador correu pela
+  //    primeira vez. Preservado sempre, nunca reescrito por passagens seguintes.
+  //  - cleanTitle: `title` depois do limpador (prefixos de fornecedor, preço/moeda,
+  //    franquia duplicada, espaços). NULL até correr scripts/catalog/title-clean-dryrun.js --execute.
+  //  - titleOverride: só escrito à mão pelo curador. Nunca tocado pelo indexador nem
+  //    pelo limpador — vence sempre que definido.
+  // Publisher (shopifyMapper.server.js) usa titleOverride ?? cleanTitle ?? title.
+  originalTitle    String?
+  cleanTitle       String?
+  titleOverride    String?
   indexedAt        DateTime @default(now())
 
   @@id([shop, sku])
