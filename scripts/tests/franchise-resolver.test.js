@@ -307,17 +307,21 @@ check("--supplier-only: título 'pipeline' não corre camada 2", () => {
 });
 
 // ── stripFormatPrefix ─────────────────────────────────────────────────────────
-check("stripFormatPrefix remove um prefixo conhecido", () => {
-  assert.equal(stripFormatPrefix("POP figure One Piece Luffy"), "One Piece Luffy");
-  assert.equal(stripFormatPrefix("Pocket POP Keychain Batman"), "Batman");
+check("stripFormatPrefix remove um prefixo conhecido (Tarefa 32/Decisão 17: só Assorted e Latino)", () => {
+  assert.equal(stripFormatPrefix("Assorted One Piece Luffy"), "One Piece Luffy");
+  assert.equal(stripFormatPrefix("Latino Batman"), "Batman");
   assert.equal(stripFormatPrefix("Dragon Ball Z Goku"), "Dragon Ball Z Goku"); // sem prefixo, intacto
+  // Decisão 17 — "POP figure"/"Pocket POP Keychain" saíram da lista de propósito,
+  // ficam intactos (informação de formato, não ruído).
+  assert.equal(stripFormatPrefix("POP figure One Piece Luffy"), "POP figure One Piece Luffy");
+  assert.equal(stripFormatPrefix("Pocket POP Keychain Batman"), "Pocket POP Keychain Batman");
 });
 
 check("Tarefa 31 · matchFormatPrefix identifica QUAL prefixo bateu (censo)", () => {
-  assert.equal(matchFormatPrefix("POP figure One Piece Luffy"), "POP figure");
-  assert.equal(matchFormatPrefix("Pocket POP Keychain Batman"), "Pocket POP Keychain");
+  assert.equal(matchFormatPrefix("Assorted One Piece Luffy"), "Assorted");
   assert.equal(matchFormatPrefix("Latino Pokemon Mega-Charizard"), "Latino");
   assert.equal(matchFormatPrefix("Dragon Ball Z Goku"), null);
+  assert.equal(matchFormatPrefix("POP figure One Piece Luffy"), null); // Decisão 17
 });
 
 if (failures) {
