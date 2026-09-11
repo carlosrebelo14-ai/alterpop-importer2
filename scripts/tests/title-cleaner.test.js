@@ -118,6 +118,23 @@ check("Decisão 8 · caso 5 — repetição interna (alias bare 'Mandalorian')",
   );
 });
 
+// ── Tarefa 20 — aperto do dash-repetido (achado real da amostra de 2000, Tarefa 10b) ──
+
+check("Tarefa 20 · dash-repetido: overlap de 1 palavra colapsa quando É a franquia (Gundam)", () => {
+  assert.equal(
+    cleanProductTitle({
+      title: "Mobile Suit Gundam - Gundam Ashtaron HG 1/144 model kit",
+      resolvedFranchise: "Gundam",
+    }),
+    "Mobile Suit Gundam Ashtaron HG 1/144 model kit"
+  );
+});
+
+check("Tarefa 20 · dash-repetido: overlap de 1 palavra genérica NÃO colapsa (falso positivo real: 'Racing')", () => {
+  const t = "Carrera GO!!! Ferrari Power Racing - Racing circuit";
+  assert.equal(cleanProductTitle({ title: t, resolvedFranchise: null }), t);
+});
+
 if (failures) {
   console.error(`\n${failures} falha(s)`);
   process.exit(1);
