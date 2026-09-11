@@ -58,7 +58,8 @@
     "title:clean-dryrun": "node scripts/catalog/title-clean-dryrun.js",
     "franchise:title-ref-contradiction": "node scripts/catalog/franchise-title-ref-contradiction.js",
     "franchise:orphans-report": "node scripts/catalog/franchise-orphans-report.js",
-    "franchise:missing-refs-dryrun": "node scripts/catalog/franchise-missing-refs-dryrun.js"
+    "franchise:missing-refs-dryrun": "node scripts/catalog/franchise-missing-refs-dryrun.js",
+    "franchise:umbrella-dryrun": "node scripts/catalog/franchise-umbrella-dryrun.js"
   },
   "type": "module",
   "engines": {
