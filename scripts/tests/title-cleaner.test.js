@@ -17,10 +17,15 @@ function check(name, fn) {
   }
 }
 
-check("remove prefixo de formato conhecido", () => {
+check("remove prefixo de formato conhecido (Tarefa 32/Decisão 17: só Assorted/Latino)", () => {
+  assert.equal(
+    cleanProductTitle({ title: "Assorted Darth Vader", resolvedFranchise: null }),
+    "Darth Vader"
+  );
+  // "POP figure" saiu da lista de propósito — fica intacto.
   assert.equal(
     cleanProductTitle({ title: "POP figure Darth Vader", resolvedFranchise: null }),
-    "Darth Vader"
+    "POP figure Darth Vader"
   );
 });
 
@@ -108,13 +113,16 @@ check("Decisão 8 · caso 4 — preço e unidade", () => {
 });
 
 check("Decisão 8 · caso 5 — repetição interna (alias bare 'Mandalorian')", () => {
+  // Tarefa 32/Decisão 17: "POP figure" saiu de FORMAT_PREFIXES, fica no título — o
+  // caso continua a "mudar" (é isso que o portão exige), só que agora só via
+  // alias-repetido, não mais via prefixo-formato.
   assert.equal(
     cleanProductTitle({
       title: "POP figure Rides Deluxe Star Wars Mandalorian 9 the Mandalorian in N-1 Starfighter",
       resolvedFranchise: "Star Wars",
       resolvedLine: "The Mandalorian",
     }),
-    "Rides Deluxe Star Wars Mandalorian 9 in N-1 Starfighter"
+    "POP figure Rides Deluxe Star Wars Mandalorian 9 in N-1 Starfighter"
   );
 });
 
