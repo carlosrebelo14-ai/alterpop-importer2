@@ -66,6 +66,7 @@
     "title:clean-rule-sample": "node scripts/catalog/title-clean-rule-sample.js",
     "title:prefix-census": "node scripts/catalog/title-prefix-census.js",
     "format:extract-dryrun": "node scripts/catalog/format-extract-dryrun.js",
+    "pilot:select": "node scripts/pilot-batch-select.js",
     "kpop:overlap": "node scripts/catalog/kpop-demon-hunters-overlap.js",
     "kpop:collection-create": "node scripts/catalog/kpop-collection-create.js"
   },
