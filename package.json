@@ -70,7 +70,7 @@
     "franchise:layer2-audit": "node scripts/catalog/franchise-layer2-audit.js",
     "franchise:brand-overlap-audit": "node scripts/catalog/franchise-brand-overlap-audit.js",
     "pilot:verify": "node scripts/catalog/pre-pilot-verify.js",
-    "test:sync-safety": "node scripts/tests/safe-prisma-catalog-read.test.js",
+    "test:sync-safety": "node scripts/tests/safe-prisma-catalog-read.test.js && node scripts/tests/curation-sync-error-protection.test.js",
     "kpop:overlap": "node scripts/catalog/kpop-demon-hunters-overlap.js",
     "kpop:collection-create": "node scripts/catalog/kpop-collection-create.js"
   },
