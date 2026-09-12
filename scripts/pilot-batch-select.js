@@ -10,9 +10,8 @@
  * produtos que vão ser apagados. Este script em modo leitura (default) não publica nem
  * altera a fila — é seguro correr antes do wipe só para inspecionar a seleção.
  *
- * READ-ONLY por defeito. `--approve` marca os 8 selecionados como APPROVED na fila de
- * curadoria (bulkSetQueueStatus) — não publica sozinho, isso é o passo 4
- * (runApprovedShopifySync) da sequência.
+ * READ-ONLY por defeito. Ver Tarefa 50 abaixo para como aprovar — não publica
+ * sozinho de qualquer forma, isso é o passo 4 (runApprovedShopifySync) da sequência.
  *
  * Tarefa 42 (2026-09-12) — F1–F4, aplicados antes da distribuição por slot e antes da
  * ordenação sku ASC:
@@ -36,13 +35,31 @@
  * também sujeito ao teto: a compensação continua a consumir o bucket de S2 a partir
  * de onde a seleção base parou, nunca reinicia do zero (evita contar o mesmo SKU 2×).
  *
+ * Tarefa 50 (Decisão 27, 2026-09-13) — `--approve` sozinho RE-CORRE a seleção do
+ * zero. Entre a corrida que o Carlos revê e a corrida que aprova, a fila pode ter
+ * mudado (revert de órfãos, reindexação do feed, produtos novos) — o conjunto
+ * elegível muda e `--approve` publica um lote DIFERENTE do que foi revisto,
+ * silenciosamente. Aconteceu na v4: reverter 23 órfãos a PENDING trouxe um SKU novo
+ * que ficou à frente na ordenação sku ASC, substituindo um SKU já aprovado. A
+ * revisão manual só é real se fixar SKUs, nunca um predicado re-executável.
+ *
+ * `--approve` sozinho passa a PROIBIDO — sai com erro sem escrever nada. O único
+ * caminho para aprovar é `--pin <sku,sku,...>`:
+ *   - aprova EXATAMENTE essa lista, sem voltar a correr a seleção
+ *   - falha (sem escrever nada) se algum SKU não estiver PENDING na fila
+ *   - falha (sem escrever nada) se a contagem aprovada no fim não bater com a lista
+ *
  * Correr na Fly:
  *   node scripts/pilot-batch-select.js
  *   node scripts/pilot-batch-select.js --exclude 0035051531166,0039897585413
- *   node scripts/pilot-batch-select.js --approve
+ *   node scripts/pilot-batch-select.js --pin 4005555018308,5010993884155,...
  */
 import { prisma } from "../lib/prisma/prismaSafe.server.js";
-import { listCurationQueueItems, bulkSetQueueStatus } from "../lib/curation/curationQueue.server.js";
+import {
+  listCurationQueueItems,
+  bulkSetQueueStatus,
+  getCurationQueueEntry,
+} from "../lib/curation/curationQueue.server.js";
 import { FRANCHISE_UNIVERSES } from "../lib/importer/catalog/franchiseUniverses.js";
 import { FRANCHISE_LINES } from "../lib/importer/catalog/franchiseLines.js";
 import { titleOnlyUniverse } from "../lib/importer/catalog/franchiseResolver.server.js";
@@ -64,6 +81,15 @@ const EXCLUDED_SKUS = new Set(
     .map((s) => s.trim())
     .filter(Boolean)
 );
+/** Tarefa 50 — lista fixa a aprovar tal e qual, sem re-seleção. */
+const PIN_SKUS = args
+  .reduce((acc, a, i) => {
+    if (a === "--pin" && args[i + 1]) acc.push(args[i + 1]);
+    return acc;
+  }, [])
+  .flatMap((v) => v.split(","))
+  .map((s) => s.trim())
+  .filter(Boolean);
 const UNIVERSE_CAP = 2; // Tarefa 46 (F5) — máximo de SKUs por resolvedFranchise no lote inteiro
 
 /** 34 universos ativos — dormentes (Decisão 15/Tarefa 30) excluídos. */
@@ -158,8 +184,59 @@ const SLOTS = [
   },
 ];
 
+/**
+ * Tarefa 50 (Decisão 27) — aprova exatamente a lista `--pin`, sem re-seleção.
+ * Falha (sem escrever nada) se algum SKU não estiver PENDING, ou se a contagem
+ * aprovada no fim não bater com a lista pedida.
+ */
+async function runPin(skus) {
+  console.log(`=== pilot-batch-select (${SHOP}) · --pin (${skus.length} SKUs) ===\n`);
+
+  const problems = [];
+  for (const sku of skus) {
+    const entry = await getCurationQueueEntry(sku);
+    if (!entry) {
+      problems.push(`${sku}  — não existe na fila`);
+    } else if (entry.status !== "PENDING") {
+      problems.push(`${sku}  — status atual é ${entry.status}, não PENDING`);
+    }
+  }
+
+  if (problems.length) {
+    console.log(`✗ ${problems.length} SKU(s) não elegível(eis) para --pin — nada escrito:`);
+    problems.forEach((p) => console.log(`  ${p}`));
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+
+  const { updatedItems } = await bulkSetQueueStatus(skus, "APPROVED");
+  if (updatedItems.length !== skus.length) {
+    console.log(
+      `✗ contagem não bate: pedidos ${skus.length}, atualizados ${updatedItems.length}. Verifica a fila manualmente — pode ter ficado em estado inconsistente.`
+    );
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+
+  console.log(`✓ ${updatedItems.length}/${skus.length} SKUs marcados APPROVED (lista fixa, sem re-seleção):`);
+  skus.forEach((s) => console.log(`  ${s}`));
+  await prisma.$disconnect();
+}
+
 async function main() {
-  console.log(`=== pilot-batch-select (${SHOP})${APPROVE ? " · --approve" : " · READ-ONLY"} ===\n`);
+  if (PIN_SKUS.length) {
+    await runPin(PIN_SKUS);
+    return;
+  }
+
+  if (APPROVE) {
+    console.error(
+      "✗ --approve sozinho está PROIBIDO (Tarefa 50/Decisão 27) — a fila pode ter mudado entre a corrida revista e esta, publicando um lote diferente do aprovado. Usa --pin <sku,sku,...> com a lista exata já revista."
+    );
+    process.exit(1);
+  }
+
+  console.log(`=== pilot-batch-select (${SHOP}) · READ-ONLY ===\n`);
 
   const pendingItems = await listCurationQueueItems("PENDING");
   const pendingSkus = new Set(pendingItems.map((i) => i.sku));
@@ -288,17 +365,9 @@ async function main() {
     );
   }
 
-  if (APPROVE) {
-    if (!selected.length) {
-      console.log(`\nnada selecionado — nada a aprovar.`);
-    } else {
-      const skus = selected.map((r) => r.sku);
-      const { updatedItems } = await bulkSetQueueStatus(skus, "APPROVED");
-      console.log(`\n✓ ${updatedItems.length} SKUs marcados APPROVED na fila de curadoria.`);
-    }
-  } else {
-    console.log(`\nREAD-ONLY — nada escrito na fila. Corre com --approve para marcar APPROVED.`);
-  }
+  console.log(
+    `\nREAD-ONLY — nada escrito na fila. Revê esta lista e usa --pin <sku,sku,...> com os SKUs exatos para aprovar (Tarefa 50/Decisão 27 — --approve sozinho está proibido).`
+  );
 
   await prisma.$disconnect();
 }

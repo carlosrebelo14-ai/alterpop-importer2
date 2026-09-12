@@ -66,3 +66,19 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 
 **Referência cruzada:** Tarefa 11, Tarefa 45, Tarefa 47, `franchise-brand-overlap-audit.js`
 **Sem alteração de código ao resolver. Sem migração.**
+
+---
+
+## Decisão 27 — a fila é fonte instável para seleção determinística
+
+**Data:** 2026-09-13
+**Estado:** fechada
+
+**Achado:** `pilot-batch-select.js --approve` recalculava a seleção do zero em cada invocação. Entre a corrida que o Carlos revê e a corrida que aprova, a fila de curadoria pode mudar — revert de órfãos pós-wipe, reindexação do feed, produtos novos — e o conjunto elegível muda com ela. Na v4 do lote piloto, reverter 23 órfãos a PENDING (Tarefa 40) trouxe de volta `4573102620934`, que ficou à frente na ordenação sku ASC e substituiu silenciosamente `5010993884155` — um SKU já revisto e aprovado pelo Carlos — sem que a mudança fosse assinalada. A revisão manual só é real quando fixa SKUs; um predicado re-executável sobre uma fonte instável reabre a seleção a cada corrida.
+
+**Decisão:** toda a seleção aprovada manualmente tem de ser fixada por lista de SKUs, nunca por predicado re-executável, entre a revisão e a escrita. `pilot-batch-select.js --approve` (sem `--pin`) passa a proibido — sai com erro sem escrever nada (Tarefa 50). O único caminho para aprovar é `--pin <sku,sku,...>`, que aprova exatamente essa lista e falha sem escrever se algum SKU não estiver `PENDING` ou se a contagem final não bater com o pedido.
+
+**Aplica-se** à seleção final pré-inaugural também, não só ao lote piloto — qualquer ferramenta futura que aprove produtos a partir de uma consulta à fila deve seguir o mesmo padrão: listar, rever, fixar por SKU, só depois escrever.
+
+**Referência cruzada:** Tarefa 40, Tarefa 50, `pilot-batch-select.js`
+**Sem migração.**
