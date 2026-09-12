@@ -69,6 +69,7 @@
     "pilot:select": "node scripts/pilot-batch-select.js",
     "franchise:layer2-audit": "node scripts/catalog/franchise-layer2-audit.js",
     "franchise:brand-overlap-audit": "node scripts/catalog/franchise-brand-overlap-audit.js",
+    "pilot:verify": "node scripts/catalog/pre-pilot-verify.js",
     "kpop:overlap": "node scripts/catalog/kpop-demon-hunters-overlap.js",
     "kpop:collection-create": "node scripts/catalog/kpop-collection-create.js"
   },
