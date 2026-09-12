@@ -21,8 +21,14 @@
  *   F3  sem contradição título/ref (mesma regra da Tarefa 11, recalculada aqui)
  *   F4  ordenação sku ASC, aplicada só ao conjunto já filtrado por F1–F3
  *
+ * Tarefa 44 (2026-09-12) — `--exclude <sku>` (repetível) tira um SKU específico da
+ * corrida sem tocar em código. Usado quando a revisão manual do Carlos apanha um
+ * falso positivo do resolver que os filtros F1–F3 não cobrem (ex.: contradição de
+ * licença na camada 2, fora do âmbito da Tarefa 11/F3, que só cobre camada 1).
+ *
  * Correr na Fly:
  *   node scripts/pilot-batch-select.js
+ *   node scripts/pilot-batch-select.js --exclude 0035051531166
  *   node scripts/pilot-batch-select.js --approve
  */
 import { prisma } from "../lib/prisma/prismaSafe.server.js";
@@ -38,6 +44,12 @@ const SHOP =
   process.env.SHOPIFY_SHOP_URL ||
   "jyr17t-wr.myshopify.com";
 const PAGE = 500;
+const EXCLUDED_SKUS = new Set(
+  args.reduce((acc, a, i) => {
+    if (a === "--exclude" && args[i + 1]) acc.push(args[i + 1]);
+    return acc;
+  }, [])
+);
 
 /** 34 universos ativos — dormentes (Decisão 15/Tarefa 30) excluídos. */
 const ACTIVE_UNIVERSE_NAMES = new Set(
@@ -137,6 +149,7 @@ async function main() {
   const pendingItems = await listCurationQueueItems("PENDING");
   const pendingSkus = new Set(pendingItems.map((i) => i.sku));
   console.log(`fila PENDING: ${pendingSkus.size}`);
+  if (EXCLUDED_SKUS.size) console.log(`excluídos manualmente (--exclude): ${[...EXCLUDED_SKUS].join(", ")}`);
 
   const buckets = Object.fromEntries(SLOTS.map((s) => [s.key, []]));
   let scanned = 0;
@@ -167,6 +180,7 @@ async function main() {
     for (const r of rows) {
       scanned += 1;
       if (!pendingSkus.has(r.sku)) continue;
+      if (EXCLUDED_SKUS.has(r.sku)) continue; // Tarefa 44 — exclusão manual pontual
       if (!r.resolvedFranchise || !ACTIVE_UNIVERSE_NAMES.has(r.resolvedFranchise)) continue;
       if (!(r.stock > 0)) continue;
       if (!passesSkuShape(r.sku)) continue; // F1
