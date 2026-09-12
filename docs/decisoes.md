@@ -101,3 +101,20 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 
 **Referência cruzada:** Tarefa 51, `shopifyApprovedSync.server.js`, `lib/prisma/prismaSafe.server.js`
 **Sem migração.**
+
+---
+
+## Decisão 29 — `SYNC_ERROR` é estado terminal, protegido do reindex
+
+**Data:** 2026-09-13
+**Estado:** fechada
+
+**Achado:** o retry do lote piloto v4 (Tarefa 52) revelou que `upsertCurationQueueFromRecordLocked` (`lib/curation/curationQueue.server.js`) não incluía `SYNC_ERROR` na lista `isManual` — um reindex do feed (relógio de 45 min) recalcula o item pelas regras automáticas e pode devolvê-lo sozinho a `APPROVED`, sem revisão humana. Confirmado ao vivo: 5 dos 6 SKUs em `SYNC_ERROR` da paragem anterior viraram `APPROVED` sozinhos entre a paragem e o retry, não por ação minha nem do Carlos.
+
+**Risco à escala:** um erro de publicação é informação que exige juízo humano — pode ser transitório (como foi aqui) ou sintoma de um problema real no produto. Se o reindex o limpa sozinho, o produto republica na corrida seguinte como se nada tivesse falhado, e "0 falhas" deixa de significar "0 problemas".
+
+**Decisão:**
+> `SYNC_ERROR` entra na lista de estados protegidos de `upsertCurationQueueFromRecordLocked`, ao lado de `APPROVED`, `REJECTED` e `PUBLISHED` — mas de forma INCONDICIONAL, sem a exceção de `smartRule`/`aiCuration`/`eliteCuration` que os outros três têm (uma falha de sync exige revisão humana seja qual for a origem da aprovação anterior). Só transição manual (`setManualOverride`, `approveProduct`, `bulkSetQueueStatus`) tira um SKU de `SYNC_ERROR` — o reindex do feed nunca o sobrepõe.
+
+**Referência cruzada:** Tarefa 52, Tarefa 53, `lib/curation/curationQueue.server.js`
+**Sem migração.**
