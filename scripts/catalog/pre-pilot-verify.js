@@ -10,6 +10,20 @@
  * faz o publisher tentar `productUpdate` em vez de `productCreate` e falhar com 404
  * no piloto inteiro.
  *
+ * Tarefa 49 (2026-09-13) — V6 e V8 corrigidos. A primeira versão (Tarefa 40) tinha as
+ * DUAS mal calibradas contra o comportamento real, não contra os dados:
+ *   V6  era "cleanTitle IS NOT NULL = 854" — mas a Tarefa 10 grava cleanTitle no
+ *       catálogo INTEIRO desde o primeiro --execute (cópia de title quando não há
+ *       alteração), por desenho nunca fica NULL fora das linhas ainda não passadas
+ *       pelo backfill. Passa a "cleanTitle <> title", em INTERVALO 800–900 (não valor
+ *       cravado — o feed muda entre corridas, um valor fixo transformava reindexação
+ *       normal em falso alarme).
+ *   V8  era "coleções na loja = 35" — mas a loja tem coleções fora do âmbito do
+ *       resolver (ex.: new-arrivals, janela published_at, sem templateSuffix de
+ *       universo/line). Passa a contar só coleções com templateSuffix ∈
+ *       {UNIVERSE_TEMPLATE_SUFFIX, LINE_TEMPLATE_SUFFIX} — as únicas que a guarda
+ *       (V9) e a tabela de franquias realmente governam.
+ *
  * Correr na Fly:  node scripts/catalog/pre-pilot-verify.js
  */
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
@@ -17,11 +31,15 @@ import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { listCurationQueueItems } from "../../lib/curation/curationQueue.server.js";
 import { assertFranchiseConditionsAligned } from "../../lib/importer/shopify/franchiseConditionsGuard.server.js";
+import { UNIVERSE_TEMPLATE_SUFFIX } from "../../lib/importer/catalog/franchiseUniverses.js";
+import { LINE_TEMPLATE_SUFFIX } from "../../lib/importer/catalog/franchiseLines.js";
 import {
   ALTERPOP_FRANCHISE_DEFINITION_GID,
   ALTERPOP_LINE_DEFINITION_GID,
   ALTERPOP_FORMAT_DEFINITION_GID,
 } from "../../lib/importer/shopify/franchiseMetafieldDefinition.js";
+
+const GOVERNED_TEMPLATE_SUFFIXES = new Set([UNIVERSE_TEMPLATE_SUFFIX, LINE_TEMPLATE_SUFFIX]);
 
 const args = process.argv.slice(2);
 const SHOP =
@@ -37,18 +55,22 @@ const COLLECTIONS_PAGE_QUERY = `
   query CollCount($cursor: String) {
     collections(first: 250, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-      nodes { id }
+      nodes { id handle templateSuffix }
     }
   }
 `;
 
-async function countAllCollections(client) {
+/** Tarefa 49 — só conta coleções que a tabela de franquias governa (universo/line).
+ *  Coleções fora do âmbito (ex.: new-arrivals) ficam de fora por desenho. */
+async function countGovernedCollections(client) {
   let count = 0;
   let cursor = null;
   for (let p = 0; p < 20; p++) {
     const data = await client.graphql(COLLECTIONS_PAGE_QUERY, { cursor });
     const conn = data?.collections;
-    count += conn?.nodes?.length || 0;
+    for (const node of conn?.nodes || []) {
+      if (GOVERNED_TEMPLATE_SUFFIXES.has(node.templateSuffix)) count += 1;
+    }
     if (!conn?.pageInfo?.hasNextPage) break;
     cursor = conn.pageInfo.endCursor;
   }
@@ -60,6 +82,12 @@ function check(id, label, expected, actual, pass) {
   results.push({ id, label, expected, actual, pass });
   const mark = pass ? "✓" : "✗";
   console.log(`  ${mark} ${id}  ${label} — esperado ${expected}, obtido ${actual}`);
+}
+
+/** V6 — intervalo, não valor cravado (Tarefa 49). */
+function checkRange(id, label, min, max, actual) {
+  const pass = actual >= min && actual <= max;
+  check(id, label, `${min}–${max}`, actual, pass);
 }
 
 async function main() {
@@ -91,15 +119,20 @@ async function main() {
   const totalProducts = await prisma.catalogProduct.count({ where: { shop: SHOP } });
   check("V5", "CatalogProduct total", 25421, totalProducts, totalProducts === 25421);
 
-  const cleanTitleCount = await prisma.catalogProduct.count({ where: { shop: SHOP, cleanTitle: { not: null } } });
-  check("V6", "cleanTitle IS NOT NULL", 854, cleanTitleCount, cleanTitleCount === 854);
+  const cleanTitleDiffRows = await prisma.$queryRawUnsafe(
+    `SELECT COUNT(*) as c FROM CatalogProduct WHERE shop = ? AND cleanTitle IS NOT NULL AND cleanTitle <> title`,
+    SHOP
+  );
+  const cleanTitleDiffCount = Number(cleanTitleDiffRows?.[0]?.c ?? 0);
+  checkRange("V6", "cleanTitle <> title", 800, 900, cleanTitleDiffCount);
 
   const resolvedFormatCount = await prisma.catalogProduct.count({ where: { shop: SHOP, resolvedFormat: { not: null } } });
   check("V7", "resolvedFormat IS NOT NULL", 14183, resolvedFormatCount, resolvedFormatCount === 14183);
 
-  // V8 — coleções na loja
-  const collectionsCount = await countAllCollections(client);
-  check("V8", "coleções na loja", 35, collectionsCount, collectionsCount === 35);
+  // V8 — coleções governadas pela tabela de franquias (universo/line), não todas as
+  // coleções da loja — new-arrivals e afins ficam de fora por desenho (Tarefa 49).
+  const governedCollectionsCount = await countGovernedCollections(client);
+  check("V8", "coleções com templateSuffix universo/line", 35, governedCollectionsCount, governedCollectionsCount === 35);
 
   // V9 — guarda de condições de franquia
   let v9Pass = false;
