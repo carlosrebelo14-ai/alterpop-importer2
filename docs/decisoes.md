@@ -82,3 +82,22 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 
 **Referência cruzada:** Tarefa 40, Tarefa 50, `pilot-batch-select.js`
 **Sem migração.**
+
+---
+
+## Decisão 28 — nenhuma sessão de leitura corre em paralelo com a publicação
+
+**Data:** 2026-09-13
+**Estado:** fechada
+
+**Incidente:** publicar o lote piloto v4 falhou 6 de 8 produtos com "SKU não encontrado no catálogo indexado (SQLite)". Diagnóstico: 2 sucessos seguidos de 6 falhas descarta ausência real de dados (uma query falhada teria derrubado os 8, não uma fração) — foi contenção SQLite entre `runApprovedShopifySync` e as várias sessões `fly ssh console` com Prisma que corriam em paralelo para verificação manual. O ficheiro SQLite vive num volume único (escritor único); cada sessão abre a sua própria ligação Prisma, e uma leitura/escrita concorrente pode segurar o lock além do `busy_timeout`.
+
+**Causa agravante (corrigida na Tarefa 51):** `safePrisma` sem `fallback` explícito convertia o erro de query em ausência de linhas — o sync não distinguia "SKU não existe" de "não consegui ler", e reportava sempre o primeiro.
+
+**Decisão:**
+> Nenhuma sessão `fly ssh console` com Prisma corre em paralelo com `runApprovedShopifySync` (ou qualquer escrita em massa no catálogo). O SQLite no volume é de escritor único. Verificações fazem-se ANTES ou DEPOIS de uma corrida de publicação, nunca DURANTE.
+
+**Aplica-se** a toda a importação pré-inaugural, não só ao piloto — inclui backfills, reconciliação, e qualquer diagnóstico ad-hoc.
+
+**Referência cruzada:** Tarefa 51, `shopifyApprovedSync.server.js`, `lib/prisma/prismaSafe.server.js`
+**Sem migração.**
