@@ -13,6 +13,14 @@
  *   UNKNOWN       valor de franchise/line que não existe nas tabelas (39 universos / Lines)
  *   NO_CATALOG_ROW  SKU do produto sem linha em CatalogProduct — não dá para verificar
  *
+ * Tarefa 38 (2026-09-12) — título entra na comparação, também sob DRIFT. Sem isto o
+ * reconciliador ficava cego a divergência de título (ex.: um wipe que repõe o título
+ * bruto na loja mas não em Prisma) e devolvia DRIFT 0 mesmo com o título errado.
+ * Título esperado = titleOverride ?? cleanTitle ?? title (mesma precedência do
+ * publisher em shopifyMapper.server.js), SEM passar pela tradução — a tradução é
+ * best-effort e não determinística entre corridas, não serve de base de comparação
+ * aqui. Comparação por trim + minúsculas (mesma tolerância usada no publisher).
+ *
  * Multi-valor: `alterpop.franchise` é lista; "correto" = a lista CONTÉM o valor
  * resolvido (crossover manual fica válido).
  *
@@ -84,7 +92,14 @@ async function main() {
   const skus = [...new Set(products.flatMap((p) => (p.variants?.nodes || []).map((v) => v.sku).filter(Boolean)))];
   const rows = await prisma.catalogProduct.findMany({
     where: { shop: SHOP, sku: { in: skus } },
-    select: { sku: true, resolvedFranchise: true, resolvedLine: true },
+    select: {
+      sku: true,
+      resolvedFranchise: true,
+      resolvedLine: true,
+      title: true,
+      cleanTitle: true,
+      titleOverride: true,
+    },
   });
   const expBySku = new Map(rows.map((r) => [r.sku, r]));
 
@@ -134,6 +149,14 @@ async function main() {
     }
     // line no produto que o resolver NÃO previu (e não é crossover manual coerente)
     if (!expL && lineVals.length) tag("DRIFT", `produto tem alterpop.line ${JSON.stringify(lineVals)} mas o resolvido não tem line`);
+
+    // Tarefa 38 — título. Expectativa SEM tradução (titleOverride ?? cleanTitle ?? title),
+    // comparado por trim + minúsculas.
+    const expTitle = String(exp.titleOverride || exp.cleanTitle || exp.title || "").trim();
+    const gotTitle = String(p.title || "").trim();
+    if (expTitle && expTitle.toLowerCase() !== gotTitle.toLowerCase()) {
+      tag("DRIFT", `título esperado "${expTitle.slice(0, 60)}", loja tem "${gotTitle.slice(0, 60)}"`);
+    }
   }
 
   const counts = Object.fromEntries(Object.entries(buckets).map(([k, v]) => [k, v.length]));
