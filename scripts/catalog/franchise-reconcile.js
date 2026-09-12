@@ -16,10 +16,24 @@
  * Tarefa 38 (2026-09-12) — título entra na comparação, também sob DRIFT. Sem isto o
  * reconciliador ficava cego a divergência de título (ex.: um wipe que repõe o título
  * bruto na loja mas não em Prisma) e devolvia DRIFT 0 mesmo com o título errado.
- * Título esperado = titleOverride ?? cleanTitle ?? title (mesma precedência do
- * publisher em shopifyMapper.server.js), SEM passar pela tradução — a tradução é
- * best-effort e não determinística entre corridas, não serve de base de comparação
- * aqui. Comparação por trim + minúsculas (mesma tolerância usada no publisher).
+ * Comparação por trim + minúsculas (mesma tolerância usada no publisher).
+ *
+ * Tarefa 54 (2026-09-13) — a expectativa de título tinha um falso positivo: só lia
+ * `CatalogProduct.titleOverride`, ignorando um SEGUNDO sistema de override mais
+ * antigo, `curation-queue.json → item.metadata.overrides.title` (setManualOverride,
+ * item 9), aplicado pelo publisher DEPOIS do mapper (shopifyProductPublisher.server.js
+ * `applyManualOverrides`, chamado depois de `mapCatalogProductToShopifyPayload`) — ou
+ * seja, vence sobre tudo o resto, incluindo `CatalogProduct.titleOverride`. Achado no
+ * SKU 0030506556343: título "TITULO NAO DEVE MUDAR (ProductImporter locked)" na loja,
+ * correto (override de curador de 2026-08-12), mas reportado como DRIFT porque o
+ * reconciliador não sabia deste segundo mecanismo. Precedência corrigida, alinhada
+ * com o comportamento real do publisher:
+ *   1. curation-queue.json metadata.overrides.title  (vence sobre tudo — igual ao publisher)
+ *   2. CatalogProduct.titleOverride
+ *   3. cleanTitle
+ *   4. title
+ * SEM passar pela tradução em nenhum dos 4 — a tradução é best-effort e não
+ * determinística entre corridas, não serve de base de comparação aqui.
  *
  * Multi-valor: `alterpop.franchise` é lista; "correto" = a lista CONTÉM o valor
  * resolvido (crossover manual fica válido).
@@ -34,6 +48,7 @@ import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { FRANCHISE_UNIVERSES } from "../../lib/importer/catalog/franchiseUniverses.js";
 import { FRANCHISE_LINES } from "../../lib/importer/catalog/franchiseLines.js";
+import { listCurationQueueItems } from "../../lib/curation/curationQueue.server.js";
 
 const args = process.argv.slice(2);
 const JSON_OUT = args.includes("--json");
@@ -103,6 +118,15 @@ async function main() {
   });
   const expBySku = new Map(rows.map((r) => [r.sku, r]));
 
+  // Tarefa 54 — segundo sistema de override, curation-queue.json. Uma única leitura
+  // da fila inteira, indexada por sku (mesmo padrão do mapa acima).
+  const queueItems = await listCurationQueueItems();
+  const queueOverrideTitleBySku = new Map(
+    queueItems
+      .filter((i) => i.metadata?.overrides?.title)
+      .map((i) => [i.sku, String(i.metadata.overrides.title)])
+  );
+
   const buckets = { MISSING: [], DRIFT: [], ORPHAN_LINE: [], UNKNOWN: [], NO_CATALOG_ROW: [] };
 
   for (const p of products) {
@@ -114,7 +138,8 @@ async function main() {
 
     // expectativa: primeira variante com linha no catálogo
     let exp = null;
-    for (const s of skusP) if (expBySku.has(s)) { exp = expBySku.get(s); break; }
+    let expSku = null;
+    for (const s of skusP) if (expBySku.has(s)) { exp = expBySku.get(s); expSku = s; break; }
 
     const tag = (b, msg) => buckets[b].push(`${pid} "${p.title.slice(0, 44)}" — ${msg}`);
 
@@ -150,9 +175,11 @@ async function main() {
     // line no produto que o resolver NÃO previu (e não é crossover manual coerente)
     if (!expL && lineVals.length) tag("DRIFT", `produto tem alterpop.line ${JSON.stringify(lineVals)} mas o resolvido não tem line`);
 
-    // Tarefa 38 — título. Expectativa SEM tradução (titleOverride ?? cleanTitle ?? title),
-    // comparado por trim + minúsculas.
-    const expTitle = String(exp.titleOverride || exp.cleanTitle || exp.title || "").trim();
+    // Tarefa 38/54 — título. Precedência alinhada com o publisher: override da fila
+    // de curadoria (vence sobre tudo) > titleOverride da Prisma > cleanTitle > title.
+    // SEM tradução, comparado por trim + minúsculas.
+    const queueOverrideTitle = queueOverrideTitleBySku.get(expSku);
+    const expTitle = String(queueOverrideTitle || exp.titleOverride || exp.cleanTitle || exp.title || "").trim();
     const gotTitle = String(p.title || "").trim();
     if (expTitle && expTitle.toLowerCase() !== gotTitle.toLowerCase()) {
       tag("DRIFT", `título esperado "${expTitle.slice(0, 60)}", loja tem "${gotTitle.slice(0, 60)}"`);
