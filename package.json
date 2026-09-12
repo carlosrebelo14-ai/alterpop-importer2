@@ -68,6 +68,7 @@
     "format:extract-dryrun": "node scripts/catalog/format-extract-dryrun.js",
     "pilot:select": "node scripts/pilot-batch-select.js",
     "franchise:layer2-audit": "node scripts/catalog/franchise-layer2-audit.js",
+    "franchise:brand-overlap-audit": "node scripts/catalog/franchise-brand-overlap-audit.js",
     "kpop:overlap": "node scripts/catalog/kpop-demon-hunters-overlap.js",
     "kpop:collection-create": "node scripts/catalog/kpop-collection-create.js"
   },

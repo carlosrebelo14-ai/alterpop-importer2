@@ -50,3 +50,19 @@ Uma entrada por decisão fechada pelo Carlos. Emendas ficam no bloco da decisão
 
 **Referência cruzada:** Tarefa 41, Tarefa 42, `pilot-batch-select.js` (slot S4)
 **Sem alteração de código. Sem migração.**
+
+---
+
+## Decisão 25 — classe de risco nova: ref legítimo, licença inexistente
+
+**Data:** 2026-09-12
+**Estado:** fechada, sem ação ao resolver antes da inauguração
+
+**Achado:** o feed OcioStock marca produtos com `ref=` de um universo licenciado sem que exista licença real — `franchiseRefs` contém literalmente `"HARRY POTTER"` num produto MGA Entertainment/Miniverse (`0035051531166`, "Miniverse Potion classroom Make It Mini Holiday Harry Potter set"). O atributo descreve tema, não licenciamento. O resolver está correto ao confiar no ref — a falha é a montante, no fornecedor.
+
+A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o critério ali é DISCORDÂNCIA entre título e ref, e neste caso título e ref concordam (ambos dizem "Harry Potter") — a concordância é exatamente o que torna o caso invisível a essa auditoria. Foi por isso que o diagnóstico inicial ("camada 2") estava errado — é camada 1 (`resolvedFranchiseLayer: 1`), ref e título ambos corretos tecnicamente, ambos errados comercialmente.
+
+**Decisão:** sem alteração ao `franchiseResolver.server.js` antes da inauguração. Mitigação por curadoria manual do Carlos na seleção final. Censo de refs de licença duvidosa entra na Tarefa 47 (`franchise-brand-overlap-audit.js`, só relatório) — decisão sobre deny-list de marcas genéricas (mga, miniverse, bandai, jada, zuru, clearance) fica para revisão pós-inauguração.
+
+**Referência cruzada:** Tarefa 11, Tarefa 45, Tarefa 47, `franchise-brand-overlap-audit.js`
+**Sem alteração de código ao resolver. Sem migração.**
