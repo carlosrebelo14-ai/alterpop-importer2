@@ -34,3 +34,19 @@ Uma entrada por decisão fechada pelo Carlos. Emendas ficam no bloco da decisão
 **Estado:** fechada
 **Referência cruzada:** Decisão 17, Tarefa 32, Tarefa 33
 **Sem alteração de código. Sem migração.**
+
+---
+
+## Decisão 24 — crossover multi-valor inalcançável com `resolvedFranchise` escalar
+
+**Data:** 2026-09-12
+**Estado:** fechada, sem ação nesta entrega
+
+**Achado:** `resolvedFranchise` é um campo escalar (`String?`) no modelo `CatalogProduct` da Prisma. `alterpop.franchise` é uma lista (`list.single_line_text_field`) no Shopify — a plataforma suporta um produto pertencer a 2+ universos em simultâneo (crossover manual, validado em R1). Mas com a coluna Prisma escalar, nenhum produto pode alguma vez ter 2+ valores resolvidos: o crossover que R1 validou como suportado pela plataforma é **inalcançável pelo modelo de dados atual**.
+
+**Como surgiu:** slot S4 do seletor do lote piloto (Tarefa 41/42, `pilot-batch-select.js`) pedia um SKU com `resolvedFranchise` de 2+ valores para validar crossover por lista. O predicado nunca teve candidatos — não por falta de dados no catálogo, mas porque a coluna não consegue representar essa forma. Ficou documentado no próprio script (comentário no predicado S4) para não voltar a ser testado às cegas.
+
+**Decisão:** sem ação nesta entrega pré-inauguração. Tornar `resolvedFranchise` array exige migração Prisma (mudança de tipo de coluna, não `ADD COLUMN` trivial) e reescrita do `franchiseResolver.server.js` (camadas 1/2 e a escrita em `catalogInsertBatch.server.js`) para produzir e persistir múltiplos valores. Fora do âmbito do portão pré-inauguração — fica registado para uma entrega futura, se o negócio decidir que crossover multi-universo é necessário na prática (hoje é só capacidade teórica da plataforma, sem produto real que precise).
+
+**Referência cruzada:** Tarefa 41, Tarefa 42, `pilot-batch-select.js` (slot S4)
+**Sem alteração de código. Sem migração.**
