@@ -21,14 +21,24 @@
  *   F3  sem contradição título/ref (mesma regra da Tarefa 11, recalculada aqui)
  *   F4  ordenação sku ASC, aplicada só ao conjunto já filtrado por F1–F3
  *
- * Tarefa 44 (2026-09-12) — `--exclude <sku>` (repetível) tira um SKU específico da
- * corrida sem tocar em código. Usado quando a revisão manual do Carlos apanha um
- * falso positivo do resolver que os filtros F1–F3 não cobrem (ex.: contradição de
- * licença na camada 2, fora do âmbito da Tarefa 11/F3, que só cobre camada 1).
+ * Tarefa 44 (2026-09-12) — `--exclude <sku>` (repetível, ou lista separada por
+ * vírgulas) tira SKUs específicos da corrida sem tocar em código. Usado quando a
+ * revisão manual do Carlos apanha um falso positivo do resolver que os filtros F1–F3
+ * não cobrem.
+ *
+ * Tarefa 46 (2026-09-12) — F5, teto de 2 SKUs por `resolvedFranchise` no lote
+ * inteiro. A v3 do lote saiu com 3/8 em Super Mario — vitrine pré-inaugural
+ * desequilibrada, só 5 universos exercitados em vez de 7. Avaliado na MESMA ordem de
+ * prioridade S1→S5 usada para atribuir slot: o primeiro SKU de um universo a chegar
+ * (nessa ordem, sku ASC dentro de cada slot) fica; o resto desse universo é saltado —
+ * "recua para o universo seguinte em sku ASC" dentro do mesmo slot. Os défices de
+ * S1/S3/S4/S5 continuam a compensar-se subindo o alvo de S2 (Tarefa 41/42), agora
+ * também sujeito ao teto: a compensação continua a consumir o bucket de S2 a partir
+ * de onde a seleção base parou, nunca reinicia do zero (evita contar o mesmo SKU 2×).
  *
  * Correr na Fly:
  *   node scripts/pilot-batch-select.js
- *   node scripts/pilot-batch-select.js --exclude 0035051531166
+ *   node scripts/pilot-batch-select.js --exclude 0035051531166,0039897585413
  *   node scripts/pilot-batch-select.js --approve
  */
 import { prisma } from "../lib/prisma/prismaSafe.server.js";
@@ -45,11 +55,16 @@ const SHOP =
   "jyr17t-wr.myshopify.com";
 const PAGE = 500;
 const EXCLUDED_SKUS = new Set(
-  args.reduce((acc, a, i) => {
-    if (a === "--exclude" && args[i + 1]) acc.push(args[i + 1]);
-    return acc;
-  }, [])
+  args
+    .reduce((acc, a, i) => {
+      if (a === "--exclude" && args[i + 1]) acc.push(args[i + 1]);
+      return acc;
+    }, [])
+    .flatMap((v) => v.split(","))
+    .map((s) => s.trim())
+    .filter(Boolean)
 );
+const UNIVERSE_CAP = 2; // Tarefa 46 (F5) — máximo de SKUs por resolvedFranchise no lote inteiro
 
 /** 34 universos ativos — dormentes (Decisão 15/Tarefa 30) excluídos. */
 const ACTIVE_UNIVERSE_NAMES = new Set(
@@ -205,34 +220,65 @@ async function main() {
     `elegíveis após filtros globais (PENDING + universo ativo + stock>0 + F1 sku válido + F2 sem tokens blind + F3 sem contradição título/ref): ${eligibleAfterGlobalFilters}\n`
   );
 
-  // Défice por slot com os alvos originais.
+  // Tarefa 46 (F5) — seleção com teto por universo, na ordem de prioridade S1→S5.
+  // Percorre cada bucket com um ponteiro próprio (não reinicia do zero), salta
+  // candidatos cujo universo já bateu no teto ("recua para o universo seguinte em
+  // sku ASC"), e devolve quantos conseguiu apanhar — o défice fica visível já aqui.
+  const universeCounts = new Map();
+  const bucketIndex = Object.fromEntries(SLOTS.map((s) => [s.key, 0]));
+  const pickedBySlot = Object.fromEntries(SLOTS.map((s) => [s.key, []]));
+
+  function pickMore(slotKey, wantMore) {
+    const bucket = buckets[slotKey];
+    const out = [];
+    let i = bucketIndex[slotKey];
+    while (out.length < wantMore && i < bucket.length) {
+      const r = bucket[i];
+      i += 1;
+      const u = r.resolvedFranchise;
+      if ((universeCounts.get(u) || 0) >= UNIVERSE_CAP) continue; // F5 — salta, próximo sku ASC
+      universeCounts.set(u, (universeCounts.get(u) || 0) + 1);
+      out.push(r);
+    }
+    bucketIndex[slotKey] = i;
+    pickedBySlot[slotKey].push(...out);
+    return out;
+  }
+
   const deficits = {};
-  for (const slot of SLOTS) deficits[slot.key] = Math.max(0, slot.target - buckets[slot.key].length);
-
-  // Fallback: qualquer défice fora de S2 é compensado subindo o alvo de S2.
-  const deficitOutsideS2 = SLOTS.filter((s) => s.key !== "S2").reduce((acc, s) => acc + deficits[s.key], 0);
-  const finalTargets = Object.fromEntries(SLOTS.map((s) => [s.key, s.target]));
   for (const slot of SLOTS) {
-    if (slot.key === "S2") continue;
-    finalTargets[slot.key] = slot.target - deficits[slot.key]; // cai ao que existe
+    pickMore(slot.key, slot.target);
+    deficits[slot.key] = slot.target - pickedBySlot[slot.key].length;
   }
-  finalTargets.S2 = Math.min(SLOTS.find((s) => s.key === "S2").target + deficitOutsideS2, buckets.S2.length);
 
-  console.log(`── alvos finais (depois do fallback) ──`);
+  // Fallback: qualquer défice fora de S2 (incl. o do próprio F5) é compensado
+  // subindo o alvo de S2 — continuando o MESMO bucket de S2 a partir de onde a
+  // seleção base parou, nunca do zero.
+  const deficitOutsideS2 = SLOTS.filter((s) => s.key !== "S2").reduce((acc, s) => acc + Math.max(0, deficits[s.key]), 0);
+  if (deficitOutsideS2 > 0) {
+    pickMore("S2", deficitOutsideS2);
+  }
+
+  console.log(`── alvos finais (depois do fallback + teto F5 de ${UNIVERSE_CAP}/universo) ──`);
   for (const slot of SLOTS) {
+    const actual = pickedBySlot[slot.key].length;
     const flag = deficits[slot.key] > 0 && slot.key !== "S2" ? "  ← slot caiu, compensado em S2" : "";
-    console.log(`  ${slot.key}  alvo original ${slot.target}  ·  candidatos ${buckets[slot.key].length}  ·  alvo final ${finalTargets[slot.key]}${flag}`);
+    console.log(`  ${slot.key}  alvo original ${slot.target}  ·  candidatos ${buckets[slot.key].length}  ·  selecionados ${actual}${flag}`);
   }
-  const totalSelected = SLOTS.reduce((acc, s) => acc + finalTargets[s.key], 0);
+  const totalSelected = SLOTS.reduce((acc, s) => acc + pickedBySlot[s.key].length, 0);
   console.log(`\ntotal selecionado: ${totalSelected} (esperado: 8)`);
   if (totalSelected < 8) {
-    console.log(`⚠ défice não totalmente compensável — faltam candidatos reais na fila PENDING.`);
+    console.log(`⚠ défice não totalmente compensável — faltam candidatos reais na fila PENDING (ou o teto F5 esgotou o bucket).`);
+  }
+
+  console.log(`\n── distribuição por universo ──`);
+  for (const [u, c] of [...universeCounts.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${String(c).padStart(2)}  ${u}`);
   }
 
   const selected = [];
   for (const slot of SLOTS) {
-    const picked = buckets[slot.key].slice(0, finalTargets[slot.key]);
-    for (const r of picked) selected.push({ ...r, slot: slot.key });
+    for (const r of pickedBySlot[slot.key]) selected.push({ ...r, slot: slot.key });
   }
 
   console.log(`\n── lote (sku | title | cleanTitle | franchise | line | format | slot) ──`);
