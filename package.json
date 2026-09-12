@@ -71,6 +71,8 @@
     "franchise:brand-overlap-audit": "node scripts/catalog/franchise-brand-overlap-audit.js",
     "pilot:verify": "node scripts/catalog/pre-pilot-verify.js",
     "test:sync-safety": "node scripts/tests/safe-prisma-catalog-read.test.js && node scripts/tests/curation-sync-error-protection.test.js",
+    "curation:override-census": "node scripts/catalog/curation-override-census.js",
+    "curation:override-clear": "node scripts/catalog/curation-override-clear.js",
     "kpop:overlap": "node scripts/catalog/kpop-demon-hunters-overlap.js",
     "kpop:collection-create": "node scripts/catalog/kpop-collection-create.js"
   },
