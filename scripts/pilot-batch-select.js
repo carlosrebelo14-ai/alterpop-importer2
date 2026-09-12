@@ -14,6 +14,13 @@
  * curadoria (bulkSetQueueStatus) — não publica sozinho, isso é o passo 4
  * (runApprovedShopifySync) da sequência.
  *
+ * Tarefa 42 (2026-09-12) — F1–F4, aplicados antes da distribuição por slot e antes da
+ * ordenação sku ASC:
+ *   F1  sku só numérico, 8/12/13/14 dígitos — exclui concatenações de ruído do feed
+ *   F2  título sem tokens de sortido cego (assorted/mystery/blind/surprise/random)
+ *   F3  sem contradição título/ref (mesma regra da Tarefa 11, recalculada aqui)
+ *   F4  ordenação sku ASC, aplicada só ao conjunto já filtrado por F1–F3
+ *
  * Correr na Fly:
  *   node scripts/pilot-batch-select.js
  *   node scripts/pilot-batch-select.js --approve
@@ -21,6 +28,8 @@
 import { prisma } from "../lib/prisma/prismaSafe.server.js";
 import { listCurationQueueItems, bulkSetQueueStatus } from "../lib/curation/curationQueue.server.js";
 import { FRANCHISE_UNIVERSES } from "../lib/importer/catalog/franchiseUniverses.js";
+import { FRANCHISE_LINES } from "../lib/importer/catalog/franchiseLines.js";
+import { titleOnlyUniverse } from "../lib/importer/catalog/franchiseResolver.server.js";
 
 const args = process.argv.slice(2);
 const APPROVE = args.includes("--approve");
@@ -34,6 +43,52 @@ const PAGE = 500;
 const ACTIVE_UNIVERSE_NAMES = new Set(
   FRANCHISE_UNIVERSES.filter((u) => !u.dormant).map((u) => u.name)
 );
+
+const HANDLE_BY_NAME = new Map(FRANCHISE_UNIVERSES.map((u) => [u.name, u.handle]));
+const LINE_BY_NAME = new Map(FRANCHISE_LINES.map((l) => [l.line, l]));
+
+/**
+ * Tarefa 42 — filtros F1–F4, aplicados ANTES da distribuição por slot. O seletor
+ * original (Tarefa 41) só olhava para franchise/line/format resolvidos; a revisão do
+ * Carlos apanhou 3 SKUs malformados (concatenações de ruído do fornecedor, fora de
+ * EAN-13/UPC-12) e 4 produtos de sortido cego (assorted/mystery/blind/surprise) —
+ * escolha errada para o lote pré-inaugural, que agora é permanente na loja
+ * (Decisão 23).
+ */
+
+/** F1 — sku só numérico, 8/12/13/14 dígitos (EAN-8, UPC-12, EAN-13, EAN/ITF-14). */
+const SKU_SHAPE_RE = /^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/;
+function passesSkuShape(sku) {
+  return SKU_SHAPE_RE.test(String(sku || ""));
+}
+
+/** F2 — título sem tokens de sortido cego. Case-insensitive, palavra inteira. */
+const BLIND_TOKEN_RE = /\b(assorted|mystery|blind|surprise|random)\b/i;
+function passesNoBlindTokens(row) {
+  const haystack = `${row.title || ""} ${row.cleanTitle || ""}`;
+  return !BLIND_TOKEN_RE.test(haystack);
+}
+
+/**
+ * F3 — exclui contradição título/ref (mesma lógica da Tarefa 11,
+ * franchise-title-ref-contradiction.js, recalculada aqui em vez de ler uma lista
+ * estática para nunca desalinhar do resolver atual).
+ */
+function hasTitleRefContradiction(row) {
+  if (row.resolvedFranchiseLayer !== 1) return false; // só camada 1 (ref) pode contradizer
+  const titleHit = titleOnlyUniverse({ title: row.title, titleSource: row.titleSource }, {});
+  if (!titleHit) return false;
+
+  const refHandle = HANDLE_BY_NAME.get(row.resolvedFranchise) || null;
+  if (!refHandle || titleHit.handle === refHandle) return false;
+
+  if (row.resolvedLine) {
+    const line = LINE_BY_NAME.get(row.resolvedLine);
+    const parentHandle = line ? HANDLE_BY_NAME.get(line.parent) : null;
+    if (parentHandle && parentHandle === titleHit.handle) return false; // Line já reconcilia
+  }
+  return true;
+}
 
 /**
  * Predicados por slot, avaliados NESTA ORDEM — um SKU cai no primeiro slot cujo
@@ -96,7 +151,9 @@ async function main() {
         title: true,
         cleanTitle: true,
         titleOverride: true,
+        titleSource: true,
         resolvedFranchise: true,
+        resolvedFranchiseLayer: true,
         resolvedLine: true,
         resolvedFormat: true,
         stock: true,
@@ -112,6 +169,9 @@ async function main() {
       if (!pendingSkus.has(r.sku)) continue;
       if (!r.resolvedFranchise || !ACTIVE_UNIVERSE_NAMES.has(r.resolvedFranchise)) continue;
       if (!(r.stock > 0)) continue;
+      if (!passesSkuShape(r.sku)) continue; // F1
+      if (!passesNoBlindTokens(r)) continue; // F2
+      if (hasTitleRefContradiction(r)) continue; // F3
       eligibleAfterGlobalFilters += 1;
 
       for (const slot of SLOTS) {
@@ -127,7 +187,9 @@ async function main() {
   }
 
   console.log(`CatalogProduct analisados: ${scanned}`);
-  console.log(`elegíveis após filtros globais (PENDING + universo ativo + stock>0): ${eligibleAfterGlobalFilters}\n`);
+  console.log(
+    `elegíveis após filtros globais (PENDING + universo ativo + stock>0 + F1 sku válido + F2 sem tokens blind + F3 sem contradição título/ref): ${eligibleAfterGlobalFilters}\n`
+  );
 
   // Défice por slot com os alvos originais.
   const deficits = {};
