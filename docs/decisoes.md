@@ -118,3 +118,22 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 
 **Referência cruzada:** Tarefa 52, Tarefa 53, `lib/curation/curationQueue.server.js`
 **Sem migração.**
+
+---
+
+## Decisão 30 — falha de leitura nunca se converte em conclusão de negócio
+
+**Data:** 2026-09-13
+**Estado:** fechada
+
+**Achado:** a mesma classe de bug apareceu DUAS vezes em ficheiros diferentes na mesma sessão. Primeiro em `shopifyApprovedSync.server.js` (Tarefa 51/Decisão 28) — `safePrisma` sem `fallback` engoliu uma falha de leitura SQLite e converteu-a em "SKU não encontrado", falhando 6 produtos reais. Depois em `franchise-reconcile.js` (Tarefa 58) — uma query direta, sem `safePrisma` nem qualquer verificação, devolveu 8 linhas numa corrida e 2 linhas na seguinte para os MESMOS 8 SKUs, sem exceção lançada, e o script reportou `NO_CATALOG_ROW` a mais na primeira corrida como se fosse um facto sobre o catálogo.
+
+**Padrão comum:** uma ferramenta de verificação que reporta ausência de dados quando a leitura falha é pior do que não ter ferramenta — dá luz verde falsa e luz vermelha falsa, e o operador aprende a re-correr até dar limpo. "Re-correr até dar limpo" é sintoma, não remédio.
+
+**Decisão:**
+> Falha de leitura nunca se converte em conclusão de negócio. Qualquer script que classifique estado de catálogo, fila ou loja tem de abortar com exit code não-zero perante erro de query. `NO_CATALOG_ROW`, `MISSING` e equivalentes reservam-se a ausência confirmada por leitura bem sucedida — nunca a uma leitura que falhou ou que não bate com uma segunda leitura de confirmação.
+
+**Aplica-se** a toda a importação pré-inaugural — qualquer script futuro que classifique estado (existe/não existe, quantos há, está correto/errado) sobre catálogo, fila de curadoria, ou coleções da loja segue este padrão: query em try/catch, erro aborta sem classificar nada, e onde fizer sentido uma segunda leitura de confirmação antes de reportar "0"/"ausente".
+
+**Referência cruzada:** Decisão 28, Tarefa 51, Tarefa 58, Tarefa 59, `docs/safe-prisma-fallback-census.md`
+**Sem migração.**
