@@ -70,7 +70,7 @@
     "franchise:layer2-audit": "node scripts/catalog/franchise-layer2-audit.js",
     "franchise:brand-overlap-audit": "node scripts/catalog/franchise-brand-overlap-audit.js",
     "pilot:verify": "node scripts/catalog/pre-pilot-verify.js",
-    "test:sync-safety": "node scripts/tests/safe-prisma-catalog-read.test.js && node scripts/tests/curation-sync-error-protection.test.js",
+    "test:sync-safety": "node scripts/tests/safe-prisma-catalog-read.test.js && node scripts/tests/curation-sync-error-protection.test.js && node scripts/tests/franchise-reconcile-read-safety.test.js",
     "curation:override-census": "node scripts/catalog/curation-override-census.js",
     "curation:override-clear": "node scripts/catalog/curation-override-clear.js",
     "curation:overrides-audit": "node scripts/catalog/curation-overrides-audit.js",
