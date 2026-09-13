@@ -3,8 +3,8 @@
  * Tarefa 40 — verificação pós-wipe, portão obrigatório antes da Tarefa 48 (publicação
  * do lote piloto).
  *
- * SÓ RELATÓRIO — read-only, não escreve nada. V1–V10 na ordem do briefing; qualquer
- * falha faz sair com exit code 1 e a Tarefa 48 não deve correr.
+ * Não escreve em catálogo, fila nem loja — a única escrita é o seu próprio ficheiro de
+ * estado (ver ADENDA 3). Qualquer verificação vermelha sai com exit code 1.
  *
  * V4 é a crítica: `shopifyProductId` órfão (aponta para um produto apagado no wipe)
  * faz o publisher tentar `productUpdate` em vez de `productCreate` e falhar com 404
@@ -14,20 +14,30 @@
  * V2 e V4 ficaram vermelhas para sempre: medem loja vazia e fila sem publicações, que
  * são pré-condições de um momento que já passou. Fixar o esperado em 8 só adiava o
  * problema até ao nono produto.
- *   SAÚDE CORRENTE (V5–V10), por omissão — invariantes que têm de valer sempre, em
+ *   SAÚDE CORRENTE (V3, V5–V11), por omissão — invariantes que têm de valer sempre, em
  *     qualquer altura da vida da loja. É este que se corre de rotina.
- *   HISTÓRICO (V1–V4), só com `--pre-wipe` — pré-condições da Tarefa 48, verdadeiras
+ *   HISTÓRICO (V1, V2, V4), só com `--pre-wipe` — pré-condições da Tarefa 48, verdadeiras
  *     entre o wipe e o primeiro publish. Guardadas para poderem voltar a servir se
  *     houver outro wipe, nunca para correr de rotina.
- * V3 (fila APPROVED = 0) não vinha nomeada na spec e foi para o histórico: com
- * publicação manual produto a produto, ter aprovados à espera é estado normal, e no
- * portão corrente seria o mesmo falso alarme que V1/V2/V4.
  *
- * V5 e V7 passaram de valor cravado a banda de tolerância pela mesma razão que levou a
- * Tarefa 49 a mudar V6 ("o feed muda entre corridas, um valor fixo transformava
- * reindexação normal em falso alarme"). Cravados num portão que corre sempre, davam
- * vermelho na primeira reindexação. A banda é ±2% — apertar ou alargar é decisão de
- * produto, o mecanismo fica.
+ * ADENDA 3 (2026-09-14) — a banda de ±2% da ADENDA 2 era outra fotografia, só que com
+ * margem: ±2% sobre 25 421 são 508 linhas, e um ingest que perdesse 400 produtos passava
+ * verde. A forma certa separa deriva de feed de avaria de pipeline:
+ *   V5  compara com o valor da corrida anterior (health-gate-state.json). Vermelho só em
+ *       QUEDA acentuada (≥10%). Crescimento é normal e nunca é vermelho.
+ *   V7  medido como RÁCIO do total, não como absoluto. Um absoluto que se mexe é o feed;
+ *       um rácio que cai é o extrator partido.
+ *   V3  volta à saúde corrente. `APPROVED = 0` por igualdade era falso alarme, mas mandá-
+ *       lo para o histórico perdia sinal real: um item aprovado e por publicar é normal
+ *       durante minutos e é avaria ao fim de horas. Mede-se a IDADE (metadata.approvedAt,
+ *       que já existe na fila), não a contagem — e a contagem aparece sempre.
+ *   V11 divergência de título entre `franchiseUniverses.js` e a loja, AMARELA. A adoção
+ *       reporta e pára (saída 1): não escreve títulos, para não desfazer em silêncio
+ *       edições feitas no admin. Vive aqui, no artefacto que já corre sempre, em vez de
+ *       num script à parte que ninguém se lembra de correr.
+ *
+ * Deixou de ser 100% read-only por causa do V5: escreve `health-gate-state.json` no
+ * diretório de dados, e mais nada. Nunca toca em catálogo, fila ou loja.
  *
  * Tarefa 49 (2026-09-13) — V6 e V8 corrigidos. A primeira versão (Tarefa 40) tinha as
  * DUAS mal calibradas contra o comportamento real, não contra os dados:
@@ -44,10 +54,14 @@
  *       (V9) e a tabela de franquias realmente governam.
  *
  * Correr na Fly:
- *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V5–V10)
- *   node scripts/catalog/pre-pilot-verify.js --pre-wipe   # + histórico (V1–V4)
+ *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V11)
+ *   node scripts/catalog/pre-pilot-verify.js --pre-wipe   # + histórico (V1, V2, V4)
  */
+import fs from "fs/promises";
+import path from "path";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
+import { getDefaultConfig } from "../../lib/importer/config.js";
+import { planUniverseCollections } from "../../lib/importer/shopify/universeCollections.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { listCurationQueueItems } from "../../lib/curation/curationQueue.server.js";
@@ -63,7 +77,7 @@ import {
 const GOVERNED_TEMPLATE_SUFFIXES = new Set([UNIVERSE_TEMPLATE_SUFFIX, LINE_TEMPLATE_SUFFIX]);
 
 const args = process.argv.slice(2);
-/** Histórico (V1–V4): pré-condições da Tarefa 48, só válidas entre um wipe e o primeiro
+/** Histórico (V1, V2, V4): pré-condições da Tarefa 48, só válidas entre um wipe e o primeiro
  *  publish. Fora disso são falso alarme garantido — ver ADENDA 2 no cabeçalho. */
 const PRE_WIPE = args.includes("--pre-wipe");
 const SHOP =
@@ -101,11 +115,49 @@ async function countGovernedCollections(client) {
   return count;
 }
 
+/** Estado entre corridas — só o que o V5/V7 precisam de comparar com a corrida anterior. */
+const STATE_PATH = path.join(getDefaultConfig().paths.data, "health-gate-state.json");
+
+/** Ficheiro ausente é ausência legítima (primeira corrida) e devolve null. Ficheiro que
+ *  existe mas não se lê LANÇA — Decisão 30, falha de leitura nunca vira "sem histórico",
+ *  que aqui daria verde a uma queda de catálogo por não ter com que a comparar. */
+async function loadState() {
+  let raw;
+  try {
+    raw = await fs.readFile(STATE_PATH, "utf8");
+  } catch (err) {
+    if (err?.code === "ENOENT") return null;
+    throw new Error(`FALHA DE LEITURA (${STATE_PATH}): ${err?.message || err}`);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`FALHA DE LEITURA (${STATE_PATH}): JSON inválido — ${err?.message || err}`);
+  }
+}
+
+async function saveState(state) {
+  await fs.mkdir(path.dirname(STATE_PATH), { recursive: true });
+  await fs.writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf8");
+}
+
 const results = [];
 function check(id, label, expected, actual, pass) {
-  results.push({ id, label, expected, actual, pass });
-  const mark = pass ? "✓" : "✗";
-  console.log(`  ${mark} ${id}  ${label} — esperado ${expected}, obtido ${actual}`);
+  results.push({ id, label, expected, actual, level: pass ? "pass" : "fail" });
+  console.log(`  ${pass ? "✓" : "✗"} ${id}  ${label} — esperado ${expected}, obtido ${actual}`);
+}
+
+/** Amarelo: aparece sempre, nunca faz o portão falhar. Para divergências que pedem juízo
+ *  humano em vez de bloqueio automático (V11). */
+function warn(id, label, expected, actual, clean) {
+  results.push({ id, label, expected, actual, level: clean ? "pass" : "warn" });
+  console.log(`  ${clean ? "✓" : "!"} ${id}  ${label} — esperado ${expected}, obtido ${actual}`);
+}
+
+/** Informativo: imprime e nunca julga. */
+function info(id, label, value) {
+  results.push({ id, label, expected: "—", actual: value, level: "pass" });
+  console.log(`  · ${id}  ${label} — ${value}`);
 }
 
 /** V6 — intervalo, não valor cravado (Tarefa 49). */
@@ -114,17 +166,23 @@ function checkRange(id, label, min, max, actual) {
   check(id, label, `${min}–${max}`, actual, pass);
 }
 
-/** V5/V7 — banda de ±`tolPct`% à volta da referência medida (ADENDA 2). Um valor exato
- *  num portão que corre sempre dá vermelho na primeira reindexação. */
-function checkBand(id, label, ref, tolPct, actual) {
-  const min = Math.floor(ref * (1 - tolPct / 100));
-  const max = Math.ceil(ref * (1 + tolPct / 100));
-  check(id, label, `${min}–${max} (ref ${ref} ±${tolPct}%)`, actual, actual >= min && actual <= max);
+/** V5 — queda acentuada face à corrida anterior. Crescimento nunca é vermelho. */
+const V5_QUEDA_MAX_PCT = 10;
+/** V7 — quanto o rácio pode cair (pontos percentuais) antes de ser extrator partido. */
+const V7_QUEDA_MAX_PP = 3;
+/** V3 — a partir de quantas horas um APPROVED por publicar deixa de ser normal. */
+const V3_STALE_HORAS = 6;
+
+function horasDesde(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return (Date.now() - t) / 36e5;
 }
 
 async function main() {
   console.log(
-    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1–V4) + saúde corrente (V5–V10)" : "saúde corrente (V5–V10)"} ===\n`
+    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V11)" : "saúde corrente (V3, V5–V11)"} ===\n`
   );
 
   const session = await loadOfflineSessionForShop(SHOP);
@@ -141,9 +199,6 @@ async function main() {
     const published = await listCurationQueueItems("PUBLISHED");
     check("V2", "fila status=PUBLISHED", 0, published.length, published.length === 0);
 
-    const approved = await listCurationQueueItems("APPROVED");
-    check("V3", "fila status=APPROVED", 0, approved.length, approved.length === 0);
-
     // V4 — shopifyProductId órfão (a crítica)
     const allItems = await listCurationQueueItems();
     const withShopifyId = allItems.filter((i) => i.metadata?.shopifyProductId != null);
@@ -155,9 +210,44 @@ async function main() {
     console.log(`\n  — saúde corrente —`);
   }
 
+  const state = await loadState();
+
+  // V3 — aprovados por publicar: mede a IDADE, não a contagem (ADENDA 3). A contagem
+  // aparece sempre; publicação manual não é razão para deixar de olhar para a fila.
+  const approved = await listCurationQueueItems("APPROVED");
+  info("V3", "fila status=APPROVED (contagem)", approved.length);
+  const semCarimbo = approved.filter((i) => horasDesde(i.metadata?.approvedAt) == null);
+  const parados = approved.filter((i) => (horasDesde(i.metadata?.approvedAt) ?? 0) > V3_STALE_HORAS);
+  check(
+    "V3",
+    `aprovados parados há mais de ${V3_STALE_HORAS}h`,
+    0,
+    parados.length,
+    parados.length === 0
+  );
+  if (parados.length) {
+    console.log(`      SKUs: ${parados.slice(0, 10).map((i) => i.sku).join(", ")}${parados.length > 10 ? "…" : ""}`);
+  }
+  // Sem carimbo não se prova idade nenhuma — reporta-se, não se conclui (Decisão 30).
+  if (semCarimbo.length) {
+    console.log(`      ${semCarimbo.length} aprovado(s) sem metadata.approvedAt — idade indeterminada, não contam para o vermelho`);
+  }
+
   // V5–V7 — Prisma CatalogProduct
   const totalProducts = await prisma.catalogProduct.count({ where: { shop: SHOP } });
-  checkBand("V5", "CatalogProduct total", 25421, 2, totalProducts);
+  const totalAnterior = state?.catalogTotal ?? null;
+  if (totalAnterior == null) {
+    info("V5", "CatalogProduct total (sem corrida anterior — referência gravada)", totalProducts);
+  } else {
+    const quedaPct = ((totalAnterior - totalProducts) / totalAnterior) * 100;
+    check(
+      "V5",
+      `queda do total vs corrida anterior (${totalAnterior})`,
+      `< ${V5_QUEDA_MAX_PCT}%`,
+      `${quedaPct > 0 ? quedaPct.toFixed(1) : "0.0"}% (total ${totalProducts})`,
+      quedaPct < V5_QUEDA_MAX_PCT
+    );
+  }
 
   const cleanTitleDiffRows = await prisma.$queryRawUnsafe(
     `SELECT COUNT(*) as c FROM CatalogProduct WHERE shop = ? AND cleanTitle IS NOT NULL AND cleanTitle <> title`,
@@ -166,8 +256,23 @@ async function main() {
   const cleanTitleDiffCount = Number(cleanTitleDiffRows?.[0]?.c ?? 0);
   checkRange("V6", "cleanTitle <> title", 800, 900, cleanTitleDiffCount);
 
+  // V7 — rácio, não absoluto (ADENDA 3): um absoluto que se mexe é o feed, um rácio que
+  // cai é o extrator partido.
   const resolvedFormatCount = await prisma.catalogProduct.count({ where: { shop: SHOP, resolvedFormat: { not: null } } });
-  checkBand("V7", "resolvedFormat IS NOT NULL", 14183, 2, resolvedFormatCount);
+  const racio = totalProducts ? (resolvedFormatCount / totalProducts) * 100 : 0;
+  const racioAnterior = state?.resolvedFormatRatio ?? null;
+  if (racioAnterior == null) {
+    info("V7", `resolvedFormat rácio (sem corrida anterior — referência gravada)`, `${racio.toFixed(1)}% (${resolvedFormatCount}/${totalProducts})`);
+  } else {
+    const queda = racioAnterior - racio;
+    check(
+      "V7",
+      `queda do rácio resolvedFormat vs corrida anterior (${racioAnterior.toFixed(1)}%)`,
+      `< ${V7_QUEDA_MAX_PP} pp`,
+      `${queda > 0 ? queda.toFixed(1) : "0.0"} pp (rácio ${racio.toFixed(1)}%, ${resolvedFormatCount}/${totalProducts})`,
+      queda < V7_QUEDA_MAX_PP
+    );
+  }
 
   // V8 — coleções governadas pela tabela de franquias (universo/line), não todas as
   // coleções da loja — new-arrivals e afins ficam de fora por desenho (Tarefa 49).
@@ -194,12 +299,40 @@ async function main() {
     );
   }
 
+  // V11 — títulos: tabela versionada vs loja. AMARELO por desenho (saída 1 da adoção):
+  // reporta e pára, nunca escreve o título, para não desfazer em silêncio uma edição
+  // feita no admin. Um nome corrigido no repo fica visível aqui em vez de preso.
+  const plano = await planUniverseCollections(client);
+  const titulosDivergentes = plano.toAdopt.filter((a) => a.existing?.title !== a.name);
+  warn(
+    "V11",
+    "títulos iguais entre franchiseUniverses.js e a loja",
+    0,
+    `${titulosDivergentes.length} divergência(s)`,
+    titulosDivergentes.length === 0
+  );
+  for (const d of titulosDivergentes) {
+    console.log(`      ${d.handle}: tabela "${d.name}" · loja "${d.existing?.title}" — aplicar no admin`);
+  }
+
+  await saveState({
+    ...(state || {}),
+    catalogTotal: totalProducts,
+    resolvedFormatRatio: Number(racio.toFixed(2)),
+    shop: SHOP,
+    ranAt: new Date().toISOString(),
+  });
+
   console.log(``);
-  const allPass = results.every((r) => r.pass);
-  const failed = results.filter((r) => !r.pass);
+  const allPass = results.every((r) => r.level !== "fail");
+  const failed = results.filter((r) => r.level === "fail");
+  const warned = results.filter((r) => r.level === "warn");
+  if (warned.length) {
+    console.log(`! ${warned.length} aviso(s) (não bloqueiam): ${warned.map((r) => r.id).join(", ")}.`);
+  }
   if (allPass) {
     console.log(
-      PRE_WIPE ? `✓ V1–V10 todas verdes. Tarefa 48 pode correr.` : `✓ saúde corrente (V5–V10) verde.`
+      PRE_WIPE ? `✓ histórico + saúde corrente verdes. Tarefa 48 pode correr.` : `✓ saúde corrente verde.`
     );
   } else {
     console.log(`✗ ${failed.length} verificação(ões) falhou/falharam: ${failed.map((r) => r.id).join(", ")}.`);
