@@ -38,6 +38,22 @@
  * Multi-valor: `alterpop.franchise` é lista; "correto" = a lista CONTÉM o valor
  * resolvido (crossover manual fica válido).
  *
+ * Tarefa 58 (Decisão 30, 2026-09-13) — a leitura de CatalogProduct por SKUs não
+ * passava por safePrisma nem tinha qualquer verificação: uma leitura transitória (a
+ * mesma classe de falha da Decisão 28/Tarefa 51, contenção SQLite entre sessões
+ * `fly ssh console`) fez duas corridas consecutivas devolverem 8 e depois 2 linhas
+ * para os MESMOS 8 SKUs — sem exceção lançada, sem sinal nenhum, só "NO_CATALOG_ROW"
+ * a mais na primeira corrida. Falha de leitura nunca se converte em conclusão de
+ * negócio (Decisão 30). Agora:
+ *   - a query em si corre dentro de try/catch — erro lançado ABORTA o relatório
+ *     inteiro (exit ≠ 0), nada é impresso;
+ *   - uma segunda leitura independente (`count()` com o MESMO where) confirma a
+ *     leitura de `findMany()` — se divergirem sem nenhuma exceção lançada, é o
+ *     sintoma exato do incidente (duas leituras da mesma foto discordam entre si) e
+ *     aborta também, sem classificar nada. Isto NÃO é o mesmo que "SKU sem linha em
+ *     CatalogProduct" — esse continua um resultado legítimo do `findMany()` e
+ *     continua classificado como NO_CATALOG_ROW por produto, mais abaixo.
+ *
  * `--execute` ainda não implementado (só reporta que faria).
  *
  * Correr na Fla:  node scripts/catalog/franchise-reconcile.js
@@ -84,6 +100,39 @@ function parseList(raw) {
   }
 }
 
+/**
+ * Tarefa 58 (Decisão 30) — leitura de CatalogProduct à prova de contenção. Extraída
+ * para função pura testável (ver scripts/tests/franchise-reconcile-read-safety.test.js)
+ * — recebe um cliente prisma-like em vez de importar o singleton, para poder simular
+ * erro de query e leitura inconsistente sem tocar em SQLite real.
+ *
+ * Lança em vez de devolver um resultado degradado — o chamador NUNCA deve capturar
+ * este erro e continuar a classificar; é o próprio relatório que tem de abortar.
+ *
+ * @param {{ catalogProduct: { findMany: Function, count: Function } }} prismaClient
+ * @param {{ shop: string, sku: { in: string[] } }} where
+ */
+export async function loadCatalogRowsForReconcile(prismaClient, where, select) {
+  let rows;
+  let independentCount;
+  try {
+    [rows, independentCount] = await Promise.all([
+      prismaClient.catalogProduct.findMany({ where, select }),
+      prismaClient.catalogProduct.count({ where }),
+    ]);
+  } catch (err) {
+    throw new Error(`FALHA DE LEITURA (CatalogProduct): ${err?.message || err}`);
+  }
+
+  if (rows.length !== independentCount) {
+    throw new Error(
+      `LEITURA INCONSISTENTE — findMany() devolveu ${rows.length} linhas mas count() devolveu ${independentCount} para o mesmo filtro, sem exceção lançada (sintoma da Decisão 28/Tarefa 51).`
+    );
+  }
+
+  return rows;
+}
+
 async function fetchAllProducts(client) {
   const out = [];
   let cursor = null;
@@ -105,17 +154,25 @@ async function main() {
 
   // mapa SKU → { resolvedFranchise, resolvedLine } (uma query por todos os SKUs vistos)
   const skus = [...new Set(products.flatMap((p) => (p.variants?.nodes || []).map((v) => v.sku).filter(Boolean)))];
-  const rows = await prisma.catalogProduct.findMany({
-    where: { shop: SHOP, sku: { in: skus } },
-    select: {
+  const catalogWhere = { shop: SHOP, sku: { in: skus } };
+
+  let rows;
+  try {
+    rows = await loadCatalogRowsForReconcile(prisma, catalogWhere, {
       sku: true,
       resolvedFranchise: true,
       resolvedLine: true,
       title: true,
       cleanTitle: true,
       titleOverride: true,
-    },
-  });
+    });
+  } catch (err) {
+    console.error(`\n✗ ${err.message}`);
+    console.error(`  Relatório ABORTADO — nada classificado, nenhum resultado parcial impresso (Decisão 30).`);
+    await prisma.$disconnect();
+    process.exit(1);
+  }
+
   const expBySku = new Map(rows.map((r) => [r.sku, r]));
 
   // Tarefa 54 — segundo sistema de override, curation-queue.json. Uma única leitura
@@ -213,8 +270,14 @@ async function main() {
   if (counts.MISSING || counts.DRIFT || counts.ORPHAN_LINE || counts.UNKNOWN) process.exit(1);
 }
 
-main().catch(async (err) => {
-  console.error(err?.stack || err?.message || err);
-  try { await prisma.$disconnect(); } catch {}
-  process.exit(1);
-});
+// Tarefa 58 — guarda de entrypoint. loadCatalogRowsForReconcile passou a export
+// nomeado para ser testável (scripts/tests/franchise-reconcile-read-safety.test.js);
+// sem isto, importar o módulo para o teste correria o main() inteiro (Shopify + BD
+// reais) como efeito secundário de um `import`.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(async (err) => {
+    console.error(err?.stack || err?.message || err);
+    try { await prisma.$disconnect(); } catch {}
+    process.exit(1);
+  });
+}
