@@ -59,6 +59,11 @@ async function main() {
   let lidos = 0;
   let mudam = 0;
   let travados = 0;
+  let travadosMinimo = 0;
+  let maisDeUmaPassagem = 0;
+  const porPassagens = new Map();
+  const exemplosEmpilhados = [];
+  const exemplosTravaoMinimo = [];
   let semFormatoEComPrefixo = 0;
   const porPrefixo = new Map();
   const porPrefixoTravado = new Map();
@@ -98,7 +103,21 @@ async function main() {
     for (const r of rows) {
       lidos += 1;
       const prefixo = matchFormatPrefix(r.title || "");
-      const { result, firedRules } = cleanProductTitleWithTrace(r);
+      const { result, firedRules, prefixoPassagens, prefixoTravaoMinimo } = cleanProductTitleWithTrace(r);
+
+      porPassagens.set(prefixoPassagens, (porPassagens.get(prefixoPassagens) || 0) + 1);
+      if (prefixoPassagens > 1) {
+        maisDeUmaPassagem += 1;
+        if (exemplosEmpilhados.length < N_EXEMPLOS) {
+          exemplosEmpilhados.push({ sku: r.sku, antes: r.title, depois: result, n: prefixoPassagens });
+        }
+      }
+      if (prefixoTravaoMinimo) {
+        travadosMinimo += 1;
+        if (exemplosTravaoMinimo.length < N_EXEMPLOS) {
+          exemplosTravaoMinimo.push({ sku: r.sku, title: r.title });
+        }
+      }
 
       if (firedRules.includes("prefixo-formato-travado")) {
         travados += 1;
@@ -163,6 +182,25 @@ async function main() {
     console.log(`   ${String(n).padStart(6)}  ${prefixo}`);
   }
   console.log(`   (verificação cruzada — linhas com prefixo e sem formato: ${semFormatoEComPrefixo})`);
+
+  console.log(`\n3b. PASSAGENS (prefixos empilhados)`);
+  console.log(`   precisaram de mais de uma passagem: ${maisDeUmaPassagem}  (${pct(maisDeUmaPassagem, lidos)}%)`);
+  for (const n of [...porPassagens.keys()].sort()) {
+    if (n === 0) continue;
+    console.log(`     ${String(porPassagens.get(n)).padStart(6)}  com ${n} passagem(ns)`);
+  }
+  console.log(`   travados pelo travão do mínimo (sobrava vazio ou palavra genérica): ${travadosMinimo}`);
+  for (const e of exemplosTravaoMinimo.slice(0, 5)) {
+    console.log(`     ${e.sku}: ${JSON.stringify(e.title)}`);
+  }
+  if (exemplosEmpilhados.length) {
+    console.log(`\n   exemplos de empilhamento:`);
+    for (const e of exemplosEmpilhados) {
+      console.log(`     ${e.sku}  (${e.n} passagens)`);
+      console.log(`       antes : "${e.antes}"`);
+      console.log(`       depois: "${e.depois}"`);
+    }
+  }
 
   console.log(`\n4. EFEITO COLATERAL NO RESOLVER (não pedido na spec, mas a lista é a mesma)`);
   console.log(`   resolvedFranchise muda: ${mudouFranquia}  (${pct(mudouFranquia, lidos)}%)`);

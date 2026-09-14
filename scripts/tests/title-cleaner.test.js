@@ -36,8 +36,9 @@ check("averbamento à Decisão 17 · guarda — prefixo de formato só sai com r
     cleanProductTitle({ title: "POP figure Darth Vader", resolvedFranchise: null, resolvedFormat: "Figure" }),
     "Darth Vader"
   );
+  // Com franquia resolvida, "Batman" sozinho é alias conhecido e pode sobrar.
   assert.equal(
-    cleanProductTitle({ title: "Pocket POP Keychain Batman", resolvedFranchise: null, resolvedFormat: "Keychain" }),
+    cleanProductTitle({ title: "Pocket POP Keychain Batman", resolvedFranchise: "Batman", resolvedFormat: "Keychain" }),
     "Batman"
   );
   // Sem formato resolvido: fica intacto. Remover aqui destruía a única cópia da
@@ -49,6 +50,44 @@ check("averbamento à Decisão 17 · guarda — prefixo de formato só sai com r
   // ...e isso fica registado, para o relatório os poder contar à parte.
   const travado = cleanProductTitleWithTrace({ title: "POP figure Darth Vader", resolvedFormat: null });
   assert.ok(travado.firedRules.includes("prefixo-formato-travado"));
+});
+
+check("prefixos empilhados · itera até três passagens", () => {
+  const r = cleanProductTitleWithTrace({
+    title: "Assorted Blister 4 figures Bitty POP Demon Slayer",
+    resolvedFranchise: "Demon Slayer",
+    resolvedFormat: "Figure",
+  });
+  assert.equal(r.result, "Demon Slayer");
+  assert.equal(r.prefixoPassagens, 2, "duas passagens: Assorted, depois Blister 4 figures Bitty POP");
+});
+
+check("prefixos empilhados · travão 1 — nunca mais de três passagens", () => {
+  const r = cleanProductTitleWithTrace({
+    title: "Assorted Deluxe Set Loungefly POP figure Batman",
+    resolvedFranchise: "Batman",
+    resolvedFormat: "Figure",
+  });
+  assert.equal(r.prefixoPassagens, 3, "pára às três, mesmo com mais prefixo pela frente");
+  assert.ok(r.result.startsWith("Loungefly"), `sobrou: ${r.result}`);
+});
+
+check("prefixos empilhados · travão 2 — não colapsa para palavra genérica isolada", () => {
+  // Sem franquia resolvida, "Microscope" isolado não é alias de nada: a passagem que o
+  // deixaria sozinho não se faz, e o título fica como está.
+  const r = cleanProductTitleWithTrace({
+    title: "Deluxe Microscope",
+    resolvedFranchise: null,
+    resolvedFormat: "Figure",
+  });
+  assert.equal(r.result, "Deluxe Microscope");
+  assert.equal(r.prefixoPassagens, 0);
+  assert.ok(r.prefixoTravaoMinimo, "o travão do mínimo tem de ficar registado");
+  // E nunca para vazio, nem quando o título é só o prefixo.
+  assert.equal(
+    cleanProductTitle({ title: "Assorted", resolvedFranchise: null, resolvedFormat: null }),
+    "Assorted"
+  );
 });
 
 check("averbamento à Decisão 17 · Assorted/Latino saem sem guarda (ruído, não formato)", () => {
