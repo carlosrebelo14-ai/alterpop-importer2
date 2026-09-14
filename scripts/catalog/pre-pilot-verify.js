@@ -72,6 +72,7 @@
  * Correr na Fly:
  *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V11)
  *   node scripts/catalog/pre-pilot-verify.js --pre-wipe   # + histórico (V1, V2, V4)
+ *   node scripts/catalog/pre-pilot-verify.js --aceitar-base  # aceita descida legítima
  */
 import path from "path";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
@@ -79,7 +80,7 @@ import { getDefaultConfig } from "../../lib/importer/config.js";
 import {
   avaliarQueda,
   carregarEstado,
-  gravarReferenciaSeVerde,
+  gravarReferencia,
   maxDe,
 } from "../../lib/health/gateState.server.js";
 import { planUniverseCollections } from "../../lib/importer/shopify/universeCollections.server.js";
@@ -101,6 +102,11 @@ const args = process.argv.slice(2);
 /** Histórico (V1, V2, V4): pré-condições da Tarefa 48, só válidas entre um wipe e o primeiro
  *  publish. Fora disso são falso alarme garantido — ver ADENDA 2 no cabeçalho. */
 const PRE_WIPE = args.includes("--pre-wipe");
+/** Caminho de recuperação (ADENDA 5): aceita os valores desta corrida como base nova e
+ *  REINICIA o histórico. Para um humano usar depois de julgar que a descida é real —
+ *  sem isto, uma queda legítima prende o portão em vermelho para sempre e a única saída
+ *  é apagar o ficheiro, que leva a base e o histórico à frente. */
+const ACEITAR_BASE = args.includes("--aceitar-base");
 const SHOP =
   (args.indexOf("--shop") >= 0 && args[args.indexOf("--shop") + 1]) ||
   process.env.SHOPIFY_SHOP_URL ||
@@ -345,15 +351,21 @@ async function main() {
   // qualquer vermelha que trava a gravação, não só V5/V7. Nota: em `--pre-wipe` depois do
   // piloto, V1/V2/V4 estão vermelhas por desenho, logo esse modo nunca grava referência.
   // Amarelos (V11) não travam — não põem em causa a sanidade dos números.
-  const gravou = await gravarReferenciaSeVerde(STATE_PATH, {
+  const { escreveu, baseReiniciada } = await gravarReferencia(STATE_PATH, {
     estadoAnterior: state,
     houveVermelho: !allPass,
     catalogTotal: totalProducts,
     resolvedFormatRatio: racio,
     shop: SHOP,
     horizonteN: HORIZONTE_N,
+    aceitarNovaBase: ACEITAR_BASE,
   });
-  if (!gravou) {
+  if (baseReiniciada) {
+    console.log(
+      `  (--aceitar-base: base nova em ${totalProducts} / ${racio.toFixed(1)}%, histórico reiniciado.` +
+        ` Esta corrida mantém o resultado que deu; é a seguinte que compara com a base nova.)`
+    );
+  } else if (!escreveu) {
     console.log(`  (corrida vermelha — referência NÃO actualizada, continua a apontar ao último estado são)`);
   }
 

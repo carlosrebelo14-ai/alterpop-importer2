@@ -18,7 +18,7 @@ import path from "node:path";
 import {
   avaliarQueda,
   carregarEstado,
-  gravarReferenciaSeVerde,
+  gravarReferencia,
   maxDe,
 } from "../../lib/health/gateState.server.js";
 
@@ -45,7 +45,7 @@ async function tmpStatePath() {
 /** Uma corrida verde que grava, para semear estado sem duplicar o objeto à mão. */
 async function corridaVerde(statePath, { total, ratio }) {
   const estadoAnterior = await carregarEstado(statePath);
-  const escreveu = await gravarReferenciaSeVerde(statePath, {
+  const { escreveu } = await gravarReferencia(statePath, {
     estadoAnterior,
     houveVermelho: false,
     catalogTotal: total,
@@ -143,7 +143,7 @@ async function main() {
 
     // A corrida vermelha traz números novos e piores. Nenhum deles pode entrar no ficheiro:
     // se entrassem, a corrida seguinte comparava com o valor já partido e passava verde.
-    const escreveu = await gravarReferenciaSeVerde(statePath, {
+    const { escreveu } = await gravarReferencia(statePath, {
       estadoAnterior,
       houveVermelho: true,
       catalogTotal: 12000,
@@ -161,6 +161,68 @@ async function main() {
     assert.equal(estadoFinal.catalogTotal, 25421);
     assert.deepEqual(estadoFinal.catalogTotalHistorico, [25421]);
   });
+
+  await check(
+    "caso 4 — descida legítima prende o portão, e --aceitar-base destrava-o sem apagar o ficheiro",
+    async () => {
+      const statePath = await tmpStatePath();
+      await corridaVerde(statePath, { total: 25421, ratio: 55.79 });
+
+      // O fornecedor larga linhas. A descida é real e não vai voltar atrás.
+      const NOVO_TOTAL = 22000;
+      const avaliar = async () => {
+        const e = await carregarEstado(statePath);
+        return avaliarQueda({
+          anterior: e.catalogTotal,
+          horizonte: maxDe(e.catalogTotalHistorico),
+          atual: NOVO_TOTAL,
+          limiar: V5_LIMIAR_PCT,
+        });
+      };
+
+      // Duas corridas seguidas: vermelha, não grava, e a segunda fica vermelha pelo
+      // mesmo motivo. É aqui que o portão deixava de poder voltar ao verde por si.
+      for (const corrida of [1, 2]) {
+        const v5 = await avaliar();
+        assert.equal(v5.passa, false, `corrida ${corrida}: devia estar vermelha`);
+        const { escreveu } = await gravarReferencia(statePath, {
+          estadoAnterior: await carregarEstado(statePath),
+          houveVermelho: true,
+          catalogTotal: NOVO_TOTAL,
+          resolvedFormatRatio: 55.79,
+          shop: "loja-de-teste",
+          horizonteN: HORIZONTE_N,
+        });
+        assert.equal(escreveu, false, `corrida ${corrida}: vermelha não grava`);
+      }
+
+      // O humano julga que a descida é real e carrega no botão.
+      const antes = await fs.readFile(statePath);
+      const r = await gravarReferencia(statePath, {
+        estadoAnterior: await carregarEstado(statePath),
+        houveVermelho: true,
+        catalogTotal: NOVO_TOTAL,
+        resolvedFormatRatio: 55.79,
+        shop: "loja-de-teste",
+        horizonteN: HORIZONTE_N,
+        aceitarNovaBase: true,
+      });
+      assert.equal(r.escreveu, true, "--aceitar-base tem de gravar mesmo com a corrida vermelha");
+      assert.equal(r.baseReiniciada, true);
+      assert.notEqual(Buffer.compare(antes, await fs.readFile(statePath)), 0, "o ficheiro tinha de mudar");
+
+      // O ponto fino: sem reiniciar o histórico, o máximo antigo continuava no horizonte
+      // e a corrida seguinte ficava vermelha na mesma — o botão não destravava nada.
+      const estado = await carregarEstado(statePath);
+      assert.deepEqual(estado.catalogTotalHistorico, [NOVO_TOTAL], "histórico tinha de ser reiniciado");
+      assert.equal(maxDe(estado.catalogTotalHistorico), NOVO_TOTAL);
+      assert.ok(estado.baseAceiteEm, "a aceitação tem de ficar carimbada no ficheiro");
+
+      // E a corrida seguinte, com o catálogo estável no valor novo, volta ao verde.
+      const depois = await avaliar();
+      assert.equal(depois.passa, true, "depois de aceitar a base, o portão tem de poder voltar ao verde");
+    }
+  );
 
   if (failures) {
     console.error(`\n${failures} falha(s)`);
