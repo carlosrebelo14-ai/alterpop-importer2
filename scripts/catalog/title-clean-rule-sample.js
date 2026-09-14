@@ -44,7 +44,7 @@ async function main() {
   for (;;) {
     const rows = await prisma.catalogProduct.findMany({
       where: { shop: SHOP },
-      select: { sku: true, title: true, resolvedFranchise: true, resolvedLine: true },
+      select: { sku: true, title: true, resolvedFranchise: true, resolvedLine: true, resolvedFormat: true },
       orderBy: [{ shop: "asc" }, { sku: "asc" }],
       take: PAGE,
       ...(cursor ? { cursor: { shop_sku: cursor }, skip: 1 } : {}),

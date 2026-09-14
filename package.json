@@ -66,6 +66,7 @@
     "title:clean-rule-sample": "node scripts/catalog/title-clean-rule-sample.js",
     "title:prefix-census": "node scripts/catalog/title-prefix-census.js",
     "title:provenance-audit": "node scripts/catalog/title-field-provenance-audit.js",
+    "title:prefix-restore-dryrun": "node scripts/catalog/title-prefix-restore-dryrun.js",
     "format:extract-dryrun": "node scripts/catalog/format-extract-dryrun.js",
     "pilot:select": "node scripts/pilot-batch-select.js",
     "franchise:layer2-audit": "node scripts/catalog/franchise-layer2-audit.js",

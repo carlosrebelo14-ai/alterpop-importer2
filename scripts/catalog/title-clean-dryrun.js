@@ -46,7 +46,7 @@ async function runTargeted() {
   console.log(`\n=== title-clean-dryrun (${SHOP}) · --targeted (Decisão 8) ===\n`);
   const rows = await prisma.catalogProduct.findMany({
     where: { shop: SHOP, sku: { in: TARGETED_SKUS } },
-    select: { sku: true, title: true, resolvedFranchise: true, resolvedLine: true },
+    select: { sku: true, title: true, resolvedFranchise: true, resolvedLine: true, resolvedFormat: true },
   });
   const bySku = new Map(rows.map((r) => [r.sku, r]));
 
@@ -78,7 +78,7 @@ async function fetchAllLite() {
   for (;;) {
     const rows = await prisma.catalogProduct.findMany({
       where: { shop: SHOP },
-      select: { sku: true, title: true, resolvedFranchise: true, resolvedLine: true },
+      select: { sku: true, title: true, resolvedFranchise: true, resolvedLine: true, resolvedFormat: true },
       orderBy: [{ shop: "asc" }, { sku: "asc" }],
       take: PAGE,
       ...(cursor ? { cursor: { shop_sku: cursor }, skip: 1 } : {}),
@@ -134,7 +134,7 @@ async function runRandomRate(n) {
 async function dryRunSample() {
   const rows = await prisma.catalogProduct.findMany({
     where: { shop: SHOP },
-    select: { sku: true, title: true, resolvedFranchise: true, resolvedLine: true },
+    select: { sku: true, title: true, resolvedFranchise: true, resolvedLine: true, resolvedFormat: true },
     orderBy: [{ shop: "asc" }, { sku: "asc" }],
     take: SAMPLE,
   });
@@ -165,7 +165,7 @@ async function execute() {
   for (;;) {
     const rows = await prisma.catalogProduct.findMany({
       where: { shop: SHOP },
-      select: { sku: true, title: true, resolvedFranchise: true, resolvedLine: true, originalTitle: true, cleanTitle: true },
+      select: { sku: true, title: true, resolvedFranchise: true, resolvedLine: true, resolvedFormat: true, originalTitle: true, cleanTitle: true },
       orderBy: [{ shop: "asc" }, { sku: "asc" }],
       take: PAGE,
       ...(cursor ? { cursor: { shop_sku: cursor }, skip: 1 } : {}),

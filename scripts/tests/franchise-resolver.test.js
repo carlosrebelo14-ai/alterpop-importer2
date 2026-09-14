@@ -307,21 +307,25 @@ check("--supplier-only: título 'pipeline' não corre camada 2", () => {
 });
 
 // ── stripFormatPrefix ─────────────────────────────────────────────────────────
-check("stripFormatPrefix remove um prefixo conhecido (Tarefa 32/Decisão 17: só Assorted e Latino)", () => {
+check("stripFormatPrefix remove um prefixo conhecido (averbamento à Decisão 17: lista reposta)", () => {
   assert.equal(stripFormatPrefix("Assorted One Piece Luffy"), "One Piece Luffy");
   assert.equal(stripFormatPrefix("Latino Batman"), "Batman");
   assert.equal(stripFormatPrefix("Dragon Ball Z Goku"), "Dragon Ball Z Goku"); // sem prefixo, intacto
-  // Decisão 17 — "POP figure"/"Pocket POP Keychain" saíram da lista de propósito,
-  // ficam intactos (informação de formato, não ruído).
-  assert.equal(stripFormatPrefix("POP figure One Piece Luffy"), "POP figure One Piece Luffy");
-  assert.equal(stripFormatPrefix("Pocket POP Keychain Batman"), "Pocket POP Keychain Batman");
+  // Averbamento à Decisão 17 (2026-09-14) — o vocabulário de formato voltou à lista. A
+  // informação não se perde: vive em alterpop.format, e é a guarda do titleCleaner que
+  // garante que o prefixo só sai quando lá está.
+  assert.equal(stripFormatPrefix("POP figure One Piece Luffy"), "One Piece Luffy");
+  assert.equal(stripFormatPrefix("Pocket POP Keychain Batman"), "Batman");
+  // Um só prefixo por título, o mais específico primeiro.
+  assert.equal(stripFormatPrefix("Blister 4 figures Bitty POP Demon Slayer"), "Demon Slayer");
 });
 
 check("Tarefa 31 · matchFormatPrefix identifica QUAL prefixo bateu (censo)", () => {
   assert.equal(matchFormatPrefix("Assorted One Piece Luffy"), "Assorted");
   assert.equal(matchFormatPrefix("Latino Pokemon Mega-Charizard"), "Latino");
   assert.equal(matchFormatPrefix("Dragon Ball Z Goku"), null);
-  assert.equal(matchFormatPrefix("POP figure One Piece Luffy"), null); // Decisão 17
+  assert.equal(matchFormatPrefix("POP figure One Piece Luffy"), "POP figure"); // averbamento
+  assert.equal(matchFormatPrefix("Blister 4 figures Bitty POP Demon Slayer"), "Blister 4 figures Bitty POP");
 });
 
 if (failures) {

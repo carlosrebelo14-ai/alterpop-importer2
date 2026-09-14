@@ -4,7 +4,7 @@
  * Uso: node scripts/tests/title-cleaner.test.js
  */
 import assert from "node:assert/strict";
-import { cleanProductTitle } from "../../lib/importer/catalog/titleCleaner.server.js";
+import { cleanProductTitle, cleanProductTitleWithTrace } from "../../lib/importer/catalog/titleCleaner.server.js";
 
 let failures = 0;
 function check(name, fn) {
@@ -26,6 +26,41 @@ check("remove prefixo de formato conhecido (Tarefa 32/Decisão 17: só Assorted/
   assert.equal(
     cleanProductTitle({ title: "POP figure Darth Vader", resolvedFranchise: null }),
     "POP figure Darth Vader"
+  );
+});
+
+check("averbamento à Decisão 17 · guarda — prefixo de formato só sai com resolvedFormat", () => {
+  // Com formato resolvido: o prefixo sai porque a informação passou a viver em
+  // alterpop.format. Move-se de sítio, não se perde.
+  assert.equal(
+    cleanProductTitle({ title: "POP figure Darth Vader", resolvedFranchise: null, resolvedFormat: "Figure" }),
+    "Darth Vader"
+  );
+  assert.equal(
+    cleanProductTitle({ title: "Pocket POP Keychain Batman", resolvedFranchise: null, resolvedFormat: "Keychain" }),
+    "Batman"
+  );
+  // Sem formato resolvido: fica intacto. Remover aqui destruía a única cópia da
+  // informação, que é exatamente o que a guarda existe para impedir.
+  assert.equal(
+    cleanProductTitle({ title: "POP figure Darth Vader", resolvedFranchise: null, resolvedFormat: null }),
+    "POP figure Darth Vader"
+  );
+  // ...e isso fica registado, para o relatório os poder contar à parte.
+  const travado = cleanProductTitleWithTrace({ title: "POP figure Darth Vader", resolvedFormat: null });
+  assert.ok(travado.firedRules.includes("prefixo-formato-travado"));
+});
+
+check("averbamento à Decisão 17 · Assorted/Latino saem sem guarda (ruído, não formato)", () => {
+  // A guarda protege informação. Estes dois nunca foram informação — a própria Decisão 17
+  // os classificou como ruído — por isso saem mesmo sem resolvedFormat.
+  assert.equal(
+    cleanProductTitle({ title: "Assorted Darth Vader", resolvedFranchise: null, resolvedFormat: null }),
+    "Darth Vader"
+  );
+  assert.equal(
+    cleanProductTitle({ title: "Latino Pokemon Mega-Charizard X", resolvedFranchise: null, resolvedFormat: null }),
+    "Pokemon Mega-Charizard X"
   );
 });
 
