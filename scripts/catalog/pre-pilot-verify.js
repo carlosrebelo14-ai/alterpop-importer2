@@ -39,6 +39,17 @@
  * Deixou de ser 100% read-only por causa do V5: escreve `health-gate-state.json` no
  * diretório de dados, e mais nada. Nunca toca em catálogo, fila ou loja.
  *
+ * ADENDA 4 (2026-09-14) — dois verdes falsos no estado:
+ *   1. Referência que se auto-cura. Se uma corrida vermelha gravasse a referência, a
+ *      seguinte comparava com o valor já partido e passava verde — o alarme apagava-se
+ *      sozinho. Agora SÓ corridas verdes gravam; vermelha reporta e não escreve.
+ *   2. Deriva lenta. Comparar só com a corrida anterior deixa passar a queda gradual —
+ *      quatro corridas a perder 8% cada passam todas e o catálogo fica em 72%. V5 e V7
+ *      comparam com DUAS referências: a corrida anterior e um chão de horizonte (máximo
+ *      das últimas HORIZONTE_N corridas verdes). Vermelho se qualquer uma falhar.
+ * V3 passou de 6h para 24h: publicação manual ao ritmo do Carlos, aprovar à sexta e
+ * publicar à segunda é cadência normal.
+ *
  * Tarefa 49 (2026-09-13) — V6 e V8 corrigidos. A primeira versão (Tarefa 40) tinha as
  * DUAS mal calibradas contra o comportamento real, não contra os dados:
  *   V6  era "cleanTitle IS NOT NULL = 854" — mas a Tarefa 10 grava cleanTitle no
@@ -166,12 +177,32 @@ function checkRange(id, label, min, max, actual) {
   check(id, label, `${min}–${max}`, actual, pass);
 }
 
-/** V5 — queda acentuada face à corrida anterior. Crescimento nunca é vermelho. */
+/** V5 — queda acentuada face à referência. Crescimento nunca é vermelho. */
 const V5_QUEDA_MAX_PCT = 10;
 /** V7 — quanto o rácio pode cair (pontos percentuais) antes de ser extrator partido. */
 const V7_QUEDA_MAX_PP = 3;
-/** V3 — a partir de quantas horas um APPROVED por publicar deixa de ser normal. */
-const V3_STALE_HORAS = 6;
+/** V3 — a partir de quantas horas um APPROVED por publicar deixa de ser normal.
+ *  24h e não 6h: a publicação é manual e ao ritmo do Carlos — aprovar à sexta e publicar
+ *  à segunda é cadência normal, e 6h dava vermelho todo o fim de semana por nada.
+ *  ANOTADO, não é para agora: a forma melhor não é a idade, é "há aprovados e o publisher
+ *  correu depois da aprovação sem os consumir" — distingue fila parada de fila à espera
+ *  do humano. Precisa de um carimbo da última corrida do publisher, que ainda não existe. */
+const V3_STALE_HORAS = 24;
+/** Quantas corridas verdes entram no horizonte longo (ADENDA 4). */
+const HORIZONTE_N = 10;
+
+/** Máximo de um histórico, ou null se não houver nenhum. */
+function maxDe(historico) {
+  if (!Array.isArray(historico) || !historico.length) return null;
+  const nums = historico.filter((v) => typeof v === "number" && Number.isFinite(v));
+  return nums.length ? Math.max(...nums) : null;
+}
+
+/** Queda percentual de `atual` face a `ref`, ou null sem referência. Negativa = cresceu. */
+function quedaPct(ref, atual) {
+  if (ref == null || !ref) return null;
+  return ((ref - atual) / ref) * 100;
+}
 
 function horasDesde(iso) {
   if (!iso) return null;
@@ -236,16 +267,19 @@ async function main() {
   // V5–V7 — Prisma CatalogProduct
   const totalProducts = await prisma.catalogProduct.count({ where: { shop: SHOP } });
   const totalAnterior = state?.catalogTotal ?? null;
-  if (totalAnterior == null) {
-    info("V5", "CatalogProduct total (sem corrida anterior — referência gravada)", totalProducts);
+  const totalHorizonte = maxDe(state?.catalogTotalHistorico);
+  if (totalAnterior == null && totalHorizonte == null) {
+    info("V5", "CatalogProduct total (sem referência — gravada se a corrida for verde)", totalProducts);
   } else {
-    const quedaPct = ((totalAnterior - totalProducts) / totalAnterior) * 100;
+    const q = quedaPct(totalAnterior, totalProducts);
+    const qh = quedaPct(totalHorizonte, totalProducts);
+    const pior = Math.max(q ?? 0, qh ?? 0);
     check(
       "V5",
-      `queda do total vs corrida anterior (${totalAnterior})`,
+      `queda do total (anterior ${totalAnterior ?? "—"}, horizonte ${totalHorizonte ?? "—"})`,
       `< ${V5_QUEDA_MAX_PCT}%`,
-      `${quedaPct > 0 ? quedaPct.toFixed(1) : "0.0"}% (total ${totalProducts})`,
-      quedaPct < V5_QUEDA_MAX_PCT
+      `${pior > 0 ? pior.toFixed(1) : "0.0"}% (total ${totalProducts})`,
+      pior < V5_QUEDA_MAX_PCT
     );
   }
 
@@ -261,16 +295,19 @@ async function main() {
   const resolvedFormatCount = await prisma.catalogProduct.count({ where: { shop: SHOP, resolvedFormat: { not: null } } });
   const racio = totalProducts ? (resolvedFormatCount / totalProducts) * 100 : 0;
   const racioAnterior = state?.resolvedFormatRatio ?? null;
-  if (racioAnterior == null) {
-    info("V7", `resolvedFormat rácio (sem corrida anterior — referência gravada)`, `${racio.toFixed(1)}% (${resolvedFormatCount}/${totalProducts})`);
+  const racioHorizonte = maxDe(state?.resolvedFormatRatioHistorico);
+  if (racioAnterior == null && racioHorizonte == null) {
+    info("V7", `resolvedFormat rácio (sem referência — gravada se a corrida for verde)`, `${racio.toFixed(1)}% (${resolvedFormatCount}/${totalProducts})`);
   } else {
-    const queda = racioAnterior - racio;
+    const queda = racioAnterior == null ? 0 : racioAnterior - racio;
+    const quedaH = racioHorizonte == null ? 0 : racioHorizonte - racio;
+    const pior = Math.max(queda, quedaH);
     check(
       "V7",
-      `queda do rácio resolvedFormat vs corrida anterior (${racioAnterior.toFixed(1)}%)`,
+      `queda do rácio (anterior ${racioAnterior?.toFixed(1) ?? "—"}%, horizonte ${racioHorizonte?.toFixed(1) ?? "—"}%)`,
       `< ${V7_QUEDA_MAX_PP} pp`,
-      `${queda > 0 ? queda.toFixed(1) : "0.0"} pp (rácio ${racio.toFixed(1)}%, ${resolvedFormatCount}/${totalProducts})`,
-      queda < V7_QUEDA_MAX_PP
+      `${pior > 0 ? pior.toFixed(1) : "0.0"} pp (rácio ${racio.toFixed(1)}%, ${resolvedFormatCount}/${totalProducts})`,
+      pior < V7_QUEDA_MAX_PP
     );
   }
 
@@ -315,18 +352,34 @@ async function main() {
     console.log(`      ${d.handle}: tabela "${d.name}" · loja "${d.existing?.title}" — aplicar no admin`);
   }
 
-  await saveState({
-    ...(state || {}),
-    catalogTotal: totalProducts,
-    resolvedFormatRatio: Number(racio.toFixed(2)),
-    shop: SHOP,
-    ranAt: new Date().toISOString(),
-  });
-
   console.log(``);
   const allPass = results.every((r) => r.level !== "fail");
   const failed = results.filter((r) => r.level === "fail");
   const warned = results.filter((r) => r.level === "warn");
+
+  // ADENDA 4 — só corridas VERDES actualizam a referência. Se uma corrida vermelha
+  // gravasse o valor novo, a seguinte comparava com o valor já partido e passava verde:
+  // o alarme apagava-se sozinho da segunda vez que alguém olhasse. A referência tem de
+  // ficar a apontar ao último estado que o portão inteiro considerou são — por isso é
+  // qualquer vermelha que trava a gravação, não só V5/V7. Nota: em `--pre-wipe` depois do
+  // piloto, V1/V2/V4 estão vermelhas por desenho, logo esse modo nunca grava referência.
+  // Amarelos (V11) não travam — não põem em causa a sanidade dos números.
+  if (allPass) {
+    const histTotal = [...(state?.catalogTotalHistorico || []), totalProducts].slice(-HORIZONTE_N);
+    const histRacio = [...(state?.resolvedFormatRatioHistorico || []), Number(racio.toFixed(2))].slice(-HORIZONTE_N);
+    await saveState({
+      ...(state || {}),
+      catalogTotal: totalProducts,
+      resolvedFormatRatio: Number(racio.toFixed(2)),
+      catalogTotalHistorico: histTotal,
+      resolvedFormatRatioHistorico: histRacio,
+      shop: SHOP,
+      ranAt: new Date().toISOString(),
+    });
+  } else {
+    console.log(`  (corrida vermelha — referência NÃO actualizada, continua a apontar ao último estado são)`);
+  }
+
   if (warned.length) {
     console.log(`! ${warned.length} aviso(s) (não bloqueiam): ${warned.map((r) => r.id).join(", ")}.`);
   }
