@@ -50,6 +50,11 @@
  * V3 passou de 6h para 24h: publicação manual ao ritmo do Carlos, aprovar à sexta e
  * publicar à segunda é cadência normal.
  *
+ * A lógica do estado vive em lib/health/gateState.server.js, não aqui: este script só
+ * arranca com BD e sessão da loja, e os ramos VERMELHOS do estado são justamente os que
+ * ninguém consegue provocar em produção sem partir alguma coisa. Lá fora, testam-se com
+ * estado fabricado (scripts/tests/health-gate-state.test.js).
+ *
  * Tarefa 49 (2026-09-13) — V6 e V8 corrigidos. A primeira versão (Tarefa 40) tinha as
  * DUAS mal calibradas contra o comportamento real, não contra os dados:
  *   V6  era "cleanTitle IS NOT NULL = 854" — mas a Tarefa 10 grava cleanTitle no
@@ -68,10 +73,15 @@
  *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V11)
  *   node scripts/catalog/pre-pilot-verify.js --pre-wipe   # + histórico (V1, V2, V4)
  */
-import fs from "fs/promises";
 import path from "path";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { getDefaultConfig } from "../../lib/importer/config.js";
+import {
+  avaliarQueda,
+  carregarEstado,
+  gravarReferenciaSeVerde,
+  maxDe,
+} from "../../lib/health/gateState.server.js";
 import { planUniverseCollections } from "../../lib/importer/shopify/universeCollections.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
@@ -129,29 +139,6 @@ async function countGovernedCollections(client) {
 /** Estado entre corridas — só o que o V5/V7 precisam de comparar com a corrida anterior. */
 const STATE_PATH = path.join(getDefaultConfig().paths.data, "health-gate-state.json");
 
-/** Ficheiro ausente é ausência legítima (primeira corrida) e devolve null. Ficheiro que
- *  existe mas não se lê LANÇA — Decisão 30, falha de leitura nunca vira "sem histórico",
- *  que aqui daria verde a uma queda de catálogo por não ter com que a comparar. */
-async function loadState() {
-  let raw;
-  try {
-    raw = await fs.readFile(STATE_PATH, "utf8");
-  } catch (err) {
-    if (err?.code === "ENOENT") return null;
-    throw new Error(`FALHA DE LEITURA (${STATE_PATH}): ${err?.message || err}`);
-  }
-  try {
-    return JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`FALHA DE LEITURA (${STATE_PATH}): JSON inválido — ${err?.message || err}`);
-  }
-}
-
-async function saveState(state) {
-  await fs.mkdir(path.dirname(STATE_PATH), { recursive: true });
-  await fs.writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf8");
-}
-
 const results = [];
 function check(id, label, expected, actual, pass) {
   results.push({ id, label, expected, actual, level: pass ? "pass" : "fail" });
@@ -191,19 +178,6 @@ const V3_STALE_HORAS = 24;
 /** Quantas corridas verdes entram no horizonte longo (ADENDA 4). */
 const HORIZONTE_N = 10;
 
-/** Máximo de um histórico, ou null se não houver nenhum. */
-function maxDe(historico) {
-  if (!Array.isArray(historico) || !historico.length) return null;
-  const nums = historico.filter((v) => typeof v === "number" && Number.isFinite(v));
-  return nums.length ? Math.max(...nums) : null;
-}
-
-/** Queda percentual de `atual` face a `ref`, ou null sem referência. Negativa = cresceu. */
-function quedaPct(ref, atual) {
-  if (ref == null || !ref) return null;
-  return ((ref - atual) / ref) * 100;
-}
-
 function horasDesde(iso) {
   if (!iso) return null;
   const t = Date.parse(iso);
@@ -241,7 +215,7 @@ async function main() {
     console.log(`\n  — saúde corrente —`);
   }
 
-  const state = await loadState();
+  const state = await carregarEstado(STATE_PATH);
 
   // V3 — aprovados por publicar: mede a IDADE, não a contagem (ADENDA 3). A contagem
   // aparece sempre; publicação manual não é razão para deixar de olhar para a fila.
@@ -271,15 +245,18 @@ async function main() {
   if (totalAnterior == null && totalHorizonte == null) {
     info("V5", "CatalogProduct total (sem referência — gravada se a corrida for verde)", totalProducts);
   } else {
-    const q = quedaPct(totalAnterior, totalProducts);
-    const qh = quedaPct(totalHorizonte, totalProducts);
-    const pior = Math.max(q ?? 0, qh ?? 0);
+    const v5 = avaliarQueda({
+      anterior: totalAnterior,
+      horizonte: totalHorizonte,
+      atual: totalProducts,
+      limiar: V5_QUEDA_MAX_PCT,
+    });
     check(
       "V5",
       `queda do total (anterior ${totalAnterior ?? "—"}, horizonte ${totalHorizonte ?? "—"})`,
       `< ${V5_QUEDA_MAX_PCT}%`,
-      `${pior > 0 ? pior.toFixed(1) : "0.0"}% (total ${totalProducts})`,
-      pior < V5_QUEDA_MAX_PCT
+      `${v5.pior.toFixed(1)}% (total ${totalProducts})`,
+      v5.passa
     );
   }
 
@@ -299,15 +276,19 @@ async function main() {
   if (racioAnterior == null && racioHorizonte == null) {
     info("V7", `resolvedFormat rácio (sem referência — gravada se a corrida for verde)`, `${racio.toFixed(1)}% (${resolvedFormatCount}/${totalProducts})`);
   } else {
-    const queda = racioAnterior == null ? 0 : racioAnterior - racio;
-    const quedaH = racioHorizonte == null ? 0 : racioHorizonte - racio;
-    const pior = Math.max(queda, quedaH);
+    const v7 = avaliarQueda({
+      anterior: racioAnterior,
+      horizonte: racioHorizonte,
+      atual: racio,
+      limiar: V7_QUEDA_MAX_PP,
+      modo: "pp",
+    });
     check(
       "V7",
       `queda do rácio (anterior ${racioAnterior?.toFixed(1) ?? "—"}%, horizonte ${racioHorizonte?.toFixed(1) ?? "—"}%)`,
       `< ${V7_QUEDA_MAX_PP} pp`,
-      `${pior > 0 ? pior.toFixed(1) : "0.0"} pp (rácio ${racio.toFixed(1)}%, ${resolvedFormatCount}/${totalProducts})`,
-      pior < V7_QUEDA_MAX_PP
+      `${v7.pior.toFixed(1)} pp (rácio ${racio.toFixed(1)}%, ${resolvedFormatCount}/${totalProducts})`,
+      v7.passa
     );
   }
 
@@ -364,19 +345,15 @@ async function main() {
   // qualquer vermelha que trava a gravação, não só V5/V7. Nota: em `--pre-wipe` depois do
   // piloto, V1/V2/V4 estão vermelhas por desenho, logo esse modo nunca grava referência.
   // Amarelos (V11) não travam — não põem em causa a sanidade dos números.
-  if (allPass) {
-    const histTotal = [...(state?.catalogTotalHistorico || []), totalProducts].slice(-HORIZONTE_N);
-    const histRacio = [...(state?.resolvedFormatRatioHistorico || []), Number(racio.toFixed(2))].slice(-HORIZONTE_N);
-    await saveState({
-      ...(state || {}),
-      catalogTotal: totalProducts,
-      resolvedFormatRatio: Number(racio.toFixed(2)),
-      catalogTotalHistorico: histTotal,
-      resolvedFormatRatioHistorico: histRacio,
-      shop: SHOP,
-      ranAt: new Date().toISOString(),
-    });
-  } else {
+  const gravou = await gravarReferenciaSeVerde(STATE_PATH, {
+    estadoAnterior: state,
+    houveVermelho: !allPass,
+    catalogTotal: totalProducts,
+    resolvedFormatRatio: racio,
+    shop: SHOP,
+    horizonteN: HORIZONTE_N,
+  });
+  if (!gravou) {
     console.log(`  (corrida vermelha — referência NÃO actualizada, continua a apontar ao último estado são)`);
   }
 
