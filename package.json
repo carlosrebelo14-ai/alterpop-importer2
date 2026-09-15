@@ -79,7 +79,9 @@
     "curation:override-clear": "node scripts/catalog/curation-override-clear.js",
     "curation:overrides-audit": "node scripts/catalog/curation-overrides-audit.js",
     "kpop:overlap": "node scripts/catalog/kpop-demon-hunters-overlap.js",
-    "kpop:collection-create": "node scripts/catalog/kpop-collection-create.js"
+    "kpop:collection-create": "node scripts/catalog/kpop-collection-create.js",
+    "curation:universe-csv-export": "node scripts/catalog/universe-csv-export.js",
+    "curation:manufacturer-character-census": "node scripts/catalog/manufacturer-character-census.js"
   },
   "type": "module",
   "engines": {
