@@ -63,6 +63,16 @@
  *       pelo backfill. Passa a "cleanTitle <> title", em INTERVALO 800–900 (não valor
  *       cravado — o feed muda entre corridas, um valor fixo transformava reindexação
  *       normal em falso alarme).
+ *
+ * PR #68 (2026-09-15, averbamento à Decisão 17) — intervalo alargado para 800–5400,
+ * TRANSITÓRIO. `cleanTitle` só recalcula no ciclo de sync seguinte ao deploy, não no
+ * próprio deploy — no deploy, o valor medido era ainda 861 (regime antigo); a lista de
+ * prefixos alargada empurra-o para perto de 5 087/25 595 (~19,9%) assim que o sync
+ * seguinte correr. Um intervalo já apertado a 4700–5400 dava vermelho NO PRÓPRIO
+ * DEPLOY, antes de o sync ter tido hipótese de correr — trocava o falso alarme de sítio
+ * em vez de o tirar. 800–5400 cobre as duas pontas da transição sem cravar nenhuma.
+ * Apertar depois de confirmado, por medição — corridas a mais depois do sync ter
+ * estabilizado perto de 5 087 (ver Dívida registada · "Limiares do portão").
  *   V8  era "coleções na loja = 35" — mas a loja tem coleções fora do âmbito do
  *       resolver (ex.: new-arrivals, janela published_at, sem templateSuffix de
  *       universo/line). Passa a contar só coleções com templateSuffix ∈
@@ -271,7 +281,10 @@ async function main() {
     SHOP
   );
   const cleanTitleDiffCount = Number(cleanTitleDiffRows?.[0]?.c ?? 0);
-  checkRange("V6", "cleanTitle <> title", 800, 900, cleanTitleDiffCount);
+  // PR #68 — intervalo alargado (transitório) para cobrir as duas pontas da transição
+  // de regime: 861 (medido no deploy, sync ainda não correu) até perto de 5 087 (depois
+  // do sync recalcular cleanTitle). Ver cabeçalho do ficheiro.
+  checkRange("V6", "cleanTitle <> title", 800, 5400, cleanTitleDiffCount);
 
   // V7 — rácio, não absoluto (ADENDA 3): um absoluto que se mexe é o feed, um rácio que
   // cai é o extrator partido.
