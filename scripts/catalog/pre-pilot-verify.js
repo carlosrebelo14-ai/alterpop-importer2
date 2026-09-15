@@ -71,8 +71,16 @@
  * seguinte correr. Um intervalo já apertado a 4700–5400 dava vermelho NO PRÓPRIO
  * DEPLOY, antes de o sync ter tido hipótese de correr — trocava o falso alarme de sítio
  * em vez de o tirar. 800–5400 cobre as duas pontas da transição sem cravar nenhuma.
- * Apertar depois de confirmado, por medição — corridas a mais depois do sync ter
- * estabilizado perto de 5 087 (ver Dívida registada · "Limiares do portão").
+ *
+ * DÍVIDA COM GATILHO (briefing 15/09/2026) — 800–5400 verifica quase nada durante a
+ * transição, de propósito. NÃO É PARA FICAR. Gatilho concreto: NA PRIMEIRA CORRIDA DO
+ * PORTÃO EM QUE O VALOR ESTABILIZAR PERTO DE 5 087, apertar nessa mesma medição — não
+ * "depois", essa corrida É o "depois". Ao apertar, converter a FORMA também: V6 continua
+ * um intervalo absoluto, a mesma doença que V5/V7 tinham antes do PR #65 — uma
+ * fotografia que envelhece. Passar a comparar com a corrida anterior e o horizonte das
+ * últimas verdes (avaliarQueda, lib/health/gateState.server.js), como V5/V7, em vez de
+ * um número cravado — fica coerente com o resto do portão e para de precisar de
+ * calibração manual a cada mudança de regra de limpeza.
  *   V8  era "coleções na loja = 35" — mas a loja tem coleções fora do âmbito do
  *       resolver (ex.: new-arrivals, janela published_at, sem templateSuffix de
  *       universo/line). Passa a contar só coleções com templateSuffix ∈
