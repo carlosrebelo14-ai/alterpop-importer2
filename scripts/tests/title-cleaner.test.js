@@ -4,7 +4,11 @@
  * Uso: node scripts/tests/title-cleaner.test.js
  */
 import assert from "node:assert/strict";
-import { cleanProductTitle, cleanProductTitleWithTrace } from "../../lib/importer/catalog/titleCleaner.server.js";
+import {
+  cleanProductTitle,
+  cleanProductTitleWithTrace,
+  resolveTitleCollisions,
+} from "../../lib/importer/catalog/titleCleaner.server.js";
 
 let failures = 0;
 function check(name, fn) {
@@ -36,10 +40,12 @@ check("averbamento à Decisão 17 · guarda — prefixo de formato só sai com r
     cleanProductTitle({ title: "POP figure Darth Vader", resolvedFranchise: null, resolvedFormat: "Figure" }),
     "Darth Vader"
   );
-  // Com franquia resolvida, "Batman" sozinho é alias conhecido e pode sobrar.
+  // Briefing 15/09/2026 · B0 — o travão do mínimo agora bloqueia a string inteira
+  // igual a um alias, não só a palavra isolada genérica. "Batman" sozinho colapsava
+  // para o nome da franquia (caso A do B0); fica intacto.
   assert.equal(
     cleanProductTitle({ title: "Pocket POP Keychain Batman", resolvedFranchise: "Batman", resolvedFormat: "Keychain" }),
-    "Batman"
+    "Pocket POP Keychain Batman"
   );
   // Sem formato resolvido: fica intacto. Remover aqui destruía a única cópia da
   // informação, que é exatamente o que a guarda existe para impedir.
@@ -53,13 +59,17 @@ check("averbamento à Decisão 17 · guarda — prefixo de formato só sai com r
 });
 
 check("prefixos empilhados · itera até três passagens", () => {
+  // Briefing 15/09/2026 · B0 — a 2.ª passagem deixaria "Demon Slayer" sozinho, igual ao
+  // nome da franquia (caso A). O travão do mínimo agora trava aí: só a 1.ª passagem
+  // ("Assorted") sai, a 2.ª fica travada.
   const r = cleanProductTitleWithTrace({
     title: "Assorted Blister 4 figures Bitty POP Demon Slayer",
     resolvedFranchise: "Demon Slayer",
     resolvedFormat: "Figure",
   });
-  assert.equal(r.result, "Demon Slayer");
-  assert.equal(r.prefixoPassagens, 2, "duas passagens: Assorted, depois Blister 4 figures Bitty POP");
+  assert.equal(r.result, "Blister 4 figures Bitty POP Demon Slayer");
+  assert.equal(r.prefixoPassagens, 1, "só a 1.ª passagem (Assorted) sai; a 2.ª colapsava para o nome da franquia");
+  assert.ok(r.prefixoTravaoMinimo, "a 2.ª passagem tinha de ser travada pelo travão do mínimo");
 });
 
 check("prefixos empilhados · travão 1 — nunca mais de três passagens", () => {
@@ -215,6 +225,58 @@ check("Tarefa 20 · dash-repetido: overlap de 1 palavra colapsa quando É a fran
 check("Tarefa 20 · dash-repetido: overlap de 1 palavra genérica NÃO colapsa (falso positivo real: 'Racing')", () => {
   const t = "Carrera GO!!! Ferrari Power Racing - Racing circuit";
   assert.equal(cleanProductTitle({ title: t, resolvedFranchise: null }), t);
+});
+
+check("B0 · resolveTitleCollisions reverte AMBOS os membros quando dois formatos colidem", () => {
+  const rows = [
+    { key: "a", title: "POP figure DC Comics Batman", resolvedFranchise: "Batman", resolvedFormat: "Figure" },
+    { key: "b", title: "Blister 4 figures Bitty POP DC Comics Batman", resolvedFranchise: "Batman", resolvedFormat: "Figure" },
+    { key: "c", title: "Pocket POP Keychain DC Comics Batman", resolvedFranchise: "Batman", resolvedFormat: "Keychain" },
+  ];
+  const out = resolveTitleCollisions(rows);
+  const byKey = Object.fromEntries(out.map((o) => [o.key, o]));
+  assert.equal(byKey.a.result, "POP figure DC Comics Batman");
+  assert.equal(byKey.b.result, "Blister 4 figures Bitty POP DC Comics Batman");
+  assert.equal(byKey.c.result, "Pocket POP Keychain DC Comics Batman");
+  assert.ok(byKey.a.colisaoRevertida && byKey.b.colisaoRevertida && byKey.c.colisaoRevertida);
+  assert.equal(byKey.a.prefixoPassagens, 0);
+});
+
+check("B0 · resolveTitleCollisions não mexe quando não há colisão", () => {
+  const rows = [
+    { key: "a", title: "POP figure DC Comics Batman", resolvedFranchise: "Batman", resolvedFormat: "Figure" },
+    { key: "b", title: "POP figure Marvel Spider-Man", resolvedFranchise: "Spider-Man", resolvedFormat: "Figure" },
+  ];
+  const out = resolveTitleCollisions(rows);
+  const byKey = Object.fromEntries(out.map((o) => [o.key, o]));
+  assert.equal(byKey.a.result, "DC Comics Batman");
+  assert.equal(byKey.b.result, "Marvel Spider-Man");
+  assert.equal(byKey.a.colisaoRevertida, false);
+  assert.equal(byKey.a.prefixoPassagens, 1);
+});
+
+check("B0 · resolveTitleCollisions é independente da ordem de entrada (simétrico)", () => {
+  const rows = [
+    { key: "a", title: "POP figure DC Comics Batman", resolvedFranchise: "Batman", resolvedFormat: "Figure" },
+    { key: "b", title: "Blister 4 figures Bitty POP DC Comics Batman", resolvedFranchise: "Batman", resolvedFormat: "Figure" },
+  ];
+  const forward = resolveTitleCollisions(rows);
+  const backward = resolveTitleCollisions([...rows].reverse());
+  const normalize = (list) => Object.fromEntries(list.map((o) => [o.key, o.result]));
+  assert.deepEqual(normalize(forward), normalize(backward));
+});
+
+check("B0 · duplicados pré-existentes (sem prefixo mexido) não são revertidos, ficam fora do invariante", () => {
+  const rows = [
+    { key: "a", title: "One Piece Monkey D. Luffy adult t-shirt", resolvedFranchise: "One Piece", resolvedFormat: null },
+    { key: "b", title: "One Piece Monkey D. Luffy adult t-shirt", resolvedFranchise: "One Piece", resolvedFormat: null },
+  ];
+  const out = resolveTitleCollisions(rows);
+  // Colidem (mesmo cleanTitle) mas nenhum tinha prefixo para reverter — o invariante
+  // do B0 é sobre o strip desta averbamento, não sobre duplicados alheios a ele.
+  assert.equal(out[0].result, "One Piece Monkey D. Luffy adult t-shirt");
+  assert.equal(out[1].result, "One Piece Monkey D. Luffy adult t-shirt");
+  assert.ok(out[0].colisaoRevertida && out[1].colisaoRevertida, "o grupo colide na mesma, mas reverter não muda nada aqui");
 });
 
 if (failures) {
