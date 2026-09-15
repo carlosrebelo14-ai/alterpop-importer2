@@ -3,13 +3,12 @@
  * Briefing backend 15/09/2026 · B3 + B4 — censo de fabricantes e medição dos 15
  * personagens, na mesma corrida (spec explícita: "Read-only, mesma corrida do B3").
  *
- * B3 — o que este script NÃO consegue dar: "quais dos 28 nomes da taxonomia aparecem
- * no feed" e "não classificados" pressupõem a lista de 28 nomes de
- * `alterpop.manufacturer_tier` (B5). Não a encontrei no repositório nem na memória do
- * projeto — o briefing dizia que estava lá, mas não está em sítio nenhum que eu tenha
- * acesso. Reportado no fim, não inventado. O resto de B3 (fabricantes distintos por
- * contagem, amostra de títulos por fabricante para a decisão de manufacturer_line)
- * corre normalmente.
+ * B3 — "quais dos 28 nomes da taxonomia aparecem no feed" e "não classificados, por
+ * contagem" cruzam o vendor do feed contra MANUFACTURER_TIERS
+ * (lib/importer/catalog/manufacturerTiers.js, 28 nomes dados pelo arquiteto no briefing
+ * de 15/09). Comparação por normalizeForMatch (case/acentos/pontuação fora) — o feed
+ * escreve em maiúsculas ("GOOD SMILE COMPANY") e a taxonomia em title case ("Good Smile
+ * Company"), e um match exato ia falhar por isso sozinho, não por ausência real.
  *
  * B4 — os 15 nomes e os universos-base vêm literalmente do briefing. As armadilhas
  * conhecidas (Grogu="Baby Yoda"/"The Child", Din Djarin="The Mandalorian"/"Mando",
@@ -23,6 +22,8 @@
  *          node scripts/catalog/manufacturer-character-census.js --amostras-fabricante 8
  */
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
+import { normalizeForMatch } from "../../lib/importer/shopify/universeCollections.server.js";
+import { MANUFACTURER_TIERS } from "../../lib/importer/catalog/manufacturerTiers.js";
 
 const args = process.argv.slice(2);
 const valOf = (f, d) => {
@@ -140,10 +141,53 @@ async function main() {
     for (const t of entry.amostras) console.log(`      "${t}"`);
   }
 
-  console.log(`\n"Quais dos 28 nomes da taxonomia aparecem no feed" e "não classificados, por`);
-  console.log(`contagem" — NÃO MEDIDO. A lista de 28 nomes de alterpop.manufacturer_tier não`);
-  console.log(`foi encontrada no repositório nem na memória do projeto. Preciso da lista para`);
-  console.log(`fechar esta parte de B3.`);
+  console.log(`\nCOBERTURA DA TAXONOMIA (28 nomes de alterpop.manufacturer_tier)\n`);
+  const porTierNorm = new Map(MANUFACTURER_TIERS.map((m) => [normalizeForMatch(m.name), m]));
+  const vendorPorNorm = new Map();
+  for (const [vendor, entry] of porFabricante.entries()) {
+    const norm = normalizeForMatch(vendor);
+    if (!vendorPorNorm.has(norm)) vendorPorNorm.set(norm, []);
+    vendorPorNorm.get(norm).push({ vendor, count: entry.count });
+  }
+
+  const presentes = [];
+  const ausentes = [];
+  for (const m of MANUFACTURER_TIERS) {
+    const norm = normalizeForMatch(m.name);
+    const achados = vendorPorNorm.get(norm);
+    if (achados) presentes.push({ ...m, achados });
+    else ausentes.push(m);
+  }
+
+  const porTierOrdem = ["ARTISAN", "SIGNATURE", "COLLECTOR", "CORE"];
+  console.log(`Presentes no feed: ${presentes.length} de ${MANUFACTURER_TIERS.length}\n`);
+  for (const tier of porTierOrdem) {
+    const doTier = presentes.filter((p) => p.tier === tier);
+    if (!doTier.length) continue;
+    console.log(`  ${tier}:`);
+    for (const p of doTier) {
+      const total = p.achados.reduce((a, x) => a + x.count, 0);
+      const grafias = p.achados.map((x) => `"${x.vendor}" (${x.count})`).join(", ");
+      console.log(`      ${p.name} — ${total}  [${grafias}]`);
+    }
+  }
+  console.log(`\nAusentes do feed (na taxonomia, zero produtos): ${ausentes.length} de ${MANUFACTURER_TIERS.length}`);
+  for (const tier of porTierOrdem) {
+    const doTier = ausentes.filter((p) => p.tier === tier);
+    if (!doTier.length) continue;
+    console.log(`  ${tier}: ${doTier.map((p) => p.name).join(", ")}`);
+  }
+
+  const naoClassificados = ordenados.filter(([vendor]) => !porTierNorm.has(normalizeForMatch(vendor)));
+  const totalNaoClassificado = naoClassificados.reduce((a, [, e]) => a + e.count, 0);
+  console.log(
+    `\nNão classificados (fabricante fora da taxonomia, fica SEM TIER — não cai em CORE): ` +
+      `${naoClassificados.length} fabricante(s), ${totalNaoClassificado} produto(s)`
+  );
+  console.log(`  topo por contagem:`);
+  for (const [vendor, entry] of naoClassificados.slice(0, N_FABRICANTES_TOPO)) {
+    console.log(`      ${String(entry.count).padStart(6)}  ${vendor}`);
+  }
 
   // ---------------------------------------------------------------------------------
   console.log(`\n\n## B4 — MEDIÇÃO DOS 15 PERSONAGENS\n`);
