@@ -36,6 +36,11 @@ const valOf = (f, d) => {
 const SHOP = valOf("--shop", process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com");
 const PAGE = 500;
 const N_AMOSTRAS = parseInt(valOf("--amostras", "10"), 10) || 10;
+const N_AMOSTRAS_ORFAOS = parseInt(valOf("--amostras-orfaos", "15"), 10) || 15;
+// Regra do Carlos (2026-09-15) — passagem B é opt-in por nome. Menos de 5 órfãos fica
+// desligado sem discussão (o ganho não paga o risco); 5 ou mais pede amostra e
+// aprovação, um a um, como Steve/Angel/Duke/Amy/Peach.
+const LIMIAR_ORFAOS_REVISAO = 5;
 
 function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -60,6 +65,7 @@ for (const item of ITENS) {
   item.foraDetalhe = new Map();
   item.orfaos = 0;
   item.amostras = [];
+  item.amostrasOrfaos = [];
 }
 
 async function main() {
@@ -96,6 +102,9 @@ async function main() {
         }
         if (r.resolvedFranchise == null) {
           item.orfaos += 1;
+          if (item.amostrasOrfaos.length < N_AMOSTRAS_ORFAOS) {
+            item.amostrasOrfaos.push({ sku: r.sku, title });
+          }
         } else if (r.resolvedFranchise === item.universo) {
           item.dentro += 1;
         } else {
@@ -148,6 +157,36 @@ async function main() {
     console.log(`  amostra (até ${N_AMOSTRAS}):`);
     for (const a of item.amostras) {
       console.log(`      ${a.sku}  [franquia=${a.franquia ?? "—"}]  "${a.title}"`);
+    }
+    console.log();
+  }
+
+  // Regra do Carlos (2026-09-15) — passagem B opt-in por nome, desligada por omissão.
+  // Fora dos 15 de risco (já decididos à parte): <5 órfãos fica desligado sem
+  // discussão; >=5 pede amostra, um a um, antes de ligar.
+  const restantes = ITENS.filter((i) => !i.risco);
+  const semRevisao = restantes.filter((i) => i.orfaos < LIMIAR_ORFAOS_REVISAO);
+  const paraRevisao = restantes.filter((i) => i.orfaos >= LIMIAR_ORFAOS_REVISAO).sort((a, b) => b.orfaos - a.orfaos);
+
+  console.log(`\n\n## RESTANTES (fora dos 15 de risco) — aprovação da passagem B por nome\n`);
+  console.log(`Total: ${restantes.length} nomes.`);
+  console.log(
+    `  < ${LIMIAR_ORFAOS_REVISAO} órfãos — desligada sem discussão: ${semRevisao.length}`
+  );
+  console.log(
+    `  >= ${LIMIAR_ORFAOS_REVISAO} órfãos — pede amostra e aprovação: ${paraRevisao.length}\n`
+  );
+
+  console.log(`### Desligada sem discussão (< ${LIMIAR_ORFAOS_REVISAO} órfãos)\n`);
+  for (const item of [...semRevisao].sort((a, b) => b.orfaos - a.orfaos)) {
+    console.log(`  ${String(item.orfaos).padStart(3)}  ${item.nome.padEnd(20)}${item.universo}`);
+  }
+
+  console.log(`\n### Pede amostra e aprovação (>= ${LIMIAR_ORFAOS_REVISAO} órfãos)\n`);
+  for (const item of paraRevisao) {
+    console.log(`--- ${item.nome} (${item.universo}) — órfãos: ${item.orfaos} ---`);
+    for (const a of item.amostrasOrfaos) {
+      console.log(`      ${a.sku}: "${a.title}"`);
     }
     console.log();
   }
