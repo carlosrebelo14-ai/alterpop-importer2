@@ -59,17 +59,21 @@ check("averbamento à Decisão 17 · guarda — prefixo de formato só sai com r
 });
 
 check("prefixos empilhados · itera até três passagens", () => {
-  // Briefing 15/09/2026 · B0 — a 2.ª passagem deixaria "Demon Slayer" sozinho, igual ao
-  // nome da franquia (caso A). O travão do mínimo agora trava aí: só a 1.ª passagem
-  // ("Assorted") sai, a 2.ª fica travada.
+  // Briefing 15/09/2026 · B0, revisão — o travão avalia o CLEANTITLE FINAL (travão 3),
+  // não o candidato a meio do laço. As duas passagens ("Assorted", depois "Blister 4
+  // figures Bitty POP") deixam "Demon Slayer" sozinho — igual ao nome da franquia — só
+  // depois de o laço acabar; o travão 2 (por passagem) nunca vê isso, porque "Blister 4
+  // figures Bitty POP Demon Slayer" já tem 2+ palavras. O travão 3 apanha no fim e
+  // reverte o strip por inteiro (não só a última passagem).
   const r = cleanProductTitleWithTrace({
     title: "Assorted Blister 4 figures Bitty POP Demon Slayer",
     resolvedFranchise: "Demon Slayer",
     resolvedFormat: "Figure",
   });
-  assert.equal(r.result, "Blister 4 figures Bitty POP Demon Slayer");
-  assert.equal(r.prefixoPassagens, 1, "só a 1.ª passagem (Assorted) sai; a 2.ª colapsava para o nome da franquia");
-  assert.ok(r.prefixoTravaoMinimo, "a 2.ª passagem tinha de ser travada pelo travão do mínimo");
+  assert.equal(r.result, "Assorted Blister 4 figures Bitty POP Demon Slayer");
+  assert.equal(r.prefixoPassagens, 0, "o travão 3 reverte o strip por inteiro, não só a última passagem");
+  assert.ok(r.prefixoTravaoMinimo, "tinha de ser travado — o final colapsava para o nome da franquia");
+  assert.ok(r.firedRules.includes("prefixo-formato-travado-final"));
 });
 
 check("prefixos empilhados · travão 1 — nunca mais de três passagens", () => {
@@ -225,6 +229,24 @@ check("Tarefa 20 · dash-repetido: overlap de 1 palavra colapsa quando É a fran
 check("Tarefa 20 · dash-repetido: overlap de 1 palavra genérica NÃO colapsa (falso positivo real: 'Racing')", () => {
   const t = "Carrera GO!!! Ferrari Power Racing - Racing circuit";
   assert.equal(cleanProductTitle({ title: t, resolvedFranchise: null }), t);
+});
+
+check("B0 · travão 3 — colapso vindo do dash-repetido, não do laço do prefixo", () => {
+  // O caso exato do PR #68: o laço do prefixo passa (candidato "Wednesday - Wednesday"
+  // tem 2+ "palavras", travão 2 não trava); só o dash-repetido, a correr DEPOIS, colapsa
+  // para "Wednesday". Sem este averbamento o dash-repetido colapsaria para "Pocket POP
+  // Keychain Wednesday" (aceitável); com o strip, colapsa para "Wednesday" (não). O
+  // travão 3 reverte o strip e deixa o dash-repetido colapsar sobre o título completo.
+  const r = cleanProductTitleWithTrace({
+    title: "Pocket POP Keychain Wednesday - Wednesday",
+    resolvedFranchise: "Wednesday",
+    resolvedFormat: "Keychain",
+  });
+  assert.equal(r.result, "Pocket POP Keychain Wednesday");
+  assert.equal(r.prefixoPassagens, 0);
+  assert.ok(r.prefixoTravaoMinimo);
+  assert.ok(r.firedRules.includes("prefixo-formato-travado-final"));
+  assert.ok(r.firedRules.includes("dash-repetido"), "o dash-repetido tem de correr na mesma, sobre o título revertido");
 });
 
 check("B0 · resolveTitleCollisions reverte AMBOS os membros quando dois formatos colidem", () => {

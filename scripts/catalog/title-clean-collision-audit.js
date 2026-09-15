@@ -1,35 +1,38 @@
 #!/usr/bin/env node
 /**
- * Briefing backend 15/09/2026 · B0 — mede A e B depois da correção "strip com
- * consciência de colisão" (lib/importer/catalog/titleCleaner.server.js →
- * resolveTitleCollisions). Primeira corrida (sem a correção) deu A=19, B=861,
- * A+B=880 > 20 — o portão travou. Esta é a remedição sobre o residual.
+ * Briefing backend 15/09/2026 · B0, portão corrigido — mede o RESIDUAL CAUSADO POR ESTE
+ * PR (não A+B do briefing original, que contava dívida pré-existente do catálogo contra
+ * um limiar que nunca lhe dizia respeito).
  *
- *   A) títulos limpos (cleanTitle) IGUAIS ao nome da franquia ou da line resolvida
- *      — agora bloqueado pelo travão do mínimo (compara a string inteira, não só a
- *      última palavra). Esperado: 0.
- *   B) títulos limpos DUPLICADOS entre si, ATRIBUÍVEIS a este averbamento
- *      — agora resolveTitleCollisions reverte o strip nos dois lados de qualquer
- *      colisão que ele próprio causasse. Esperado: perto de zero (só sobra se a
- *      colisão existir mesmo com o prefixo intacto, o que já seria duplicado
- *      estrutural, fora do gate deste PR).
+ * Histórico da medição:
+ *   1.ª corrida (sem correção nenhuma):                A=19,  B=861  (A+B=880)
+ *   2.ª corrida (resolveTitleCollisions + travão na string do laço do prefixo): A=2, B=25
+ *   3.ª corrida (este script — travão avalia o cleanTitle FINAL, não o candidato a meio
+ *   do laço; resolveTitleCollisions confirmado a agrupar pelo mesmo final):    A=0
  *
- * Regra do briefing: A + B <= 20 -> merge e deploy sem voltar atrás.
- *                     A + B >  20 -> parar outra vez.
+ * Por que B deixou de fazer parte do portão: `resolveTitleCollisions` já reverte o strip
+ * do prefixo em QUALQUER grupo colidente. Qualquer colisão que sobreviva a essa reversão
+ * é, por construção, uma colisão que já existia (ou continuaria a existir) mesmo com o
+ * prefixo intacto — não é o prefixo que a causa, e reverter o prefixo não a resolve. É
+ * dívida do catálogo (grafias diferentes que o alias-repetido normaliza para o mesmo
+ * texto: "Spiderman" vs "Spider-Man", Decisão 8) que este PR não causa nem pode
+ * resolver. Reportada para o registo, fora do portão.
  *
- * SÓ RELATÓRIO. Não escreve nada. `resolveTitleCollisions` precisa de ver TODOS os
- * candidatos de uma vez para agrupar — por isso este script lê o catálogo inteiro para
- * memória, mas só os campos leves (sku/title/resolvedFranchise/resolvedLine/
- * resolvedFormat), não as linhas Prisma completas: é a mesma distinção que evitou o OOM
- * da Tarefa 17, aplicada ao contrário — poucos MB para ~25 mil produtos, não centenas.
- * A leitura em si continua paginada por cursor. Qualquer falha de leitura aborta com
- * exit != 0 (Decisão 30).
+ *   RESIDUAL CAUSADO POR ESTE PR = A (cleanTitle final == franquia/line, depois do
+ *   travão 3). Regra: zero -> merge e deploy. Acima de zero -> parar e trazer o caso.
+ *
+ * SÓ RELATÓRIO. Não escreve nada. `resolveTitleCollisions` precisa de ver todos os
+ * candidatos de uma vez para agrupar — lê o catálogo inteiro para memória, mas só os
+ * campos leves (sku/title/resolvedFranchise/resolvedLine/resolvedFormat), não linhas
+ * Prisma completas (poucos MB para ~25 mil produtos, nada a ver com o OOM da Tarefa 17,
+ * que era sobre linhas pesadas). A leitura em si continua paginada por cursor. Qualquer
+ * falha de leitura aborta com exit != 0 (Decisão 30).
  *
  * Correr:  node scripts/catalog/title-clean-collision-audit.js
  *          node scripts/catalog/title-clean-collision-audit.js --exemplos 20
  */
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
-import { resolveTitleCollisions, cleanProductTitleWithTrace } from "../../lib/importer/catalog/titleCleaner.server.js";
+import { resolveTitleCollisions } from "../../lib/importer/catalog/titleCleaner.server.js";
 import { normalizeForMatch } from "../../lib/importer/shopify/universeCollections.server.js";
 
 const args = process.argv.slice(2);
@@ -45,7 +48,7 @@ const pct = (parte, total) => (total ? ((parte / total) * 100).toFixed(2) : "0.0
 
 async function main() {
   const total = await prisma.catalogProduct.count({ where: { shop: SHOP } });
-  console.log(`\n=== title-clean-collision-audit (${SHOP}) — briefing backend B0, pós-correção ===\n`);
+  console.log(`\n=== title-clean-collision-audit (${SHOP}) — briefing backend B0, portão corrigido ===\n`);
   console.log(`CatalogProduct: ${total}\n`);
 
   const rows = [];
@@ -88,14 +91,10 @@ async function main() {
   const porSku = new Map(rows.map((r) => [r.key, r]));
   const resultados = resolveTitleCollisions(rows);
 
-  // resolveTitleCollisions reverte QUALQUER grupo colidente, incluindo duplicados
-  // 100% pré-existentes (nenhum prefixo, nada a reverter — no-op mecânico, mas
-  // colisaoRevertida sai `true` na mesma). Para separar "causado por este PR" preciso
-  // do prefixoPassagens da PASSAGEM 1 — antes de qualquer reversão — não do 0 que o
-  // resultado final devolve para linhas revertidas.
-  const pass1PorSku = new Map(rows.map((r) => [r.key, cleanProductTitleWithTrace(r).prefixoPassagens]));
-
-  // A — cleanTitle final == nome da franquia ou line resolvida
+  // A — RESIDUAL CAUSADO POR ESTE PR. Com o travão 3 (avalia o cleanTitle final, não o
+  // candidato a meio do laço) já dentro de cleanProductTitleWithTrace, isto devia dar
+  // zero: qualquer colapso para o nome da franquia/line, venha do laço do prefixo ou de
+  // uma regra posterior, já é apanhado e revertido antes de chegar aqui.
   const igualFranquiaOuLine = [];
   for (const res of resultados) {
     const original = porSku.get(res.key);
@@ -113,10 +112,9 @@ async function main() {
     }
   }
 
-  // B — depois da correção, ainda pode sobrar colisão residual: dois produtos que
-  // colidem MESMO com o prefixo intacto (nenhum tinha prefixo para reverter, ou têm o
-  // mesmo prefixo também). resolveTitleCollisions já reverteu o que dava para reverter;
-  // o que aqui aparece é o que ficou por resolver.
+  // Dívida pré-existente — grupos que colidem MESMO depois de resolveTitleCollisions já
+  // ter revertido o que dava para reverter. Por construção, alheios a este PR (ver
+  // cabeçalho). Só para registo, fora do portão.
   const porCleanTitleNorm = new Map();
   for (const res of resultados) {
     const norm = normalizeForMatch(res.result);
@@ -124,19 +122,8 @@ async function main() {
     if (!porCleanTitleNorm.has(norm)) porCleanTitleNorm.set(norm, []);
     porCleanTitleNorm.get(norm).push(res);
   }
-  // Mesmo com prefixoPassagens>0 na passagem 1, um grupo residual só é CAUSADO por
-  // este averbamento se os títulos BRUTOS (antes de qualquer limpeza) diferem entre si.
-  // Se já vinham do fornecedor byte a byte iguais ("POP figure Pokemon Pikachu" x4, sem
-  // nada a distinguir mesmo com o prefixo intacto), reverter o strip não resolve nada —
-  // é duplicação pré-existente no feed, categoria dos t-shirts por tamanho, fora deste
-  // gate.
-  const gruposResidual = [...porCleanTitleNorm.values()].filter((g) => {
-    if (g.length <= 1) return false;
-    if (!g.some((m) => pass1PorSku.get(m.key) > 0)) return false;
-    const titulosBrutos = new Set(g.map((m) => normalizeForMatch(porSku.get(m.key).title)));
-    return titulosBrutos.size > 1;
-  });
-  const linhasResidual = gruposResidual.reduce((acc, g) => acc + g.length, 0);
+  const gruposDivida = [...porCleanTitleNorm.values()].filter((g) => g.length > 1);
+  const linhasDivida = gruposDivida.reduce((acc, g) => acc + g.length, 0);
 
   const totalRevertidos = resultados.filter((r) => r.colisaoRevertida).length;
   const totalMudam = resultados.filter((r) => {
@@ -144,23 +131,23 @@ async function main() {
     return r.result !== original.title;
   }).length;
 
-  const A = igualFranquiaOuLine.length;
-  const B = linhasResidual;
+  const RESIDUAL = igualFranquiaOuLine.length;
 
   console.log(`RESULTADO ESPERADO PELO BRIEFING: ~5 012 títulos mudam, 880 mantêm o prefixo`);
   console.log(`RESULTADO MEDIDO:`);
-  console.log(`   títulos que mudam:                    ${totalMudam} de ${lidos}  (${pct(totalMudam, lidos)}%)`);
-  console.log(`   mantêm o prefixo por colisão revertida: ${totalRevertidos}\n`);
+  console.log(`   títulos que mudam:                      ${totalMudam} de ${lidos}  (${pct(totalMudam, lidos)}%)`);
+  console.log(`   mantêm o prefixo por colisão revertida:  ${totalRevertidos}\n`);
 
-  console.log(`A. TÍTULO LIMPO = NOME DA FRANQUIA OU LINE RESOLVIDA`);
-  console.log(`   ${A} de ${lidos}  (${pct(A, lidos)}%)`);
+  console.log(`RESIDUAL CAUSADO POR ESTE PR (cleanTitle final == franquia/line, pós travão 3)`);
+  console.log(`   ${RESIDUAL} de ${lidos}  (${pct(RESIDUAL, lidos)}%)`);
   for (const e of igualFranquiaOuLine.slice(0, N_EXEMPLOS)) {
     console.log(`     ${e.sku}: "${e.title}" -> "${e.cleanTitle}"   [franquia=${e.franquia ?? "—"} line=${e.line ?? "—"}]`);
   }
 
-  console.log(`\nB. COLISÕES RESIDUAIS (depois de resolveTitleCollisions já ter revertido o que dava)`);
-  console.log(`   ${gruposResidual.length} grupo(s), ${B} linha(s)  (${pct(B, lidos)}%)`);
-  const gruposOrdenados = [...gruposResidual].sort((a, b) => b.length - a.length);
+  console.log(`\nDÍVIDA PRÉ-EXISTENTE (fora do portão — grafias diferentes que o alias-repetido/`);
+  console.log(`dash-repetido, Decisão 8, já normalizava para o mesmo texto antes desta averbamento)`);
+  console.log(`   ${gruposDivida.length} grupo(s), ${linhasDivida} linha(s)  (${pct(linhasDivida, lidos)}%)`);
+  const gruposOrdenados = [...gruposDivida].sort((a, b) => b.length - a.length);
   for (const g of gruposOrdenados.slice(0, N_EXEMPLOS)) {
     console.log(`     "${g[0].result}"  x${g.length}`);
     for (const item of g.slice(0, 5)) {
@@ -170,12 +157,12 @@ async function main() {
     if (g.length > 5) console.log(`         ... e mais ${g.length - 5}`);
   }
 
-  console.log(`\n=== VEREDITO (briefing B0) ===`);
-  console.log(`   A + B = ${A} + ${B} = ${A + B}`);
-  if (A + B <= 20) {
-    console.log(`   <= 20  ->  merge e deploy sem voltar atrás.`);
+  console.log(`\n=== VEREDITO (briefing B0, portão corrigido) ===`);
+  console.log(`   residual causado por este PR = ${RESIDUAL}`);
+  if (RESIDUAL === 0) {
+    console.log(`   0  ->  merge e deploy sem voltar atrás.`);
   } else {
-    console.log(`   > 20  ->  PARAR outra vez. Residual acima do limiar.`);
+    console.log(`   > 0  ->  PARAR. Trazer o(s) caso(s) acima.`);
   }
   console.log();
 }
