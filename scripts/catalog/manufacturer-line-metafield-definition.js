@@ -3,10 +3,11 @@
  * B6 (briefing backend, 16/09/2026) — cria a definição de metafield
  * `alterpop.manufacturer_line`.
  *
- * list.single_line_text_field, pinned, com capability smartCollectionCondition ligada.
- * Mesma forma que `alterpop.franchise`/`alterpop.line`/`alterpop.format` — ver
- * lib/importer/shopify/franchiseMetafieldDefinition.js. Key é `manufacturer_line`,
- * NUNCA `line` (já existe, é outra coisa — sub-divisão de universo, não de fabricante).
+ * single_line_text_field (escalar, não lista — ao contrário de franchise/line/format,
+ * o extrator só devolve um valor), pinned, com capability smartCollectionCondition
+ * ligada. Key é `manufacturer_line`, NUNCA `line` (já existe, é outra coisa —
+ * sub-divisão de universo, não de fabricante). Ver
+ * lib/importer/shopify/franchiseMetafieldDefinition.js.
  *
  * Idempotente: se já existir, imprime o GID e não recria.
  *

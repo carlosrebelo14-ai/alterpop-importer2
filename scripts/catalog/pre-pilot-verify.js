@@ -125,7 +125,7 @@ const SHOP =
 
 const PRODUCTS_COUNT_QUERY = `query { productsCount { count } }`;
 const METAFIELD_DEFS_QUERY = `
-  query { metafieldDefinitions(first: 10, ownerType: PRODUCT, namespace: "alterpop") { nodes { id key } } }
+  query { metafieldDefinitions(first: 10, ownerType: PRODUCT, namespace: "alterpop") { nodes { id key type { name } } } }
 `;
 const COLLECTIONS_PAGE_QUERY = `
   query CollCount($cursor: String) {
@@ -345,11 +345,35 @@ async function main() {
   }
   check("V9", "franchise:conditions-diff", "✓ tudo alinhado", v9Pass ? "✓ tudo alinhado" : "✗ desalinhado", v9Pass);
 
-  // V10 — definições de metafield
+  // V10 — definições de metafield alterpop.*. Conjunto explícito de {key, type}, não
+  // contagem: uma contagem fixa parte sozinha sempre que se acrescenta uma definição
+  // nova (aconteceu com manufacturer_line no B6) — e vai partir outra vez no B7, quando
+  // entrar alterpop.character. Aqui só falha o que está NESTA lista e está ausente ou
+  // com o tipo errado; uma definição a mais (uma futura do B7, por exemplo) não reprova
+  // o gate — o gate cresce quando alguém a acrescentar aqui de propósito, não sozinho.
+  const EXPECTED_METAFIELD_DEFS = [
+    { key: "franchise", type: "list.single_line_text_field" },
+    { key: "line", type: "list.single_line_text_field" },
+    { key: "format", type: "list.single_line_text_field" },
+    { key: "manufacturer_line", type: "single_line_text_field" },
+  ];
   const defs = (await client.graphql(METAFIELD_DEFS_QUERY))?.metafieldDefinitions?.nodes || [];
-  check("V10", "definições de metafield alterpop.*", 4, defs.length, defs.length === 4);
-  if (defs.length !== 4) {
-    console.log(`      encontradas: ${defs.map((d) => d.key).join(", ") || "nenhuma"}`);
+  const defByKey = new Map(defs.map((d) => [d.key, d.type?.name]));
+  const missingOrWrongType = EXPECTED_METAFIELD_DEFS.filter(
+    (exp) => defByKey.get(exp.key) !== exp.type
+  );
+  check(
+    "V10",
+    "definições de metafield alterpop.* (chave+tipo)",
+    "✓ todas presentes com o tipo certo",
+    missingOrWrongType.length === 0 ? "✓ todas presentes com o tipo certo" : `✗ ${missingOrWrongType.length} em falta/tipo errado`,
+    missingOrWrongType.length === 0
+  );
+  if (missingOrWrongType.length > 0) {
+    for (const exp of missingOrWrongType) {
+      const found = defByKey.get(exp.key);
+      console.log(`      ${exp.key}: esperado type=${exp.type}, encontrado=${found ?? "AUSENTE"}`);
+    }
     console.log(
       `      GIDs esperados: franchise=${ALTERPOP_FRANCHISE_DEFINITION_GID}, line=${ALTERPOP_LINE_DEFINITION_GID}, format=${ALTERPOP_FORMAT_DEFINITION_GID}, manufacturer_line=${ALTERPOP_MANUFACTURER_LINE_DEFINITION_GID}`
     );

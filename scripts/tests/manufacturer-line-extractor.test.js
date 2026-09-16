@@ -78,6 +78,38 @@ check("McFarlane Toys — DC Multiverse, Theatrical/Elite Edition, Cube Qubi", (
   assert.equal(extractManufacturerLine({ vendor: "MCFARLANE TOYS", title: "Harry Potter assorted Cube Qubi" }), "Cube Qubi");
 });
 
+check("Banpresto — linhas medidas nos 45 produtos ACTIVE da loja (16/09/2026)", () => {
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece Battle Record Collection Monkey D.Luffy figure 13cm" }), "Battle Record");
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece World Collectable Figure Special Monkey D. Luffy figure 12cm" }), "World Collectable Figure");
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece Monkey D Luffy Gear 5 WCF Special 13cm" }), "World Collectable Figure");
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece Log Stories Monkey D Luffy vs Local Sea figure 7cm" }), "Log Stories");
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece DXF The Grandline Series Monkey D. Luffy figure 16cm" }), "Grandline Series");
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece King of Artist Monkey D Luffy Gear 4 Boundman figure 17cm" }), "King of Artist");
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece Maximatic Monkey D Luffy ver.A figure 21cm" }), "Maximatic");
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece The Shukko Monkey D. Luffy figure 14cm" }), "The Shukko");
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece Netflix Live Action Big Fluffy Puffy Chopper figure 14cm" }), "Fluffy Puffy");
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece Dioramatic The Anime D Luffy Monkey figure 20cm" }), "Dioramatic");
+});
+
+check("Banpresto — Log Stories vence sobre World Collectable Figure quando os dois aparecem", () => {
+  assert.equal(
+    extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece World Collectable Figure Log Stories Monkey D. Luffy vs Kuzan 9cm" }),
+    "Log Stories"
+  );
+});
+
+check("Banpresto — Senkozekkei: erro de escrita do fornecedor (Senkokkei, falta \"ze\") tem needle próprio", () => {
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece Senkozekkei Monkey D. Luffy figure 15cm" }), "Senkozekkei");
+  assert.equal(extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece Monkey D Luffy Gear 4 Senkokkei figure 15cm" }), "Senkozekkei");
+});
+
+check("Banpresto — \"fIchibansho\" (typo do fornecedor, sem espaço) ainda bate por ser substring puro, não regex \\b", () => {
+  assert.equal(
+    extractManufacturerLine({ vendor: "BANPRESTO", title: "One Piece The Future of Imagination Last Battle Monkey D Luffy fIchibansho figure 22cm" }),
+    "Ichibansho"
+  );
+});
+
 check("sem linha reconhecida no título — null, não inventa", () => {
   assert.equal(extractManufacturerLine({ vendor: "Banpresto", title: "One Piece Monkey D Luffy DXF figure 17cm" }), null);
 });
