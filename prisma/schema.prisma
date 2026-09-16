@@ -119,6 +119,12 @@ model CatalogProduct {
   // aprovado — sem @default, nullable puro (ADD COLUMN sem dados existentes, sem
   // risco do incidente da Tarefa 27).
   resolvedFormat   String?
+  // B6 (briefing backend, 16/09/2026) — manufacturerLineExtractor.server.js. Linha de
+  // produto DENTRO do fabricante (ex.: "Ichibansho"/"Grandista" dentro de Banpresto) —
+  // NÃO confundir com resolvedLine (sub-divisão de UNIVERSO, franchiseLines.js).
+  // Alimenta o metafield alterpop.manufacturer_line. NULL até correr o backfill/dry-run
+  // aprovado — mesmo padrão seguro do resolvedFormat (ADD COLUMN nullable puro).
+  resolvedManufacturerLine String?
   indexedAt        DateTime @default(now())
 
   @@id([shop, sku])
