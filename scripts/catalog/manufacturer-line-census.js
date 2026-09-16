@@ -13,6 +13,23 @@
  * Correr: node scripts/catalog/manufacturer-line-census.js [--vendor Banpresto] [--sample 200]
  */
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
+import { FRANCHISE_UNIVERSES } from "../../lib/importer/catalog/franchiseUniverses.js";
+
+/** Ruído a excluir do ranking de frases: nomes de universo (já cobertos pelo
+ *  franchiseResolver, não são linha de fabricante) + palavras genéricas comuns em
+ *  título de anime/manga que não identificam uma linha de produto. */
+const FRANCHISE_NOISE = new Set(
+  FRANCHISE_UNIVERSES.flatMap((u) => [u.name, ...(u.titlePatterns || [])]).map((s) =>
+    s.toLowerCase()
+  )
+);
+function isFranchiseNoise(phrase) {
+  const low = phrase.toLowerCase();
+  for (const noise of FRANCHISE_NOISE) {
+    if (low === noise || low.startsWith(noise + " ") || low.includes(" " + noise)) return true;
+  }
+  return false;
+}
 
 const args = process.argv.slice(2);
 const valOf = (f, d) => {
@@ -50,13 +67,20 @@ async function main() {
   }
 
   const ranked = Array.from(phraseFreq.entries())
-    .filter(([, n]) => n >= 5)
+    .filter(([phrase, n]) => n >= 4 && !isFranchiseNoise(phrase))
     .sort((a, b) => b[1] - a[1])
     .slice(0, 60);
 
-  console.log(`\n[manufacturer-line-census] frases capitalizadas (>=5 ocorrências, candidatas a linha):`);
+  console.log(`\n[manufacturer-line-census] frases capitalizadas (>=4 ocorrências, sem ruído de franquia, candidatas a linha):`);
   for (const [phrase, n] of ranked) {
     console.log(`  ${n}\t${phrase}`);
+  }
+
+  const briefingExamples = ["Ichibansho", "Mystical Adventure", "Duel Memories"];
+  console.log(`\n[manufacturer-line-census] contagem exata dos exemplos do briefing:`);
+  for (const ex of briefingExamples) {
+    const n = rows.filter((r) => (r.cleanTitle || r.title || "").includes(ex)).length;
+    console.log(`  ${n}\t${ex}`);
   }
 
   console.log(`\n[manufacturer-line-census] amostra de ${Math.min(SAMPLE, rows.length)} títulos:`);
