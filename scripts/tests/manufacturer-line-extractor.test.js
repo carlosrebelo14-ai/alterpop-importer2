@@ -46,6 +46,38 @@ check("outras linhas reais do censo (16/09/2026)", () => {
   assert.equal(extractManufacturerLine({ vendor: "Banpresto", title: "Frieren Beyond Journeys End Big Sofvimates Ringlets figure 13cm" }), "Sofvimates");
 });
 
+check("Tamashii Nations — S.H.Figuarts, todas as variantes de grafia do fornecedor", () => {
+  assert.equal(extractManufacturerLine({ vendor: "TAMASHII NATIONS", title: "Dandadan Momo Ver.2 S.H. Figuarts figure 14cm" }), "S.H.Figuarts");
+  assert.equal(extractManufacturerLine({ vendor: "TAMASHII NATIONS", title: "Naruto Shippuden Orochimaru Seeker of Inmortality S.H.Figuarts figure 15cm" }), "S.H.Figuarts");
+  assert.equal(extractManufacturerLine({ vendor: "TAMASHII NATIONS", title: "One Piece Sir Crocodile Marineford S.H. Figuarts figure 18cm" }), "S.H.Figuarts");
+  assert.equal(extractManufacturerLine({ vendor: "TAMASHII NATIONS", title: "Demon Slayer Kimetsu No Yaiba Doma S.H. Figurarts figure 15,5cm" }), "S.H.Figuarts");
+  assert.equal(extractManufacturerLine({ vendor: "TAMASHII NATIONS", title: "Space Sheriff Gavan SHFiguarts Gavan figure 14.5cm" }), "S.H.Figuarts");
+});
+
+check("Tamashii Nations — Figuarts Zero vence sobre S.H.Figuarts (mais específica)", () => {
+  assert.equal(extractManufacturerLine({ vendor: "TAMASHII NATIONS", title: "Naruto Shippuden Figuarts Zero Startune Uzumaki The Will To Hokage figure 24cm" }), "Figuarts Zero");
+});
+
+check("Tamashii Nations — outras linhas do censo", () => {
+  assert.equal(extractManufacturerLine({ vendor: "TAMASHII NATIONS", title: "Godzilla 1975 S.H.MonsterArts figure 16cm" }), "S.H.MonsterArts");
+  assert.equal(extractManufacturerLine({ vendor: "TAMASHII NATIONS", title: "Mobile Suit Gundam Robot Spirits Side MS MSM 10 Zock ver. ANIME figure 16.5cm" }), "Robot Spirits");
+  assert.equal(extractManufacturerLine({ vendor: "TAMASHII NATIONS", title: "Mazinger Z GX-04S Grendizer Soul of Chogokin figure" }), "Soul of Chogokin");
+  assert.equal(extractManufacturerLine({ vendor: "TAMASHII NATIONS", title: "Saint Seiya Saint Cloth Myth Ex 40th Anniversary ver. Alpha Dubhe Siegfried figure 18cm" }), "Saint Cloth Myth");
+  assert.equal(extractManufacturerLine({ vendor: "TAMASHII NATIONS", title: "Gundam Universe MS-06S Char's Zaku II Renewal figure 15cm" }), "Gundam Universe");
+});
+
+check("NECA — Ultimate", () => {
+  assert.equal(extractManufacturerLine({ vendor: "NECA", title: "Universal Monsters Ultimate Frankenstein Monster figure 18cm" }), "Ultimate");
+  assert.equal(extractManufacturerLine({ vendor: "NECA", title: "Gremlins Gizmo plush toy with sound and movement 20cm" }), null);
+});
+
+check("McFarlane Toys — DC Multiverse, Theatrical/Elite Edition, Cube Qubi", () => {
+  assert.equal(extractManufacturerLine({ vendor: "MCFARLANE TOYS", title: "DC Comics Multiverse Superman figure 18cm" }), "DC Multiverse");
+  assert.equal(extractManufacturerLine({ vendor: "MCFARLANE TOYS", title: "DC Comics Supergirl Deluxe Theatrical Edition Lobo figure 18cm" }), "Theatrical Edition");
+  assert.equal(extractManufacturerLine({ vendor: "MCFARLANE TOYS", title: "Fallout Elite Edition Nuka Cola T-60 figure 19cm" }), "Elite Edition");
+  assert.equal(extractManufacturerLine({ vendor: "MCFARLANE TOYS", title: "Harry Potter assorted Cube Qubi" }), "Cube Qubi");
+});
+
 check("sem linha reconhecida no título — null, não inventa", () => {
   assert.equal(extractManufacturerLine({ vendor: "Banpresto", title: "One Piece Monkey D Luffy DXF figure 17cm" }), null);
 });
