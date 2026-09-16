@@ -65,22 +65,14 @@
  *       normal em falso alarme).
  *
  * PR #68 (2026-09-15, averbamento à Decisão 17) — intervalo alargado para 800–5400,
- * TRANSITÓRIO. `cleanTitle` só recalcula no ciclo de sync seguinte ao deploy, não no
- * próprio deploy — no deploy, o valor medido era ainda 861 (regime antigo); a lista de
- * prefixos alargada empurra-o para perto de 5 087/25 595 (~19,9%) assim que o sync
- * seguinte correr. Um intervalo já apertado a 4700–5400 dava vermelho NO PRÓPRIO
- * DEPLOY, antes de o sync ter tido hipótese de correr — trocava o falso alarme de sítio
- * em vez de o tirar. 800–5400 cobre as duas pontas da transição sem cravar nenhuma.
+ * TRANSITÓRIO, para cobrir as duas pontas da transição de regime sem cravar nenhuma
+ * (861 no deploy, sync ainda não corrido; ~5 087 depois do sync recalcular cleanTitle).
  *
- * DÍVIDA COM GATILHO (briefing 15/09/2026) — 800–5400 verifica quase nada durante a
- * transição, de propósito. NÃO É PARA FICAR. Gatilho concreto: NA PRIMEIRA CORRIDA DO
- * PORTÃO EM QUE O VALOR ESTABILIZAR PERTO DE 5 087, apertar nessa mesma medição — não
- * "depois", essa corrida É o "depois". Ao apertar, converter a FORMA também: V6 continua
- * um intervalo absoluto, a mesma doença que V5/V7 tinham antes do PR #65 — uma
- * fotografia que envelhece. Passar a comparar com a corrida anterior e o horizonte das
- * últimas verdes (avaliarQueda, lib/health/gateState.server.js), como V5/V7, em vez de
- * um número cravado — fica coerente com o resto do portão e para de precisar de
- * calibração manual a cada mudança de regra de limpeza.
+ * FECHADO 16/09/2026 (gatilho do PR #68/#69, disparado na primeira corrida em que o
+ * valor estabilizou perto de 5 087 — na prática, 5 884, catálogo cresceu entretanto).
+ * V6 convertido à forma comparativa (avaliarQueda: corrida anterior + horizonte das
+ * últimas verdes), igual a V5/V7, em vez do intervalo absoluto — que envelhecia a cada
+ * mudança de regra de limpeza. Limiar V6_QUEDA_MAX_PCT = 15% (ver definição abaixo).
  *   V8  era "coleções na loja = 35" — mas a loja tem coleções fora do âmbito do
  *       resolver (ex.: new-arrivals, janela published_at, sem templateSuffix de
  *       universo/line). Passa a contar só coleções com templateSuffix ∈
@@ -182,16 +174,18 @@ function info(id, label, value) {
   console.log(`  · ${id}  ${label} — ${value}`);
 }
 
-/** V6 — intervalo, não valor cravado (Tarefa 49). */
-function checkRange(id, label, min, max, actual) {
-  const pass = actual >= min && actual <= max;
-  check(id, label, `${min}–${max}`, actual, pass);
-}
 
 /** V5 — queda acentuada face à referência. Crescimento nunca é vermelho. */
 const V5_QUEDA_MAX_PCT = 10;
 /** V7 — quanto o rácio pode cair (pontos percentuais) antes de ser extrator partido. */
 const V7_QUEDA_MAX_PP = 3;
+/** V6 — apertado 16/09/2026 (gatilho registado no PR #68/#69: primeira corrida em que o
+ *  valor estabilizasse perto de 5 087). Converteu-se à mesma forma de V5/V7 — anterior +
+ *  horizonte, crescimento nunca vermelho — em vez de intervalo absoluto cravado, que
+ *  envelhece a cada mudança de regra de limpeza. 15%, mais folgado que o V5 (10%): o
+ *  número de títulos que mudam tem mais ruído natural (feed, novas regras) do que o
+ *  total do catálogo. Palpite, como os outros — calibrar com corridas a mais. */
+const V6_QUEDA_MAX_PCT = 15;
 /** V3 — a partir de quantas horas um APPROVED por publicar deixa de ser normal.
  *  24h e não 6h: a publicação é manual e ao ritmo do Carlos — aprovar à sexta e publicar
  *  à segunda é cadência normal, e 6h dava vermelho todo o fim de semana por nada.
@@ -289,10 +283,26 @@ async function main() {
     SHOP
   );
   const cleanTitleDiffCount = Number(cleanTitleDiffRows?.[0]?.c ?? 0);
-  // PR #68 — intervalo alargado (transitório) para cobrir as duas pontas da transição
-  // de regime: 861 (medido no deploy, sync ainda não correu) até perto de 5 087 (depois
-  // do sync recalcular cleanTitle). Ver cabeçalho do ficheiro.
-  checkRange("V6", "cleanTitle <> title", 800, 5400, cleanTitleDiffCount);
+  // Apertado 16/09/2026 — forma comparativa, como V5/V7 (ver V6_QUEDA_MAX_PCT acima).
+  const cleanTitleDiffAnterior = state?.cleanTitleDiff ?? null;
+  const cleanTitleDiffHorizonte = maxDe(state?.cleanTitleDiffHistorico);
+  if (cleanTitleDiffAnterior == null && cleanTitleDiffHorizonte == null) {
+    info("V6", "cleanTitle <> title (sem referência — gravada se a corrida for verde)", cleanTitleDiffCount);
+  } else {
+    const v6 = avaliarQueda({
+      anterior: cleanTitleDiffAnterior,
+      horizonte: cleanTitleDiffHorizonte,
+      atual: cleanTitleDiffCount,
+      limiar: V6_QUEDA_MAX_PCT,
+    });
+    check(
+      "V6",
+      `queda de cleanTitle <> title (anterior ${cleanTitleDiffAnterior ?? "—"}, horizonte ${cleanTitleDiffHorizonte ?? "—"})`,
+      `< ${V6_QUEDA_MAX_PCT}%`,
+      `${v6.pior.toFixed(1)}% (total ${cleanTitleDiffCount})`,
+      v6.passa
+    );
+  }
 
   // V7 — rácio, não absoluto (ADENDA 3): um absoluto que se mexe é o feed, um rácio que
   // cai é o extrator partido.
@@ -377,6 +387,7 @@ async function main() {
     houveVermelho: !allPass,
     catalogTotal: totalProducts,
     resolvedFormatRatio: racio,
+    cleanTitleDiff: cleanTitleDiffCount,
     shop: SHOP,
     horizonteN: HORIZONTE_N,
     aceitarNovaBase: ACEITAR_BASE,
