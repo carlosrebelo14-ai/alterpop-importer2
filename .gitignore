@@ -10,6 +10,8 @@ data/
 cache/translations.json
 prisma/dev.sqlite
 prisma/dev.sqlite-journal
+/dev.sqlite
+*.backup-*
 *.log
 .DS_Store
 
