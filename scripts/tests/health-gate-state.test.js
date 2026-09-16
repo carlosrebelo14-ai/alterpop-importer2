@@ -224,6 +224,60 @@ async function main() {
     }
   );
 
+  await check(
+    "caso 5 — cleanTitleDiff (V6, 16/09/2026): grava, compara por queda, e é opcional sem partir chamadores antigos",
+    async () => {
+      const statePath = await tmpStatePath();
+
+      // Chamador antigo, sem cleanTitleDiff — não pode rebentar nem inventar o campo.
+      const estadoAnterior1 = await carregarEstado(statePath);
+      const r1 = await gravarReferencia(statePath, {
+        estadoAnterior: estadoAnterior1,
+        houveVermelho: false,
+        catalogTotal: 25421,
+        resolvedFormatRatio: 55.79,
+        shop: "loja-de-teste",
+        horizonteN: HORIZONTE_N,
+      });
+      assert.equal(r1.escreveu, true);
+      const estado1 = await carregarEstado(statePath);
+      assert.equal(estado1.cleanTitleDiff, undefined, "sem cleanTitleDiff no args, o campo não deve aparecer");
+
+      // Agora com cleanTitleDiff — grava valor e arranca o histórico.
+      const r2 = await gravarReferencia(statePath, {
+        estadoAnterior: estado1,
+        houveVermelho: false,
+        catalogTotal: 25421,
+        resolvedFormatRatio: 55.79,
+        cleanTitleDiff: 5884,
+        shop: "loja-de-teste",
+        horizonteN: HORIZONTE_N,
+      });
+      assert.equal(r2.escreveu, true);
+      const estado2 = await carregarEstado(statePath);
+      assert.equal(estado2.cleanTitleDiff, 5884);
+      assert.deepEqual(estado2.cleanTitleDiffHistorico, [5884]);
+
+      // Queda de 20% (> 15%, o limiar de V6) tem de travar.
+      const v6Queda = avaliarQueda({
+        anterior: estado2.cleanTitleDiff,
+        horizonte: maxDe(estado2.cleanTitleDiffHistorico),
+        atual: 4707, // -20% de 5884
+        limiar: 15,
+      });
+      assert.equal(v6Queda.passa, false, "queda de 20% tinha de falhar o limiar de 15%");
+
+      // Crescimento nunca é vermelho, mesmo que grande.
+      const v6Crescimento = avaliarQueda({
+        anterior: estado2.cleanTitleDiff,
+        horizonte: maxDe(estado2.cleanTitleDiffHistorico),
+        atual: 9000,
+        limiar: 15,
+      });
+      assert.equal(v6Crescimento.passa, true, "crescimento não pode ser vermelho");
+    }
+  );
+
   if (failures) {
     console.error(`\n${failures} falha(s)`);
     process.exit(1);
