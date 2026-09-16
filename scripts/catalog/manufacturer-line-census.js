@@ -76,8 +76,11 @@ async function main() {
     console.log(`  ${n}\t${phrase}`);
   }
 
-  const briefingExamples = ["Ichibansho", "Mystical Adventure", "Duel Memories"];
-  console.log(`\n[manufacturer-line-census] contagem exata dos exemplos do briefing:`);
+  const candidatesArg = valOf("--candidates", "");
+  const briefingExamples = candidatesArg
+    ? candidatesArg.split(",").map((s) => s.trim()).filter(Boolean)
+    : ["Ichibansho", "Mystical Adventure", "Duel Memories"];
+  console.log(`\n[manufacturer-line-census] contagem exata dos candidatos:`);
   for (const ex of briefingExamples) {
     const n = rows.filter((r) => (r.cleanTitle || r.title || "").includes(ex)).length;
     console.log(`  ${n}\t${ex}`);
