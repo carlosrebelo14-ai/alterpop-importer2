@@ -104,6 +104,7 @@ import {
   ALTERPOP_FRANCHISE_DEFINITION_GID,
   ALTERPOP_LINE_DEFINITION_GID,
   ALTERPOP_FORMAT_DEFINITION_GID,
+  ALTERPOP_MANUFACTURER_LINE_DEFINITION_GID,
 } from "../../lib/importer/shopify/franchiseMetafieldDefinition.js";
 
 const GOVERNED_TEMPLATE_SUFFIXES = new Set([UNIVERSE_TEMPLATE_SUFFIX, LINE_TEMPLATE_SUFFIX]);
@@ -346,11 +347,11 @@ async function main() {
 
   // V10 — definições de metafield
   const defs = (await client.graphql(METAFIELD_DEFS_QUERY))?.metafieldDefinitions?.nodes || [];
-  check("V10", "definições de metafield alterpop.*", 3, defs.length, defs.length === 3);
-  if (defs.length !== 3) {
+  check("V10", "definições de metafield alterpop.*", 4, defs.length, defs.length === 4);
+  if (defs.length !== 4) {
     console.log(`      encontradas: ${defs.map((d) => d.key).join(", ") || "nenhuma"}`);
     console.log(
-      `      GIDs esperados: franchise=${ALTERPOP_FRANCHISE_DEFINITION_GID}, line=${ALTERPOP_LINE_DEFINITION_GID}, format=${ALTERPOP_FORMAT_DEFINITION_GID}`
+      `      GIDs esperados: franchise=${ALTERPOP_FRANCHISE_DEFINITION_GID}, line=${ALTERPOP_LINE_DEFINITION_GID}, format=${ALTERPOP_FORMAT_DEFINITION_GID}, manufacturer_line=${ALTERPOP_MANUFACTURER_LINE_DEFINITION_GID}`
     );
   }
 
