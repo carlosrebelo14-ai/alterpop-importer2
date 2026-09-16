@@ -42,7 +42,6 @@ import { translateCategoryLabel } from "../../lib/importer/catalog/categoryLabel
 import { CurationFiltersBar } from "../components/CurationFiltersBar.jsx";
 import { SyncStagingModal } from "../components/SyncStagingModal.jsx";
 import { ShopifyPublishModal } from "../components/ShopifyPublishModal.jsx";
-import { CuratorChatWidget } from "../components/CuratorChatWidget.jsx";
 import { CatalogProductThumbnail } from "../components/CatalogProductThumbnail.jsx";
 import { DashboardPageToolbar } from "../components/DashboardPageToolbar.jsx";
 import { useDebouncedValue } from "../hooks/useDebouncedValue.js";
@@ -860,22 +859,6 @@ export default function CurationDashboard() {
     setPage(1);
     setActiveSegmentId("all");
   }, []);
-
-  const handleApplyCatalogFiltersFromChat = useCallback(
-    (filters) => {
-      if (!filters) return;
-      setSelectedLicenceIds(filters.licenceIds || []);
-      setSelectedProductTypeIds(filters.productTypeIds || []);
-      setSelectedBrand(filters.brand || null);
-      setSearchQuery(filters.search || "");
-      setMinPrice(filters.minPrice || "");
-      setMaxPrice(filters.maxPrice || "");
-      setInStockOnly(Boolean(filters.inStockOnly));
-      setPage(1);
-      shopify.toast.show("Catalog filters updated from chat");
-    },
-    [shopify]
-  );
 
   const handleBrandChange = useCallback((brand) => {
     setSelectedBrand(brand);
@@ -2254,7 +2237,6 @@ export default function CurationDashboard() {
       </div>
     )}
 
-    <CuratorChatWidget onApplyCatalogFilters={handleApplyCatalogFiltersFromChat} />
     {toast && (
       <div
         style={{
