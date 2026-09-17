@@ -15,6 +15,7 @@ import { ensureOciostockMetafieldDefinitions } from "../../lib/importer/shopify/
 import { syncFranchiseCatalog } from "../../lib/importer/shopify/franchiseCatalogSync.server.js";
 import { syncNewArrivalsTag } from "../../lib/importer/shopify/newArrivalsSync.server.js";
 import { reconcileLiveDriftCycle } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
+import { reconcileCharacterPagesCycle } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
 
 /**
  * POST /api/trigger-sync — dispara indexação + publicação sem sessão OAuth.
@@ -245,6 +246,20 @@ export const action = async ({ request }) => {
         );
       } catch (err) {
         console.error("[trigger-sync] live-drift (V13) falhou:", err?.message || err);
+      }
+
+      // B7, passo 9 (briefing backend, 17/09/2026) — ciclo de metaobjects `character`.
+      // Mesmo travão do live-drift acima (MAX_CHARACTER_CHANGES_PER_CYCLE = 10): até 10
+      // Characters alterados no ciclo aplica sozinho, acima disso não escreve nada e fica
+      // vermelho. Nunca bloqueia o ciclo.
+      try {
+        const characterClient = createShopifyClientFromSession(session);
+        const characterResult = await reconcileCharacterPagesCycle(characterClient, shop);
+        console.log(
+          `[trigger-sync] character-pages: ${characterResult.status} — ${characterResult.changed.length} alterado(s), ${characterResult.blocked.length} bloqueado(s) pelo travão, ${characterResult.invalid.length} inválido(s) (>128 produtos).`
+        );
+      } catch (err) {
+        console.error("[trigger-sync] character-pages falhou:", err?.message || err);
       }
     } catch (err) {
       console.error("[trigger-sync] ciclo falhou:", err?.message || err);
