@@ -22,6 +22,7 @@ import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { buildPublishPayload } from "../../lib/importer/shopify/shopifyMapper.server.js";
 import { runPrePublishChecks, checkTitleDuplicate } from "../../lib/importer/curation/prePublishChecks.server.js";
+import { computeLiveDrift } from "../../lib/importer/curation/liveDrift.server.js";
 
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
 
@@ -131,6 +132,21 @@ async function main() {
         expected: expectedByCode[w.code] ?? null,
         evidence: w.evidence,
       });
+    }
+
+    // LIVE_DRIFT (ADENDA 5, 17/09/2026) — MISSING_FRANCHISE/MISSING_FORMAT acima só
+    // veem o payload reconstruído: ficam verdes assim que o Prisma tem valor, mesmo que
+    // a Shopify continue com o metafield vazio de uma publicação anterior (o backfill
+    // de resolvedFormat/resolvedManufacturerLine nunca chama metafieldsSet). Esta
+    // comparação olha para o valor REAL na loja, não só para o esperado.
+    const liveValues = {
+      franchise: metafieldValue(node, "franchise"),
+      line: metafieldValue(node, "line"),
+      format: metafieldValue(node, "format"),
+      manufacturer_line: metafieldValue(node, "manufacturer_line"),
+    };
+    for (const drift of computeLiveDrift(payload, liveValues)) {
+      findings.push({ code: "LIVE_DRIFT", handle: node.handle, sku, live: drift.live, expected: drift.expected, evidence: { field: drift.field } });
     }
   }
 
