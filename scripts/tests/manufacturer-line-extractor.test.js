@@ -178,6 +178,27 @@ check("R2 · sem linha resolvida (nenhuma needle bate) nunca conta, mesmo em fab
   );
 });
 
+// P3 (ADENDA 3/5, 17/09/2026) — "Rides" é a linha POP! Rides da Funko, não ruído sem
+// informação. Corre sobre o título BRUTO (com "POP figure" ainda por tirar).
+check("P3 · Funko 'Rides' → POP! Rides (caso real: SKU 889698744041)", () => {
+  assert.equal(
+    extractManufacturerLine({
+      vendor: "Funko",
+      title: "POP figure Rides Star Wars Luke Skywalker in T-47 Airspeeder Exclusive",
+    }),
+    "POP! Rides"
+  );
+});
+check("P3 · Funko sem 'rides' no título fica sem linha", () => {
+  assert.equal(extractManufacturerLine({ vendor: "Funko", title: "POP figure Star Wars Luke Skywalker" }), null);
+});
+check("P3 · Funko não entra no fallback de formato do R2 — POP! Rides não é linha só-figuras", () => {
+  assert.equal(
+    isKnownFigureOnlyManufacturerLine({ vendor: "Funko", title: "Rides Star Wars Luke Skywalker" }),
+    false
+  );
+});
+
 if (failures) {
   console.error(`\n${failures} falha(s)`);
   process.exit(1);

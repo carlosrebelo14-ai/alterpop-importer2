@@ -161,6 +161,7 @@ async function execute() {
   let processed = 0;
   let changed = 0;
   let cursor = null;
+  const ruleCounts = new Map();
 
   for (;;) {
     const rows = await prisma.catalogProduct.findMany({
@@ -174,11 +175,17 @@ async function execute() {
 
     const updates = [];
     for (const r of rows) {
-      const { result: clean } = cleanProductTitleWithTrace(r);
+      const { result: clean, firedRules } = cleanProductTitleWithTrace(r);
       const data = {};
       if (r.originalTitle == null) data.originalTitle = r.title;
       if (r.cleanTitle !== clean) data.cleanTitle = clean;
-      if (clean !== r.title) changed += 1;
+      if (clean !== r.title) {
+        changed += 1;
+        // P2 (ADENDA 3, 17/09/2026) — o backfill não trazia contagem por regra, só o
+        // total. Mesmo padrão de --random N (runRandomRate acima), aplicado ao catálogo
+        // inteiro em vez de uma amostra.
+        for (const rule of firedRules) ruleCounts.set(rule, (ruleCounts.get(rule) || 0) + 1);
+      }
       if (Object.keys(data).length) {
         updates.push(
           prisma.catalogProduct.update({ where: { shop_sku: { shop: SHOP, sku: r.sku } }, data })
@@ -193,7 +200,21 @@ async function execute() {
     if (rows.length < PAGE) break;
   }
 
+  // P1 (ADENDA 3, 17/09/2026) — mesma verificação aplicada ao backfill de formato:
+  // o catálogo tem escrita concorrente, uma página curta pode ser "a tabela encolheu
+  // a meio", não "chegámos ao fim". Falha alto em vez de reportar um total incompleto.
+  const totalAtEnd = await prisma.catalogProduct.count({ where: { shop: SHOP } });
+  if (processed !== totalAtEnd) {
+    throw new Error(
+      `paginação incompleta: processados=${processed}, catálogo agora=${totalAtEnd} (era ${total} ao início) — corre outra vez`
+    );
+  }
+
   console.log(`\nprocessados: ${processed}  ·  cleanTitle ≠ title: ${changed}`);
+  console.log(`\n── alteradas por regra ──`);
+  for (const [rule, count] of [...ruleCounts.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${String(count).padStart(6)}  ${rule}`);
+  }
 }
 
 async function main() {
