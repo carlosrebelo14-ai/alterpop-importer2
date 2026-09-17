@@ -46,6 +46,56 @@ check("sem sinal nenhum → null", () => {
   assert.equal(extractProductFormat({}), null);
 });
 
+// R1 (auditoria live, 17/09/2026) — plural aceite, não só singular.
+check("R1 · plural 'figures' → Figure (caso real: pack Darth Vader & Luke Skywalker)", () => {
+  assert.equal(
+    extractProductFormat({ title: "POP pack 2 figures Star Wars Darth Vader & Luke Skywalker" }),
+    "Figure"
+  );
+});
+check("R1 · singular continua a bater (não regrediu)", () => {
+  assert.equal(extractProductFormat({ title: "POP figure One Piece Luffy" }), "Figure");
+});
+
+// R2 (auditoria live, 17/09/2026) — formato implícito pela manufacturer_line, só para
+// linhas confirmadas como sempre-figura, e só quando o título não dá formato nenhum.
+check("R2 · WCF (Banpresto, World Collectable Figure) sem a palavra 'figure' no título → Figure (caso real: Luffy Gear 5)", () => {
+  assert.equal(
+    extractProductFormat({ title: "One Piece Monkey D Luffy Gear 5 WCF Special 13cm", vendor: "Banpresto" }),
+    "Figure"
+  );
+});
+check("R2 · título já dá formato explícito vence sobre a linha implícita", () => {
+  assert.equal(
+    extractProductFormat({ title: "One Piece Luffy WCF figure 13cm", vendor: "Banpresto" }),
+    "Figure"
+  );
+});
+check("R2 · linha Tamashii (S.H.Figuarts) sem 'figure' no título → Figure", () => {
+  assert.equal(
+    extractProductFormat({ title: "Dragon Ball Z Goku S.H.Figuarts 15cm", vendor: "Tamashii Nations" }),
+    "Figure"
+  );
+});
+check("R2 · NECA Ultimate → Figure, mas outra linha NECA sem sinal fica null", () => {
+  assert.equal(extractProductFormat({ title: "Predator Ultimate 18cm", vendor: "NECA" }), "Figure");
+  assert.equal(extractProductFormat({ title: "Alien Kenner Tribute pack", vendor: "NECA" }), null);
+});
+check("R2 · McFarlane DC Multiverse → Figure, mas Theatrical Edition (fora da tabela) fica null", () => {
+  assert.equal(extractProductFormat({ title: "Batman DC Multiverse 18cm", vendor: "McFarlane Toys" }), "Figure");
+  assert.equal(extractProductFormat({ title: "Batman Theatrical Edition 18cm", vendor: "McFarlane Toys" }), null);
+});
+check("R2 · fabricante fora do mapa nunca infere formato", () => {
+  assert.equal(extractProductFormat({ title: "Something 13cm", vendor: "Desconhecido Ltd" }), null);
+});
+
+// R3 (auditoria live, 17/09/2026) — categoria nova (ex.: Doll) é decisão do Carlos, não
+// se inventa aqui. Enquanto FORMAT_CATEGORIES não tiver Doll, o caso real fica sem
+// formato — este teste documenta o comportamento atual, não fecha o caso.
+check("R3 · 'doll' sem categoria própria continua null até decisão do Carlos (caso real: Elsa doll)", () => {
+  assert.equal(extractProductFormat({ title: "Disney Frozen Tea set Elsa doll 38cm" }), null);
+});
+
 if (failures) {
   console.error(`\n${failures} falha(s)`);
   process.exit(1);

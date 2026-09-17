@@ -36,7 +36,7 @@ async function dryRunDistribution() {
   for (;;) {
     const rows = await prisma.catalogProduct.findMany({
       where: { shop: SHOP },
-      select: { sku: true, title: true },
+      select: { sku: true, title: true, vendor: true },
       orderBy: [{ shop: "asc" }, { sku: "asc" }],
       take: PAGE,
       ...(cursor ? { cursor: { shop_sku: cursor }, skip: 1 } : {}),
@@ -45,7 +45,7 @@ async function dryRunDistribution() {
 
     for (const r of rows) {
       scanned += 1;
-      const format = extractProductFormat({ title: r.title });
+      const format = extractProductFormat({ title: r.title, vendor: r.vendor || "" });
       const entry = counts.get(format);
       entry.count += 1;
       if (entry.samples.length < 5) entry.samples.push({ sku: r.sku, title: r.title });
@@ -83,7 +83,7 @@ async function execute() {
   for (;;) {
     const rows = await prisma.catalogProduct.findMany({
       where: { shop: SHOP },
-      select: { sku: true, title: true, resolvedFormat: true },
+      select: { sku: true, title: true, vendor: true, resolvedFormat: true },
       orderBy: [{ shop: "asc" }, { sku: "asc" }],
       take: PAGE,
       ...(cursor ? { cursor: { shop_sku: cursor }, skip: 1 } : {}),
@@ -92,7 +92,7 @@ async function execute() {
 
     const updates = [];
     for (const r of rows) {
-      const format = extractProductFormat({ title: r.title });
+      const format = extractProductFormat({ title: r.title, vendor: r.vendor || "" });
       if (r.resolvedFormat !== format) {
         changed += 1;
         updates.push(
