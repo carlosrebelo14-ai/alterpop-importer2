@@ -125,6 +125,13 @@ model CatalogProduct {
   // Alimenta o metafield alterpop.manufacturer_line. NULL até correr o backfill/dry-run
   // aprovado — mesmo padrão seguro do resolvedFormat (ADD COLUMN nullable puro).
   resolvedManufacturerLine String?
+  // B18 item 5 (briefing backend, 17/09/2026) — título como foi escrito no live pela
+  // última vez que o publisher chamou productUpdate com esse campo. Serve de "sabemos
+  // que fomos nós" para live-title-reconcile.js: se o título ATUAL na loja for
+  // diferente deste valor, foi o Carlos que editou à mão, e o reconciliador salta o
+  // produto em vez de sobrescrever uma edição manual. NULL nos produtos ainda nunca
+  // publicados por este caminho — mesmo padrão nullable puro dos campos acima.
+  lastPublishedTitle String?
   indexedAt        DateTime @default(now())
 
   @@id([shop, sku])
