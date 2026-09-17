@@ -19,7 +19,7 @@ const shopify = shopifyApp({
   apiVersion: ApiVersion.October25,
   scopes: (
     process.env.SCOPES ||
-    "read_products,write_products,read_inventory,write_inventory,read_locations,read_orders,read_customers,write_customers,read_publications,write_publications"
+    "read_products,write_products,read_inventory,write_inventory,read_locations,read_orders,read_customers,write_customers,read_publications,write_publications,read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects"
   )
     .split(",")
     .map((s) => s.trim())
