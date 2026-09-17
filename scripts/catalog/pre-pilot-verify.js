@@ -14,7 +14,7 @@
  * V2 e V4 ficaram vermelhas para sempre: medem loja vazia e fila sem publicações, que
  * são pré-condições de um momento que já passou. Fixar o esperado em 8 só adiava o
  * problema até ao nono produto.
- *   SAÚDE CORRENTE (V3, V5–V11, V13), por omissão — invariantes que têm de valer sempre, em
+ *   SAÚDE CORRENTE (V3, V5–V13), por omissão — invariantes que têm de valer sempre, em
  *     qualquer altura da vida da loja. É este que se corre de rotina.
  *   HISTÓRICO (V1, V2, V4), só com `--pre-wipe` — pré-condições da Tarefa 48, verdadeiras
  *     entre o wipe e o primeiro publish. Guardadas para poderem voltar a servir se
@@ -79,8 +79,14 @@
  *       {UNIVERSE_TEMPLATE_SUFFIX, LINE_TEMPLATE_SUFFIX} — as únicas que a guarda
  *       (V9) e a tabela de franquias realmente governam.
  *
+ * B7 (briefing backend, 17/09/2026) — V12: para cada Character ACTIVE, `products` do
+ * metaobject tem de ser exatamente o conjunto de produtos ACTIVE cujo `alterpop.character`
+ * o contém (secção 6 do arranque). Vermelho de verdade, não amarelo — os dois campos são
+ * escritos na MESMA corrida do character-pages-sync.js; uma divergência aqui só acontece
+ * se algo escreveu um dos dois lados sem o outro. Sem Character ACTIVE ainda, é informativo.
+ *
  * Correr na Fly:
- *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V11, V13)
+ *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V13)
  *   node scripts/catalog/pre-pilot-verify.js --pre-wipe   # + histórico (V1, V2, V4)
  *   node scripts/catalog/pre-pilot-verify.js --aceitar-base  # aceita descida legítima
  */
@@ -107,6 +113,7 @@ import {
   ALTERPOP_FORMAT_DEFINITION_GID,
   ALTERPOP_MANUFACTURER_LINE_DEFINITION_GID,
 } from "../../lib/importer/shopify/franchiseMetafieldDefinition.js";
+import { CHARACTER_METAOBJECT_TYPE } from "../../lib/importer/shopify/characterMetaobjectSetup.js";
 
 const GOVERNED_TEMPLATE_SUFFIXES = new Set([UNIVERSE_TEMPLATE_SUFFIX, LINE_TEMPLATE_SUFFIX]);
 
@@ -137,6 +144,34 @@ const COLLECTIONS_PAGE_QUERY = `
   }
 `;
 
+/** V12 — metaobjects `character` ACTIVE, com o campo `products`. */
+const ACTIVE_CHARACTER_METAOBJECTS_QUERY = `
+  query ActiveCharacterMetaobjects($type: String!, $cursor: String) {
+    metaobjects(type: $type, first: 250, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id
+        handle
+        capabilities { publishable { status } }
+        productsField: field(key: "products") { value }
+      }
+    }
+  }
+`;
+
+/** V12 — produtos ACTIVE com o valor atual de alterpop.character. */
+const ACTIVE_PRODUCTS_CHARACTER_QUERY = `
+  query ActiveProductsCharacter($cursor: String) {
+    products(first: 250, after: $cursor, query: "status:active") {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id
+        characterField: metafield(namespace: "alterpop", key: "character") { value }
+      }
+    }
+  }
+`;
+
 /** Tarefa 49 — só conta coleções que a tabela de franquias governa (universo/line).
  *  Coleções fora do âmbito (ex.: new-arrivals) ficam de fora por desenho. */
 async function countGovernedCollections(client) {
@@ -152,6 +187,63 @@ async function countGovernedCollections(client) {
     cursor = conn.pageInfo.endCursor;
   }
   return count;
+}
+
+/** V12 (B7, secção 6 do arranque, 17/09/2026) — para cada Character ACTIVE, o conjunto em
+ *  `products` tem de ser igual ao conjunto de produtos ACTIVE cujo `alterpop.character` o
+ *  contém. Qualquer diferença é o metaobject e o metafield a divergir — nunca deveriam,
+ *  porque character-pages-sync.js escreve os dois na mesma corrida. */
+async function checkCharacterProductsInvariant(client) {
+  const activeCharacters = new Map(); // handle -> { id, products: Set<gid> }
+  let cursor = null;
+  for (;;) {
+    const data = await client.graphql(ACTIVE_CHARACTER_METAOBJECTS_QUERY, { type: CHARACTER_METAOBJECT_TYPE, cursor });
+    const conn = data?.metaobjects;
+    for (const n of conn?.nodes || []) {
+      if (n.capabilities?.publishable?.status !== "ACTIVE") continue;
+      let products = [];
+      try {
+        products = JSON.parse(n.productsField?.value || "[]");
+      } catch {
+        products = [];
+      }
+      activeCharacters.set(n.handle, { id: n.id, products: new Set(products) });
+    }
+    if (!conn?.pageInfo?.hasNextPage) break;
+    cursor = conn.pageInfo.endCursor;
+  }
+
+  const actualByCharacterGid = new Map(); // metaobject gid -> Set<product gid>
+  cursor = null;
+  for (;;) {
+    const data = await client.graphql(ACTIVE_PRODUCTS_CHARACTER_QUERY, { cursor });
+    const conn = data?.products;
+    for (const n of conn?.nodes || []) {
+      let refs = [];
+      try {
+        refs = JSON.parse(n.characterField?.value || "[]");
+      } catch {
+        refs = [];
+      }
+      for (const ref of refs) {
+        if (!actualByCharacterGid.has(ref)) actualByCharacterGid.set(ref, new Set());
+        actualByCharacterGid.get(ref).add(n.id);
+      }
+    }
+    if (!conn?.pageInfo?.hasNextPage) break;
+    cursor = conn.pageInfo.endCursor;
+  }
+
+  const divergencias = [];
+  for (const [handle, character] of activeCharacters) {
+    const actual = actualByCharacterGid.get(character.id) || new Set();
+    const soNoMetaobject = [...character.products].filter((p) => !actual.has(p));
+    const soNoMetafield = [...actual].filter((p) => !character.products.has(p));
+    if (soNoMetaobject.length || soNoMetafield.length) {
+      divergencias.push({ handle, soNoMetaobject, soNoMetafield });
+    }
+  }
+  return { totalActive: activeCharacters.size, divergencias };
 }
 
 /** Estado entre corridas — só o que o V5/V7 precisam de comparar com a corrida anterior. */
@@ -207,7 +299,7 @@ function horasDesde(iso) {
 
 async function main() {
   console.log(
-    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V11, V13)" : "saúde corrente (V3, V5–V11, V13)"} ===\n`
+    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V13)" : "saúde corrente (V3, V5–V13)"} ===\n`
   );
 
   const session = await loadOfflineSessionForShop(SHOP);
@@ -426,6 +518,28 @@ async function main() {
       `${v13State.blocked.length} produto(s): ${lista}`,
       false
     );
+  }
+
+  // V12 (B7, secção 6) — invariante products (metaobject) == produtos com alterpop.character.
+  const v12 = await checkCharacterProductsInvariant(client);
+  if (v12.totalActive === 0) {
+    info("V12", "Characters ACTIVE × alterpop.character (produtos)", "sem Character ACTIVE ainda");
+  } else {
+    check(
+      "V12",
+      `products do metaobject == produtos com alterpop.character (${v12.totalActive} Character(s) ACTIVE)`,
+      "0 divergência(s)",
+      `${v12.divergencias.length} divergência(s)`,
+      v12.divergencias.length === 0
+    );
+    for (const d of v12.divergencias) {
+      if (d.soNoMetaobject.length) {
+        console.log(`      ${d.handle}: só no metaobject (produto sem alterpop.character): ${d.soNoMetaobject.join(", ")}`);
+      }
+      if (d.soNoMetafield.length) {
+        console.log(`      ${d.handle}: só no alterpop.character (fora de products): ${d.soNoMetafield.join(", ")}`);
+      }
+    }
   }
 
   console.log(``);
