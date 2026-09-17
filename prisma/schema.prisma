@@ -132,6 +132,12 @@ model CatalogProduct {
   // produto em vez de sobrescrever uma edição manual. NULL nos produtos ainda nunca
   // publicados por este caminho — mesmo padrão nullable puro dos campos acima.
   lastPublishedTitle String?
+  // B7 (briefing backend, 17/09/2026) — characterResolver.server.js. Lista de handles de
+  // Character (ex.: ["luke-skywalker","grogu"]), serializada em JSON, na ordem em que
+  // aparecem no título. NULL quando nenhum nome do vocabulário bate — ADD COLUMN
+  // nullable puro, mesmo padrão seguro do resolvedFormat/resolvedManufacturerLine (sem
+  // @default, para não repetir o incidente da Tarefa 27/Decisão 13).
+  resolvedCharacters String?
   indexedAt        DateTime @default(now())
 
   @@id([shop, sku])
