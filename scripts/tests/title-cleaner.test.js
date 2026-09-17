@@ -117,6 +117,21 @@ check("averbamento à Decisão 17 · Assorted/Latino saem sem guarda (ruído, n�
   );
 });
 
+check("B18 item 5 · caso real — 'Rides' sai mesmo com resolvedFormat preenchido (SKU 889698744041)", () => {
+  // Bug encontrado na auditoria live de 17/09/2026: quando resolvedFormat estava
+  // preenchido, o laço só tentava FORMAT_PREFIXES — "POP figure" saía na 1.ª passagem,
+  // mas "Rides" (só em NOISE_PREFIXES) já não saía na 2.ª, e o título ficava com o
+  // resíduo. NOISE_PREFIXES tem de se tentar em toda passagem, independente da guarda.
+  assert.equal(
+    cleanProductTitle({
+      title: "POP figure Rides Star Wars Luke Skywalker in T-47 Airspeeder Exclusive",
+      resolvedFranchise: "Star Wars",
+      resolvedFormat: "Figure",
+    }),
+    "Star Wars Luke Skywalker in T-47 Airspeeder Exclusive"
+  );
+});
+
 check("remove preço/moeda embutido", () => {
   assert.equal(
     cleanProductTitle({ title: "Star Wars Darth Vader figure 12,99€", resolvedFranchise: "Star Wars" }),
