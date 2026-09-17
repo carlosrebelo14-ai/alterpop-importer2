@@ -23,6 +23,7 @@ import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { buildPublishPayload } from "../../lib/importer/shopify/shopifyMapper.server.js";
 import { runPrePublishChecks, checkTitleDuplicate } from "../../lib/importer/curation/prePublishChecks.server.js";
 import { computeLiveDrift } from "../../lib/importer/curation/liveDrift.server.js";
+import { isWarningAccepted } from "../../lib/importer/curation/acceptedWarnings.js";
 
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
 
@@ -150,8 +151,13 @@ async function main() {
     }
   }
 
+  // ADENDA 8 (17/09/2026) — avisos que o Carlos já viu e aceitou, SKU a SKU, não
+  // entram na auditoria. O mesmo código noutro SKU continua a contar normalmente.
+  const accepted = findings.filter((f) => isWarningAccepted(f.sku, f.code));
+  const reportable = findings.filter((f) => !isWarningAccepted(f.sku, f.code));
+
   const byCode = new Map();
-  for (const f of findings) {
+  for (const f of reportable) {
     if (!byCode.has(f.code)) byCode.set(f.code, []);
     byCode.get(f.code).push(f);
   }
@@ -170,8 +176,12 @@ async function main() {
     }
   }
 
+  if (accepted.length) {
+    console.log(`\n(${accepted.length} aviso(s) aceite(s) pelo Carlos, fora da lista acima: ${accepted.map((f) => `${f.sku}.${f.code}`).join(", ")})`);
+  }
+
   console.log(
-    `\n=== DONE. produtos_active=${activeNodes.length} auditados=${activeNodes.length - skippedNoCatalogRow} sem_linha_prisma=${skippedNoCatalogRow} findings=${findings.length} ===`
+    `\n=== DONE. produtos_active=${activeNodes.length} auditados=${activeNodes.length - skippedNoCatalogRow} sem_linha_prisma=${skippedNoCatalogRow} findings=${reportable.length} ===`
   );
 }
 
