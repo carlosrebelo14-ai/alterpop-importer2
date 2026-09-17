@@ -55,6 +55,16 @@ async function dryRunDistribution() {
     if (rows.length < PAGE) break;
   }
 
+  // P1 (ADENDA 3, 17/09/2026) — mesma verificação aplicada ao backfill de formato/
+  // título: o catálogo tem escrita concorrente, uma página curta pode ser "a tabela
+  // encolheu a meio", não "chegámos ao fim". Falha alto em vez de reportar incompleto.
+  const totalAtEnd = await prisma.catalogProduct.count({ where: { shop: SHOP } });
+  if (scanned !== totalAtEnd) {
+    throw new Error(
+      `paginação incompleta: analisados=${scanned}, catálogo agora=${totalAtEnd} (era ${total} ao início) — corre outra vez`
+    );
+  }
+
   console.log(`produtos analisados: ${scanned} (catálogo: ${total})\n`);
   console.log(`  ${"contagem".padStart(8)}  ${"%".padStart(6)}  linha`);
   const sorted = [...counts.entries()].sort((a, b) => b[1].count - a[1].count);
@@ -109,6 +119,13 @@ async function execute() {
     cursor = { shop: SHOP, sku: rows[rows.length - 1].sku };
     if (processed % 5000 === 0 || rows.length < PAGE) console.log(`  ${processed}/${total}…`);
     if (rows.length < PAGE) break;
+  }
+
+  const totalAtEnd = await prisma.catalogProduct.count({ where: { shop: SHOP } });
+  if (processed !== totalAtEnd) {
+    throw new Error(
+      `paginação incompleta: processados=${processed}, catálogo agora=${totalAtEnd} (era ${total} ao início) — corre outra vez`
+    );
   }
 
   console.log(`\nprocessados: ${processed}  ·  resolvedManufacturerLine alterado: ${changed}`);
