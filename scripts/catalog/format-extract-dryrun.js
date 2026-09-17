@@ -55,6 +55,18 @@ async function dryRunDistribution() {
     if (rows.length < PAGE) break;
   }
 
+  // P1 (ADENDA 3, 17/09/2026) — a paginação por cursor parou aos 2000/25562 sem
+  // avisar: o catálogo tem escrita concorrente (sync em background), e uma página que
+  // devolve menos que PAGE por essa razão parece indistinguível de "é a última página".
+  // "0 alterados" sem esta verificação não prova nada. Falha alto em vez de mentir que
+  // acabou — o operador corre outra vez.
+  const totalAtEnd = await prisma.catalogProduct.count({ where: { shop: SHOP } });
+  if (scanned !== totalAtEnd) {
+    throw new Error(
+      `paginação incompleta: analisados=${scanned}, catálogo agora=${totalAtEnd} (era ${total} ao início) — corre outra vez`
+    );
+  }
+
   console.log(`produtos analisados: ${scanned} (catálogo: ${total})\n`);
   console.log(`  ${"contagem".padStart(8)}  ${"%".padStart(6)}  formato`);
   const sorted = [...counts.entries()].sort((a, b) => b[1].count - a[1].count);
@@ -106,6 +118,17 @@ async function execute() {
     cursor = { shop: SHOP, sku: rows[rows.length - 1].sku };
     if (processed % 5000 === 0 || rows.length < PAGE) console.log(`  ${processed}/${total}…`);
     if (rows.length < PAGE) break;
+  }
+
+  // P1 (ADENDA 3, 17/09/2026) — mesma verificação do dry-run. A corrida anterior
+  // reportou "processados: 12967 · alterado: 0" sem cobrir o catálogo inteiro —
+  // parecia terminada e não estava. Compara contra a contagem NO FIM (o catálogo muda
+  // enquanto o script corre) e falha alto em vez de reportar sucesso silencioso.
+  const totalAtEnd = await prisma.catalogProduct.count({ where: { shop: SHOP } });
+  if (processed !== totalAtEnd) {
+    throw new Error(
+      `paginação incompleta: processados=${processed}, catálogo agora=${totalAtEnd} (era ${total} ao início) — corre outra vez`
+    );
   }
 
   console.log(`\nprocessados: ${processed}  ·  resolvedFormat alterado: ${changed}`);

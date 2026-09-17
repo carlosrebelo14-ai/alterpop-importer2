@@ -4,7 +4,11 @@
  * Uso: node scripts/tests/format-extractor.test.js
  */
 import assert from "node:assert/strict";
-import { extractProductFormat } from "../../lib/importer/catalog/formatExtractor.server.js";
+import {
+  extractProductFormat,
+  FORMAT_VALUES,
+  APPROVED_FORMAT_VALUES,
+} from "../../lib/importer/catalog/formatExtractor.server.js";
 
 let failures = 0;
 function check(name, fn) {
@@ -89,11 +93,27 @@ check("R2 · fabricante fora do mapa nunca infere formato", () => {
   assert.equal(extractProductFormat({ title: "Something 13cm", vendor: "Desconhecido Ltd" }), null);
 });
 
-// R3 (auditoria live, 17/09/2026) — categoria nova (ex.: Doll) é decisão do Carlos, não
-// se inventa aqui. Enquanto FORMAT_CATEGORIES não tiver Doll, o caso real fica sem
-// formato — este teste documenta o comportamento atual, não fecha o caso.
-check("R3 · 'doll' sem categoria própria continua null até decisão do Carlos (caso real: Elsa doll)", () => {
-  assert.equal(extractProductFormat({ title: "Disney Frozen Tea set Elsa doll 38cm" }), null);
+// R3/D2 (ADENDA 4, 17/09/2026) — o Carlos decidiu criar a categoria Doll. Substitui o
+// teste anterior (que documentava o null de propósito, antes da decisão).
+check("R3/D2 · 'doll' → Doll (caso real: Elsa doll, resolvido pela decisão do Carlos)", () => {
+  assert.equal(extractProductFormat({ title: "Disney Frozen Tea set Elsa doll 38cm" }), "Doll");
+});
+check("D2 · plural 'dolls' também bate (R1 continua a aplicar-se a Doll)", () => {
+  assert.equal(extractProductFormat({ title: "Barbie Fashionista assorted dolls" }), "Doll");
+});
+check("D2 · needle em espanhol do fornecedor ('muñeca')", () => {
+  assert.equal(extractProductFormat({ title: "Barbie Fashionista muñeca surtida" }), "Doll");
+});
+
+// D2 — auditoria de idioma: todos os VALORES de formato (não as needles) são em
+// inglês. Um valor fora da lista aprovada falha aqui, não só num relatório informal.
+check("D2 · FORMAT_VALUES nunca tem um valor fora da lista aprovada (auditoria de idioma)", () => {
+  for (const value of FORMAT_VALUES) {
+    assert.ok(
+      APPROVED_FORMAT_VALUES.includes(value),
+      `"${value}" não está em APPROVED_FORMAT_VALUES — decisão do Carlos em falta`
+    );
+  }
 });
 
 if (failures) {
