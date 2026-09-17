@@ -14,7 +14,7 @@
  * V2 e V4 ficaram vermelhas para sempre: medem loja vazia e fila sem publicações, que
  * são pré-condições de um momento que já passou. Fixar o esperado em 8 só adiava o
  * problema até ao nono produto.
- *   SAÚDE CORRENTE (V3, V5–V11), por omissão — invariantes que têm de valer sempre, em
+ *   SAÚDE CORRENTE (V3, V5–V11, V13), por omissão — invariantes que têm de valer sempre, em
  *     qualquer altura da vida da loja. É este que se corre de rotina.
  *   HISTÓRICO (V1, V2, V4), só com `--pre-wipe` — pré-condições da Tarefa 48, verdadeiras
  *     entre o wipe e o primeiro publish. Guardadas para poderem voltar a servir se
@@ -80,7 +80,7 @@
  *       (V9) e a tabela de franquias realmente governam.
  *
  * Correr na Fly:
- *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V11)
+ *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V11, V13)
  *   node scripts/catalog/pre-pilot-verify.js --pre-wipe   # + histórico (V1, V2, V4)
  *   node scripts/catalog/pre-pilot-verify.js --aceitar-base  # aceita descida legítima
  */
@@ -94,6 +94,7 @@ import {
   maxDe,
 } from "../../lib/health/gateState.server.js";
 import { planUniverseCollections } from "../../lib/importer/shopify/universeCollections.server.js";
+import { loadLiveDriftCycleState, MAX_AUTO_RECONCILE } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { listCurationQueueItems } from "../../lib/curation/curationQueue.server.js";
@@ -206,7 +207,7 @@ function horasDesde(iso) {
 
 async function main() {
   console.log(
-    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V11)" : "saúde corrente (V3, V5–V11)"} ===\n`
+    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V11, V13)" : "saúde corrente (V3, V5–V11, V13)"} ===\n`
   );
 
   const session = await loadOfflineSessionForShop(SHOP);
@@ -393,6 +394,38 @@ async function main() {
   );
   for (const d of titulosDivergentes) {
     console.log(`      ${d.handle}: tabela "${d.name}" · loja "${d.existing?.title}" — aplicar no admin`);
+  }
+
+  // V13 — drift alterpop.{franchise,line,format,manufacturer_line} entre o esperado
+  // (Prisma) e o real (Shopify), item 7 (ADENDA 7, 17/09/2026). Este script não corre o
+  // ciclo — só lê o último estado que trigger-sync gravou (liveDriftReconcileCycle.
+  // server.js) e reporta. Verde sem drift; amarelo com drift corrigido sozinho no ciclo
+  // (dentro do travão); vermelho quando o travão dispara — aí é fail de verdade, não só
+  // aviso, porque significa que ninguém corrigiu nada e a loja ficou com a lista toda
+  // por resolver.
+  const v13State = await loadLiveDriftCycleState();
+  if (!v13State) {
+    info("V13", "live-drift por ciclo", "sem estado — trigger-sync ainda não correu com esta versão");
+  } else if (v13State.status === "green") {
+    check("V13", `live-drift por ciclo (${v13State.ranAt})`, "0 produtos em drift", "0", true);
+  } else if (v13State.status === "yellow") {
+    const lista = v13State.corrected.map((c) => `${c.sku}.${c.field}`).join(", ");
+    warn(
+      "V13",
+      `live-drift por ciclo (${v13State.ranAt}) — corrigido sozinho`,
+      "0 produtos em drift",
+      `${v13State.corrected.length} corrigido(s): ${lista}`,
+      false
+    );
+  } else {
+    const lista = v13State.blocked.map((b) => b.sku).join(", ");
+    check(
+      "V13",
+      `live-drift por ciclo (${v13State.ranAt}) — TRAVÃO disparado (> ${MAX_AUTO_RECONCILE})`,
+      `≤ ${MAX_AUTO_RECONCILE} produtos em drift`,
+      `${v13State.blocked.length} produto(s): ${lista}`,
+      false
+    );
   }
 
   console.log(``);

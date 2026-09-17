@@ -14,6 +14,7 @@ import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient
 import { ensureOciostockMetafieldDefinitions } from "../../lib/importer/shopify/metafieldSetup.js";
 import { syncFranchiseCatalog } from "../../lib/importer/shopify/franchiseCatalogSync.server.js";
 import { syncNewArrivalsTag } from "../../lib/importer/shopify/newArrivalsSync.server.js";
+import { reconcileLiveDriftCycle } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
 
 /**
  * POST /api/trigger-sync — dispara indexação + publicação sem sessão OAuth.
@@ -230,6 +231,20 @@ export const action = async ({ request }) => {
         }
       } catch (err) {
         console.error("[trigger-sync] new-arrivals falhou:", err?.message || err);
+      }
+
+      // Item 7 (ADENDA 7, 17/09/2026) — reconciliador de drift alterpop.* por ciclo,
+      // V13. Só metafieldsSet, só alterpop.*, nunca título/preço/descrição. Travão
+      // MAX_AUTO_RECONCILE: acima disso não escreve nada, fica vermelho para um humano
+      // ver antes de qualquer escrita em massa. Nunca bloqueia o ciclo.
+      try {
+        const driftClient = createShopifyClientFromSession(session);
+        const driftResult = await reconcileLiveDriftCycle(driftClient, shop);
+        console.log(
+          `[trigger-sync] live-drift (V13): ${driftResult.status} — ${driftResult.corrected.length} corrigido(s), ${driftResult.blocked.length} bloqueado(s) pelo travão.`
+        );
+      } catch (err) {
+        console.error("[trigger-sync] live-drift (V13) falhou:", err?.message || err);
       }
     } catch (err) {
       console.error("[trigger-sync] ciclo falhou:", err?.message || err);
