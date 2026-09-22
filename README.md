@@ -21,7 +21,7 @@ cp .env.example .env   # if present; otherwise create .env
 | `OCIOSTOCK_CSV_URL` | OcioStock plain CSV export URL |
 | `TRANSLATION_PROVIDER` | `deepl` (recommended), `libretranslate`, or `passthrough` |
 | `TRANSLATION_API_KEY` | DeepL key — required for English product text |
-| `DRY_RUN` | `true` blocks live imports (keep on until ready) |
+| `DRY_RUN` | `true` blocks the **manual/CSV import** (`runImport` — `npm run import:live`, the background-job importer). Does **not** block the automated curation-approved publish (`shopifyApprovedSync.server.js`, run by `/api/trigger-sync` and `npm run sync:daemon`) — that path always publishes APPROVED items to Shopify live, regardless of this flag. See `.env.example`. |
 | `SHOPIFY_GRAPHQL_CONCURRENCY` | Max parallel GraphQL requests (default: 2) |
 | `SHOPIFY_GRAPHQL_MIN_MS` | Min ms between requests (default: 250) |
 
@@ -78,7 +78,7 @@ docs/                 OcioStock CSV mapping documentation
 - **GraphQL only** via `lib/importer/shopifyClient.js` with `p-limit` rate limiting and 429 backoff
 - **Pre-flight validation** in `lib/importer/validation/validateRecord.js`
 - **Category glossary** ES→EN before DeepL (`lib/importer/transform/categoryGlossary.js`)
-- **DRY_RUN** enforced in UI and blocked at engine level when `DRY_RUN=true` in `.env`
+- **DRY_RUN** enforced in UI and at engine level for the manual/CSV import path only (`runImport`) — the automated curation-approved publish (`shopifyApprovedSync.server.js`, sync daemon/trigger-sync) is gated by curation approval status, not by this flag; see the env table above
 
 ## OcioStock CSV
 

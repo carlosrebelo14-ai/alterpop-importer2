@@ -7,20 +7,22 @@ import {
 
 /**
  * GET /api/indexing-stream — Server-Sent Events do progresso de indexação.
+ *
+ * Fix de segurança (auditoria 2026-09-22) — esta rota costumava saltar
+ * authenticateAdmin sempre que o pedido trazia `?shop=`, usando esse valor tal e
+ * qual (não verificado) para decidir de que loja transmitir o estado de indexação.
+ * Isso permitia a qualquer pedido não autenticado (sem cookie, sem sessão) ler o
+ * progresso de indexação de OUTRA loja só por adivinhar o domínio .myshopify.com.
+ * A troca tinha sido feita (commit 4af563d) para contornar o EventSource nativo não
+ * conseguir seguir um redirect 302 de reautenticação — mas authenticateAdmin já
+ * suporta o caso: aceita o session token pelo parâmetro de URL `id_token`, não só
+ * pelo cabeçalho Authorization (que o EventSource não consegue definir). O
+ * frontend passa a pedir esse token à App Bridge (`shopify.idToken()`) e anexá-lo
+ * ao URL — autenticado, sem custom headers e sem o problema do redirect.
  */
 export async function loader({ request }) {
-  const url = new URL(request.url);
-  let shop = url.searchParams.get("shop");
-
-  if (!shop) {
-    try {
-      const { session } = await authenticateAdmin(request);
-      shop = session?.shop;
-    } catch {
-      shop = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
-    }
-  }
-  if (!shop) shop = "jyr17t-wr.myshopify.com";
+  const { session } = await authenticateAdmin(request);
+  const shop = session.shop;
 
   const encoder = new TextEncoder();
 

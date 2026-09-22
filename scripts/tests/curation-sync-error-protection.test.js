@@ -39,9 +39,13 @@ fs.writeFileSync(
   })
 );
 
-const { upsertCurationQueueFromRecord, listCurationQueueItems, bulkSetQueueStatus } = await import(
-  "../../lib/curation/curationQueue.server.js"
-);
+const {
+  upsertCurationQueueFromRecord,
+  upsertCurationQueueBatchFromRecords,
+  listCurationQueueItems,
+  bulkSetQueueStatus,
+  invalidateCurationMemoryCache,
+} = await import("../../lib/curation/curationQueue.server.js");
 
 let failures = 0;
 async function check(name, fn) {
@@ -92,6 +96,39 @@ async function main() {
     });
     const item = (await listCurationQueueItems()).find((i) => i.sku === "probe-sync-error-1");
     assert.equal(item.status, "APPROVED");
+  });
+
+  await check("auditoria 2026-09-22 — o caminho batch (usado pelo reindex de 45 min via syncCatalogWithProgress) também preserva SYNC_ERROR", async () => {
+    // upsertCurationQueueBatchFromRecords tinha o MESMO bug que a Tarefa 53 corrigiu no
+    // caminho single-record: `if (existing.status === "APPROVED" || ... )` sem SYNC_ERROR
+    // na lista — o item caía no `else` e era recalculado pelas regras automáticas.
+    // SKU dedicado (não reaproveita probe-sync-error-1) para não depender do estado que
+    // os checks anteriores já deixaram nesse item.
+    const queue = JSON.parse(fs.readFileSync(QUEUE_PATH, "utf8"));
+    queue.items.push({
+      sku: "probe-sync-error-batch-1",
+      title_en: "Probe Batch Product",
+      status: "SYNC_ERROR",
+      reason: "sync_error",
+      shopifyStatus: "DRAFT",
+      metadata: { syncError: "Falha ao publicar (probe batch)", syncErrorAt: "2026-09-22T00:00:00Z" },
+    });
+    fs.writeFileSync(QUEUE_PATH, JSON.stringify(queue));
+    invalidateCurationMemoryCache();
+
+    await upsertCurationQueueBatchFromRecords([
+      {
+        sku: "probe-sync-error-batch-1",
+        title: "Probe Batch Product",
+        vendor: "TESTVENDOR",
+        categoryMain: "Toys",
+        netPrice: 10,
+        grossPrice: 12,
+      },
+    ]);
+    const item = (await listCurationQueueItems()).find((i) => i.sku === "probe-sync-error-batch-1");
+    assert.equal(item.status, "SYNC_ERROR");
+    assert.equal(item.metadata.syncError, "Falha ao publicar (probe batch)");
   });
 
   fs.rmSync(tmpDir, { recursive: true, force: true });

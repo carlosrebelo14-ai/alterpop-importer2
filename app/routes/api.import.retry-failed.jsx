@@ -13,8 +13,13 @@ export const action = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
   const form = await request.formData();
   const jobId = form.get("jobId");
-  if (!jobId) {
-    return Response.json({ ok: false, error: "jobId obrigatório" }, { status: 400 });
+  // Mesma validação de api.import.results.$jobId.summary.jsx — auditoria 2026-09-22
+  // encontrou este route a faltar-lhe: jobId vinha direto do form para um path.join()
+  // sem verificar ".." (path traversal — um caller autenticado podia ler
+  // failed(-batches).json de outro diretório qualquer e disparar um import a partir
+  // da lista de SKUs de lá, sem qualquer verificação de que o job pertence a este shop).
+  if (!jobId || String(jobId).includes("..")) {
+    return Response.json({ ok: false, error: "jobId inválido" }, { status: 400 });
   }
 
   const resultsDir = path.join(getDefaultConfig().paths.results, String(jobId));

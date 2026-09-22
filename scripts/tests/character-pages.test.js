@@ -35,13 +35,27 @@ check("chega a 3, sem metaobject prévio -> create", () => {
   assert.equal(a.universo, "One Piece");
 });
 
-check("já ACTIVE, continua em 3+ -> update", () => {
+check("já ACTIVE, continua em 3+, composição de produtos mudou -> update", () => {
   const actions = planCharacterMetaobjects({
-    liveCounts: new Map([["luffy", { universo: "One Piece", productSkus: ["a", "b", "c", "d"] }]]),
-    existing: new Map([["luffy", { id: "gid://shopify/Metaobject/1", status: "ACTIVE" }]]),
+    liveCounts: new Map([["luffy", { universo: "One Piece", productSkus: ["a", "b", "c", "d"], productIds: ["gid://shopify/Product/1", "gid://shopify/Product/2", "gid://shopify/Product/3", "gid://shopify/Product/4"] }]]),
+    existing: new Map([["luffy", { id: "gid://shopify/Metaobject/1", status: "ACTIVE", productIds: ["gid://shopify/Product/1", "gid://shopify/Product/2", "gid://shopify/Product/3"] }]]),
   });
   const a = actions.find((x) => x.handle === "luffy");
   assert.equal(a.action, "update");
+});
+
+check("auditoria 2026-09-22 — já ACTIVE, continua em 3+, MESMA composição de produtos -> skip (não update)", () => {
+  // Bug: antes desta correção, este caso reemitia "update" em TODOS os ciclos,
+  // mesmo sem nenhuma mudança real — o que acumulava "changing" sem fim no travão
+  // de characterPagesReconcileCycle.server.js (MAX_CHARACTER_CHANGES_PER_CYCLE).
+  const sameIds = ["gid://shopify/Product/1", "gid://shopify/Product/2", "gid://shopify/Product/3", "gid://shopify/Product/4"];
+  const actions = planCharacterMetaobjects({
+    liveCounts: new Map([["luffy", { universo: "One Piece", productSkus: ["a", "b", "c", "d"], productIds: sameIds }]]),
+    // Ordem diferente de propósito — a comparação tem de ser por conjunto, não por ordem.
+    existing: new Map([["luffy", { id: "gid://shopify/Metaobject/1", status: "ACTIVE", productIds: [...sameIds].reverse() }]]),
+  });
+  const a = actions.find((x) => x.handle === "luffy");
+  assert.equal(a.action, "skip");
 });
 
 check("já DRAFT, volta a bater o limiar -> reactivate", () => {

@@ -447,37 +447,56 @@ export default function CurationDashboard() {
   useEffect(() => {
     if (!indexingActive) return;
 
-    const shopParam = loaderData?.shop ? `?shop=${encodeURIComponent(loaderData.shop)}` : "";
-    const es = new EventSource(`/api/indexing-stream${shopParam}`, { withCredentials: true });
-    
-    es.onmessage = (ev) => {
+    // Fix de segurança (auditoria 2026-09-22) — a rota deixou de aceitar `?shop=` não
+    // autenticado; o EventSource passa a autenticar-se com o session token da App
+    // Bridge (id_token), o mesmo mecanismo que authenticateAdmin já suporta para
+    // pedidos que não conseguem definir o cabeçalho Authorization.
+    let cancelled = false;
+    let es = null;
+
+    async function connect() {
+      let idToken;
       try {
-        const data = JSON.parse(ev.data);
-        if (data.type === "progress" || data.type === "status" || data.type === "done") {
-          const currentScanned = data.scanned ?? data.totalLinesRead ?? data.checkpointScanned ?? 0;
-          const currentIndexed = data.indexed ?? data.totalImported ?? data.checkpointIndexed ?? data.totalRows ?? 0;
-          
-          if (currentIndexed > 0 || currentScanned > 0) {
-            setStreamStats({ scanned: currentScanned, indexed: currentIndexed });
-            setDashboardStats(prev => ({
-              ...prev,
-              totalIndexed: currentIndexed
-            }));
-          }
-          
-          if (data.state === "completed" || data.type === "done") {
-            setIndexingActive(false);
-          }
-        }
-      } catch (err) {
-        // ignore
+        idToken = await shopify.idToken();
+      } catch {
+        return; // sem App Bridge/sessão válida — não há como abrir o stream autenticado
       }
-    };
+      if (cancelled) return;
+
+      es = new EventSource(`/api/indexing-stream?id_token=${encodeURIComponent(idToken)}`, { withCredentials: true });
+
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.type === "progress" || data.type === "status" || data.type === "done") {
+            const currentScanned = data.scanned ?? data.totalLinesRead ?? data.checkpointScanned ?? 0;
+            const currentIndexed = data.indexed ?? data.totalImported ?? data.checkpointIndexed ?? data.totalRows ?? 0;
+
+            if (currentIndexed > 0 || currentScanned > 0) {
+              setStreamStats({ scanned: currentScanned, indexed: currentIndexed });
+              setDashboardStats(prev => ({
+                ...prev,
+                totalIndexed: currentIndexed
+              }));
+            }
+
+            if (data.state === "completed" || data.type === "done") {
+              setIndexingActive(false);
+            }
+          }
+        } catch (err) {
+          // ignore
+        }
+      };
+    }
+
+    connect();
 
     return () => {
-      es.close();
+      cancelled = true;
+      es?.close();
     };
-  }, [indexingActive, loaderData?.shop]);
+  }, [indexingActive, shopify]);
 
   useEffect(() => {
     let cancelled = false;

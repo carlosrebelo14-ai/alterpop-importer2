@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { Text, BlockStack, InlineStack, Box, Button } from "@shopify/polaris";
 import { CatalogProductThumbnail } from "./CatalogProductThumbnail.jsx";
 import { IndexingAuditReport } from "./IndexingAuditReport.jsx";
@@ -19,7 +20,6 @@ export function IndexingRadarSheet({
   onIndexingComplete,
   onReindexCatalog,
   onPauseIndexing,
-  shop = "",
 }) {
   const [items, setItems] = useState([]);
   const [indexed, setIndexed] = useState(0);
@@ -28,15 +28,25 @@ export function IndexingRadarSheet({
   const [connected, setConnected] = useState(false);
   const [auditReport, setAuditReport] = useState(null);
   const esRef = useRef(null);
+  const shopify = useAppBridge();
 
-  const connectStream = useCallback(() => {
+  const connectStream = useCallback(async () => {
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
     }
 
-    const shopParam = shop ? `?shop=${encodeURIComponent(shop)}` : "";
-    const es = new EventSource(`/api/indexing-stream${shopParam}`, { withCredentials: true });
+    // Fix de segurança (auditoria 2026-09-22) — ver app._index.jsx: autentica-se com
+    // o session token da App Bridge (id_token) em vez do `shop` não verificado, que
+    // deixava a rota /api/indexing-stream abrir a stream de qualquer loja sem sessão.
+    let idToken;
+    try {
+      idToken = await shopify.idToken();
+    } catch {
+      return; // sem App Bridge/sessão válida — não há como abrir o stream autenticado
+    }
+
+    const es = new EventSource(`/api/indexing-stream?id_token=${encodeURIComponent(idToken)}`, { withCredentials: true });
     esRef.current = es;
 
     es.onopen = () => setConnected(true);
@@ -123,7 +133,7 @@ export function IndexingRadarSheet({
         onIndexingChange?.(false);
       }
     };
-  }, [onIndexingChange, onIndexingComplete]);
+  }, [onIndexingChange, onIndexingComplete, shopify]);
 
   useEffect(() => {
     connectStream();

@@ -103,18 +103,18 @@ Legenda: `[x]` feito · `[ ]` pendente · `[~]` parcial
 
 | Ficheiro | Vestígio | Ação |
 |----------|---------|------|
-| [`.env`](../.env) | `SHOPIFY_REDIRECT_URI=http://localhost:3456/auth/callback` | `[ ]` Remover linhas OAuth legado (manter só keys + CSV + translation + rate limit) |
-| [`.env.save`](../.env.save) | Idem + possíveis secrets | `[ ]` Apagar ficheiro ou alinhar com `.env.example`; já coberto por `.gitignore` `.env*` |
+| `.env` | ~~`SHOPIFY_REDIRECT_URI=http://localhost:3456/auth/callback`~~ | `[x]` Ficheiro já não existe no repo (confirmado em auditoria, 2026-09-22) |
+| `.env.save` | ~~Idem + possíveis secrets~~ | `[x]` Ficheiro já não existe no repo (confirmado em auditoria, 2026-09-22) |
 | [`.env.example`](../.env.example) | Limpo | `[x]` |
 | [`shopify.app.toml`](../shopify.app.toml) | `redirect_urls = []` (CLI gere em dev) | `[x]` |
-| [`.shopify/deploy-bundle/manifest 2.json`](../.shopify/deploy-bundle/manifest%202.json) | `localhost:3456`, URLs antigas | `[ ]` Regenerar com `shopify app deploy` ou apagar artefacto stale |
+| `.shopify/deploy-bundle/manifest 2.json` | ~~`localhost:3456`, URLs antigas~~ | `[x]` Artefacto stale já não existe — só `.shopify/deploy-bundle/manifest.json` (confirmado em auditoria, 2026-09-22) |
 | [`SHOPIFY-CLI.md`](../SHOPIFY-CLI.md) | Menções a `localhost:3456` como anti-padrão | `[~]` OK como troubleshooting; opcional simplificar |
 | [`README.md`](../README.md) | Referência OAuth embedded | `[x]` correto |
 
 **Checklist segurança**
 
 - `[x]` `.env*` no `.gitignore` (exceto `.env.example`)
-- `[ ]` Confirmar que `.env` / `.env.save` nunca foram commitados (`git log -- .env`)
+- `[x]` Confirmado (auditoria 2026-09-22): `git log --all -- .env .env.save` não devolve nada — nunca foram commitados
 - `[ ]` Rotacionar `SHOPIFY_API_SECRET` se alguma vez partilhado em chat/logs
 
 ---
