@@ -31,12 +31,18 @@ async function checkAsync(name, fn) {
   }
 }
 
+const VALID_PUB_ID = "gid://shopify/Publication/1";
+
 /** Client falso: sem coleções existentes (tudo cai em toCreate), collectionCreate
- *  devolve sucesso e regista o input recebido. */
-function makeFakeClient() {
+ *  devolve sucesso e regista o input recebido. Também responde às queries de
+ *  checkCyclePreconditions e ao publishablePublish (collectionPublication.server.js),
+ *  chamados por createUniverseCollections depois de cada criação. */
+function makeFakeClient({ preconditionsOk = true } = {}) {
   const createCalls = [];
+  const publishCalls = [];
   return {
     createCalls,
+    publishCalls,
     async graphql(query, variables) {
       if (query.includes("UniverseCollExisting")) {
         return { collections: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } };
@@ -45,10 +51,31 @@ function makeFakeClient() {
         createCalls.push(variables.input);
         return {
           collectionCreate: {
-            collection: { id: `gid://shopify/Collection/${createCalls.length}`, handle: variables.input.handle, title: variables.input.title },
+            collection: {
+              id: `gid://shopify/Collection/${createCalls.length}`,
+              handle: variables.input.handle,
+              title: variables.input.title,
+              templateSuffix: variables.input.templateSuffix,
+            },
             userErrors: [],
           },
         };
+      }
+      if (query.includes("CollPubAccessScopes")) {
+        return {
+          currentAppInstallation: {
+            accessScopes: preconditionsOk
+              ? [{ handle: "read_publications" }, { handle: "write_publications" }]
+              : [],
+          },
+        };
+      }
+      if (query.includes("CollPubPublications")) {
+        return { publications: { nodes: preconditionsOk ? [{ id: VALID_PUB_ID, name: "Online Store" }] : [] } };
+      }
+      if (query.includes("CollPubPublish")) {
+        publishCalls.push(variables);
+        return { publishablePublish: { userErrors: [] } };
       }
       throw new Error(`query inesperada no fake client: ${query.slice(0, 60)}`);
     },
@@ -81,6 +108,45 @@ await checkAsync("createUniverseCollections — falha se a criação escrever qu
       `collectionCreate para "${input.title}" escreveu um placeholder interno: "${html}"`
     );
   }
+});
+
+// ── publicação na criação (B14, 24/09/2026, secção 6) ──
+
+await checkAsync(
+  "createUniverseCollections — chama publishCollectionOnCreation depois de cada criação (regressão: falha se a chamada for removida)",
+  async () => {
+    const client = makeFakeClient();
+    const { created } = await createUniverseCollections(client, { publicationId: VALID_PUB_ID });
+    const openCreated = created.filter((c) => c.handle !== "zelda" && c.handle !== "studio-ghibli");
+
+    assert.ok(
+      client.publishCalls.length > 0,
+      "publishablePublish nunca foi chamado — createUniverseCollections deixou de publicar na criação"
+    );
+    assert.equal(client.publishCalls.length, openCreated.length);
+  }
+);
+
+await checkAsync("createUniverseCollections — universo closed (zelda, studio-ghibli): cria a coleção, nunca publica", async () => {
+  const client = makeFakeClient();
+  const { created } = await createUniverseCollections(client, { publicationId: VALID_PUB_ID });
+
+  assert.ok(created.some((c) => c.handle === "zelda"));
+  assert.ok(created.some((c) => c.handle === "studio-ghibli"));
+  const publishedHandles = client.publishCalls.map((call) => {
+    const created0 = created.find((c) => c.id === call.id);
+    return created0?.handle;
+  });
+  assert.equal(publishedHandles.includes("zelda"), false);
+  assert.equal(publishedHandles.includes("studio-ghibli"), false);
+});
+
+await checkAsync("createUniverseCollections — precondições falham (scopes/publicationId): cria na mesma, salta TODA a publicação", async () => {
+  const client = makeFakeClient({ preconditionsOk: false });
+  const { created } = await createUniverseCollections(client);
+
+  assert.ok(created.length > 0, "precondições falhadas não podem impedir a criação");
+  assert.equal(client.publishCalls.length, 0);
 });
 
 if (failures) {
