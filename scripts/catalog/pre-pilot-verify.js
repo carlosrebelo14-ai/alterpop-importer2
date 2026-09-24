@@ -14,7 +14,7 @@
  * V2 e V4 ficaram vermelhas para sempre: medem loja vazia e fila sem publicações, que
  * são pré-condições de um momento que já passou. Fixar o esperado em 8 só adiava o
  * problema até ao nono produto.
- *   SAÚDE CORRENTE (V3, V5–V13), por omissão — invariantes que têm de valer sempre, em
+ *   SAÚDE CORRENTE (V3, V5–V14), por omissão — invariantes que têm de valer sempre, em
  *     qualquer altura da vida da loja. É este que se corre de rotina.
  *   HISTÓRICO (V1, V2, V4), só com `--pre-wipe` — pré-condições da Tarefa 48, verdadeiras
  *     entre o wipe e o primeiro publish. Guardadas para poderem voltar a servir se
@@ -86,7 +86,7 @@
  * se algo escreveu um dos dois lados sem o outro. Sem Character ACTIVE ainda, é informativo.
  *
  * Correr na Fly:
- *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V13)
+ *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V14)
  *   node scripts/catalog/pre-pilot-verify.js --pre-wipe   # + histórico (V1, V2, V4)
  *   node scripts/catalog/pre-pilot-verify.js --aceitar-base  # aceita descida legítima
  */
@@ -101,6 +101,8 @@ import {
 } from "../../lib/health/gateState.server.js";
 import { planUniverseCollections } from "../../lib/importer/shopify/universeCollections.server.js";
 import { loadLiveDriftCycleState, MAX_AUTO_RECONCILE } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
+import { loadCollectionPublicationCycleState } from "../../lib/importer/shopify/collectionPublicationReconcileCycle.server.js";
+import { MAX_AUTO_PUBLISH } from "../../lib/importer/shopify/collectionPublication.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { listCurationQueueItems } from "../../lib/curation/curationQueue.server.js";
@@ -299,7 +301,7 @@ function horasDesde(iso) {
 
 async function main() {
   console.log(
-    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V13)" : "saúde corrente (V3, V5–V13)"} ===\n`
+    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V14)" : "saúde corrente (V3, V5–V14)"} ===\n`
   );
 
   const session = await loadOfflineSessionForShop(SHOP);
@@ -516,6 +518,39 @@ async function main() {
       `live-drift por ciclo (${v13State.ranAt}) — TRAVÃO disparado (> ${MAX_AUTO_RECONCILE})`,
       `≤ ${MAX_AUTO_RECONCILE} produtos em drift`,
       `${v13State.blocked.length} produto(s): ${lista}`,
+      false
+    );
+  }
+
+  // V14 — publicação automática de coleções Universe/Line no Online Store (B14, briefing
+  // backend, 24/09/2026, secções 7-8). Este script não corre o ciclo — só lê o último
+  // estado que trigger-sync gravou (collectionPublicationReconcileCycle.server.js) e
+  // reporta. Verde: todas as "open" publicadas, nenhuma "closed" publicada. Amarelo:
+  // publicou no ciclo, ou encontrou uma "closed" já publicada (a app nunca despublica —
+  // só regista, nunca é motivo de fail). Vermelho: travão MAX_AUTO_PUBLISH disparado,
+  // userErrors, scope em falta ou publicationId inválido — fail de verdade, porque
+  // significa que a publicação ficou saltada no ciclo inteiro.
+  const v14State = await loadCollectionPublicationCycleState();
+  if (!v14State) {
+    info("V14", "publicação de coleções por ciclo", "sem estado — trigger-sync ainda não correu com esta versão");
+  } else if (v14State.status === "green") {
+    check("V14", `publicação de coleções por ciclo (${v14State.ranAt})`, "todas open publicadas, nenhuma closed publicada", "ok", true);
+  } else if (v14State.status === "yellow") {
+    const publicadas = v14State.published.map((c) => c.handle).join(", ") || "—";
+    const registadas = v14State.registerOnly.map((c) => c.handle).join(", ") || "—";
+    warn(
+      "V14",
+      `publicação de coleções por ciclo (${v14State.ranAt})`,
+      "todas open publicadas, nenhuma closed publicada",
+      `publicou ${v14State.published.length} (${publicadas}); closed já publicada: ${v14State.registerOnly.length} (${registadas})`,
+      false
+    );
+  } else {
+    check(
+      "V14",
+      `publicação de coleções por ciclo (${v14State.ranAt}) — ${v14State.reason || "vermelho"}`,
+      `≤ ${MAX_AUTO_PUBLISH} coleção(ões) por publicar, scopes e publicationId válidos`,
+      v14State.reason || "falhou",
       false
     );
   }
