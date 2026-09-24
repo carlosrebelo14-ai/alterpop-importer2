@@ -77,7 +77,7 @@
     "pilot:verify": "node scripts/catalog/pre-pilot-verify.js",
     "catalog:health": "node scripts/catalog/pre-pilot-verify.js",
     "test:health-gate": "node scripts/tests/health-gate-state.test.js",
-    "test:sync-safety": "node scripts/tests/safe-prisma-catalog-read.test.js && node scripts/tests/curation-sync-error-protection.test.js && node scripts/tests/franchise-reconcile-read-safety.test.js && node scripts/tests/sync-staging-summary-read-safety.test.js && node scripts/tests/sku-lifecycle-read-safety.test.js && node scripts/tests/health-gate-state.test.js",
+    "test:sync-safety": "node scripts/tests/safe-prisma-catalog-read.test.js && node scripts/tests/curation-sync-error-protection.test.js && node scripts/tests/franchise-reconcile-read-safety.test.js && node scripts/tests/sync-staging-summary-read-safety.test.js && node scripts/tests/sku-lifecycle-read-safety.test.js && node scripts/tests/stock-sync-failure-log.test.js && node scripts/tests/health-gate-state.test.js",
     "curation:override-census": "node scripts/catalog/curation-override-census.js",
     "curation:override-clear": "node scripts/catalog/curation-override-clear.js",
     "curation:overrides-audit": "node scripts/catalog/curation-overrides-audit.js",

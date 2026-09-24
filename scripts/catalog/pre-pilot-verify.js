@@ -14,7 +14,7 @@
  * V2 e V4 ficaram vermelhas para sempre: medem loja vazia e fila sem publicações, que
  * são pré-condições de um momento que já passou. Fixar o esperado em 8 só adiava o
  * problema até ao nono produto.
- *   SAÚDE CORRENTE (V3, V5–V14), por omissão — invariantes que têm de valer sempre, em
+ *   SAÚDE CORRENTE (V3, V5–V17), por omissão — invariantes que têm de valer sempre, em
  *     qualquer altura da vida da loja. É este que se corre de rotina.
  *   HISTÓRICO (V1, V2, V4), só com `--pre-wipe` — pré-condições da Tarefa 48, verdadeiras
  *     entre o wipe e o primeiro publish. Guardadas para poderem voltar a servir se
@@ -86,7 +86,7 @@
  * se algo escreveu um dos dois lados sem o outro. Sem Character ACTIVE ainda, é informativo.
  *
  * Correr na Fly:
- *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V14)
+ *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V17)
  *   node scripts/catalog/pre-pilot-verify.js --pre-wipe   # + histórico (V1, V2, V4)
  *   node scripts/catalog/pre-pilot-verify.js --aceitar-base  # aceita descida legítima
  */
@@ -116,6 +116,9 @@ import {
   ALTERPOP_MANUFACTURER_LINE_DEFINITION_GID,
 } from "../../lib/importer/shopify/franchiseMetafieldDefinition.js";
 import { CHARACTER_METAOBJECT_TYPE } from "../../lib/importer/shopify/characterMetaobjectSetup.js";
+import { readCatalogRebuildStatus } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
+import { listApprovedSkusForShopifySync } from "../../lib/curation/curationQueue.server.js";
+import { getLatestLifecycleReport, isLifecycleReportSuspect } from "../../lib/importer/catalog/skuLifecycle.server.js";
 
 const GOVERNED_TEMPLATE_SUFFIXES = new Set([UNIVERSE_TEMPLATE_SUFFIX, LINE_TEMPLATE_SUFFIX]);
 
@@ -301,7 +304,7 @@ function horasDesde(iso) {
 
 async function main() {
   console.log(
-    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V14)" : "saúde corrente (V3, V5–V14)"} ===\n`
+    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V17)" : "saúde corrente (V3, V5–V17)"} ===\n`
   );
 
   const session = await loadOfflineSessionForShop(SHOP);
@@ -552,6 +555,66 @@ async function main() {
       `≤ ${MAX_AUTO_PUBLISH} coleção(ões) por publicar, scopes e publicationId válidos`,
       v14State.reason || "falhou",
       false
+    );
+  }
+
+  // V16 — publish cancelado por falha de indexação (incidente 24/09: trigger-sync só
+  // chama runApprovedShopifySync depois de a indexação terminar sem erro; SIGKILL a
+  // meio do worker cancela o publish em silêncio, sem nenhum sinal fora do log efémero
+  // do Fly). Vermelho quando o último ciclo terminou "failed" E há aprovados à espera —
+  // é exatamente a combinação que deixa produtos aprovados presos sem aviso nenhum.
+  const rebuildStatus = await readCatalogRebuildStatus(SHOP);
+  const approvedPending = (await listApprovedSkusForShopifySync()).length;
+  if (rebuildStatus.state === "failed" && approvedPending > 0) {
+    check(
+      "V16",
+      `indexação falhou e cancelou o publish (${rebuildStatus.error || "erro desconhecido"})`,
+      "indexação ok ou 0 aprovados por publicar",
+      `${approvedPending} aprovado(s) por publicar, indexação falhada`,
+      false
+    );
+  } else if (rebuildStatus.state === "failed") {
+    warn(
+      "V16",
+      `última indexação falhou (${rebuildStatus.error || "erro desconhecido"})`,
+      "indexação ok",
+      "falhou, mas 0 aprovados por publicar — sem impacto no momento",
+      false
+    );
+  } else {
+    check("V16", "última indexação terminou sem erro", "sem erro", rebuildStatus.state || "idle", true);
+  }
+
+  // V17 — CatalogSkuTracking a reportar novidade acima de 50% do catálogo fora do modo
+  // semente (incidente 24/09: skipDuplicates incompatível com SQLite manteve a tabela
+  // vazia 43 dias, todo o catálogo lido como "novo" em todos os ciclos, silenciosamente).
+  // A função isLifecycleReportSuspect() já sabe distinguir modo semente (que reporta 0
+  // por desenho) de um relatório genuíno acima do limiar; aqui só se liga ao portão.
+  const lifecycleReport = await getLatestLifecycleReport(SHOP);
+  const catalogSizeForLifecycle = await prisma.catalogProduct.count({ where: { shop: SHOP } });
+  if (!lifecycleReport) {
+    info("V17", "CatalogSkuTracking — última corrida do ciclo de vida", "sem relatório ainda");
+  } else if (
+    isLifecycleReportSuspect({
+      newSkuCount: lifecycleReport.newSkuCount,
+      catalogSize: catalogSizeForLifecycle,
+      isSeedRun: false,
+    })
+  ) {
+    check(
+      "V17",
+      `newSkuCount suspeito (${lifecycleReport.ranAt})`,
+      `≤ 50% do catálogo (${catalogSizeForLifecycle})`,
+      `${lifecycleReport.newSkuCount} novo(s) — provável leitura de CatalogSkuTracking quebrada`,
+      false
+    );
+  } else {
+    check(
+      "V17",
+      `newSkuCount normal (${lifecycleReport.ranAt})`,
+      `≤ 50% do catálogo (${catalogSizeForLifecycle})`,
+      `${lifecycleReport.newSkuCount}`,
+      true
     );
   }
 

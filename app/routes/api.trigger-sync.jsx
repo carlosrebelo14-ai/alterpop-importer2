@@ -17,6 +17,7 @@ import { syncNewArrivalsTag } from "../../lib/importer/shopify/newArrivalsSync.s
 import { reconcileLiveDriftCycle } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
 import { reconcileCharacterPagesCycle } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
 import { reconcileCollectionPublicationCycle } from "../../lib/importer/shopify/collectionPublicationReconcileCycle.server.js";
+import { persistSyncError } from "../../lib/importer/sync/syncErrorLog.server.js";
 
 /**
  * POST /api/trigger-sync — dispara indexação + publicação sem sessão OAuth.
@@ -196,6 +197,15 @@ export const action = async ({ request }) => {
         console.log(
           `[trigger-sync] stock de publicados: ${stockResult.checked} verificados, ${stockResult.updated} atualizados, ${stockResult.skipped} sem alteração, ${stockResult.failed} falhas.`
         );
+        // stockResult.failures[] era calculado e nunca lido por ninguém — a falha
+        // ficava só na contagem, sem SKU nem mensagem (achado 24/09). Grava no mesmo
+        // registo de sync que a UI já lê, em vez de inventar um caminho novo.
+        for (const f of stockResult.failures || []) {
+          console.error(`[trigger-sync] stock de publicados — falha em ${f.sku}: ${f.message}`);
+          await persistSyncError({ shop, sku: f.sku, reason: f.message }).catch((err) => {
+            console.error(`[trigger-sync] persistSyncError falhou para ${f.sku}:`, err?.message || err);
+          });
+        }
       } catch (err) {
         console.error("[trigger-sync] sync de stock de publicados falhou:", err?.message || err);
       }
