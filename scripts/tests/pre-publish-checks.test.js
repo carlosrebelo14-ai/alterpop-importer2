@@ -108,6 +108,26 @@ check("SUPPLIER_TOKENS — não dispara em descrição limpa", () => {
   assert.equal(checkSupplierTokens({ descriptionHtml: "<p>Official Pokémon collectible.</p>" }), null);
 });
 
+// ── SUPPLIER_TOKENS estendido a descrições de coleção — B14 (24/09/2026), secção 3 ──
+// Caso real: as 21+2 coleções live com o placeholder interno de universeCollections.server.js
+// / autoCollections.server.js — ver collectionDescriptionPlaceholder.js.
+
+check("SUPPLIER_TOKENS — dispara com o placeholder de coleção Universe", () => {
+  const result = checkSupplierTokens({
+    descriptionHtml: "<p>Coleção Universe — produtos com alterpop.franchise = Batman. Rascunho: confirmar e publicar no Admin.</p>",
+  });
+  assert.equal(result?.code, "SUPPLIER_TOKENS");
+  assert.deepEqual(result.evidence.tokens, ["Coleção Universe — produtos com"]);
+});
+
+check("SUPPLIER_TOKENS — dispara com o placeholder de coleção automática", () => {
+  const result = checkSupplierTokens({
+    descriptionHtml: "<p>Coleção criada automaticamente — produtos com licença Batman.</p>",
+  });
+  assert.equal(result?.code, "SUPPLIER_TOKENS");
+  assert.deepEqual(result.evidence.tokens, ["Coleção criada automaticamente —"]);
+});
+
 // ── PRICE_RULE — implementada, mas FORA de PRE_PUBLISH_CHECKS até o B10 existir ──
 
 check("PRICE_RULE — dispara para preço fora da regra do B10 (caso real: 20.76)", () => {

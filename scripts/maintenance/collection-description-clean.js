@@ -57,19 +57,22 @@ async function main() {
   const client = createShopifyClientFromSession(session);
 
   const all = await fetchAllCollections(client);
-  const matches = all.map((n) => ({ node: n, match: matchPlaceholder(n.descriptionHtml) }));
-  const targets = matches.filter((m) => m.match);
+  const targetCount = all.filter((n) => matchPlaceholder(n.descriptionHtml)).length;
 
   console.log(
-    `[collection-description-clean] loja: ${all.length} coleções lidas, ${targets.length} apanhadas (baseline 13/09: ${BASELINE_13_09_COUNT}, diferença: ${targets.length - BASELINE_13_09_COUNT})${EXECUTE ? "" : " (dry-run — nada escrito)"}`
+    `[collection-description-clean] loja: ${all.length} coleções lidas, ${targetCount} apanhadas (baseline 13/09: ${BASELINE_13_09_COUNT}, diferença: ${targetCount - BASELINE_13_09_COUNT})${EXECUTE ? "" : " (dry-run — nada escrito)"}`
   );
 
   let processed = 0;
   let cleaned = 0;
   let errorCount = 0;
 
-  for (const { node, match } of targets) {
+  for (const node of all) {
     processed += 1;
+
+    const match = matchPlaceholder(node.descriptionHtml);
+    if (!match) continue;
+
     const preview = stripHtml(node.descriptionHtml).slice(0, 80);
 
     if (!EXECUTE) {
@@ -94,12 +97,12 @@ async function main() {
   }
 
   console.log(
-    `[collection-description-clean] DONE. processed=${processed} total=${targets.length} cleaned=${cleaned} errors=${errorCount}${EXECUTE ? "" : " (dry-run — nada escrito)"}`
+    `[collection-description-clean] DONE. processed=${processed} total=${all.length} cleaned=${cleaned} errors=${errorCount}${EXECUTE ? "" : " (dry-run — nada escrito)"}`
   );
 
-  if (processed !== targets.length) {
+  if (processed !== all.length) {
     console.error(
-      `[collection-description-clean] FATAL: processed (${processed}) != total (${targets.length})`
+      `[collection-description-clean] FATAL: processed (${processed}) != total (${all.length})`
     );
     process.exit(1);
   }
