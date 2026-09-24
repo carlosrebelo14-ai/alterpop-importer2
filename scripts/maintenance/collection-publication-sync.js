@@ -4,7 +4,9 @@
 // publicação-na-criação (collectionPublication.server.js) não cobre: coleções criadas
 // antes deste ciclo, ou perdidas por um erro pontual. Corre as mesmas guardas de início
 // de ciclo (scopes + publicationId) e o mesmo plano de reconciliação puro
-// (planReconciliation) que o futuro V14 do trigger-sync vai usar.
+// (planReconciliation) que o V14 do trigger-sync usa
+// (collectionPublicationReconcileCycle.server.js, secção 8) — este script é a versão
+// manual/dry-run da mesma lógica, para correr fora do ciclo.
 //
 // Verificação do estado: paginado, sem chamada por coleção e sem
 // resourcePublications(first: 10) — que corta nas coleções antigas com 7 canais.
@@ -24,6 +26,7 @@ import {
 import { UNIVERSE_TEMPLATE_SUFFIX } from "../../lib/importer/catalog/franchiseUniverses.js";
 import { LINE_TEMPLATE_SUFFIX } from "../../lib/importer/catalog/franchiseLines.js";
 import { checkSupplierTokens } from "../../lib/importer/curation/prePublishChecks.server.js";
+import { reportBatchDone } from "../../lib/maintenance/batchReport.js";
 
 const EXECUTE = process.argv.includes("--execute");
 const SHOP = process.env.SHOPIFY_SHOP_URL;
@@ -102,12 +105,18 @@ async function main() {
 
   console.log(`[collection-publication-sync] ações previstas: publish=${plan.toPublish.length} register-only=${plan.classified.filter((c) => c.action === "register-only").length} noop=${plan.classified.filter((c) => c.action === "noop").length} unknown-universe=${plan.classified.filter((c) => c.action === "unknown-universe").length}`);
 
+  // processed/total contam o LOTE LIDO inteiro (plan.classified), nunca só o subconjunto
+  // "publish" — 35 lidos e 0 por publicar tem de sair processed=35 total=35, não 0/0
+  // (defeito repetido: o mesmo erro do collection-description-clean.js, corrigido ali e
+  // aqui pelo mesmo motivo — ver lib/maintenance/batchReport.js).
+  const toPublishIds = new Set(plan.toPublish.map((c) => c.id));
   let processed = 0;
   let published = 0;
   let errorCount = 0;
 
-  for (const c of plan.toPublish) {
+  for (const c of plan.classified) {
     processed += 1;
+    if (!toPublishIds.has(c.id)) continue;
 
     if (!EXECUTE) {
       console.log(`[collection-publication-sync] (dry-run) publicaria "${c.title}" (${c.handle})`);
@@ -131,19 +140,14 @@ async function main() {
     }
   }
 
-  console.log(
-    `[collection-publication-sync] DONE. processed=${processed} total=${plan.toPublish.length} published=${published} errors=${errorCount}${EXECUTE ? "" : " (dry-run — nada escrito)"}`
-  );
-
-  if (processed !== plan.toPublish.length) {
-    console.error(
-      `[collection-publication-sync] FATAL: processed (${processed}) != total (${plan.toPublish.length})`
-    );
-    process.exit(1);
-  }
-  if (errorCount > 0) {
-    process.exit(1);
-  }
+  reportBatchDone({
+    tag: "collection-publication-sync",
+    itemsRead: collections.length,
+    processed,
+    total: plan.classified.length,
+    errorCount,
+    extra: `published=${published}${EXECUTE ? "" : " (dry-run — nada escrito)"}`,
+  });
 }
 
 main().catch((err) => {

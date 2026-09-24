@@ -13,6 +13,7 @@
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { stripHtml, matchPlaceholder } from "../../lib/importer/shopify/collectionDescriptionPlaceholder.js";
+import { reportBatchDone } from "../../lib/maintenance/batchReport.js";
 
 const EXECUTE = process.argv.includes("--execute");
 const SHOP = process.env.SHOPIFY_SHOP_URL;
@@ -96,19 +97,14 @@ async function main() {
     }
   }
 
-  console.log(
-    `[collection-description-clean] DONE. processed=${processed} total=${all.length} cleaned=${cleaned} errors=${errorCount}${EXECUTE ? "" : " (dry-run — nada escrito)"}`
-  );
-
-  if (processed !== all.length) {
-    console.error(
-      `[collection-description-clean] FATAL: processed (${processed}) != total (${all.length})`
-    );
-    process.exit(1);
-  }
-  if (errorCount > 0) {
-    process.exit(1);
-  }
+  reportBatchDone({
+    tag: "collection-description-clean",
+    itemsRead: all.length,
+    processed,
+    total: all.length,
+    errorCount,
+    extra: `cleaned=${cleaned}${EXECUTE ? "" : " (dry-run — nada escrito)"}`,
+  });
 }
 
 main().catch((err) => {

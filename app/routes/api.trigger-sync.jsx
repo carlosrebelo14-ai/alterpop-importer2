@@ -16,6 +16,7 @@ import { syncFranchiseCatalog } from "../../lib/importer/shopify/franchiseCatalo
 import { syncNewArrivalsTag } from "../../lib/importer/shopify/newArrivalsSync.server.js";
 import { reconcileLiveDriftCycle } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
 import { reconcileCharacterPagesCycle } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
+import { reconcileCollectionPublicationCycle } from "../../lib/importer/shopify/collectionPublicationReconcileCycle.server.js";
 
 /**
  * POST /api/trigger-sync — dispara indexação + publicação sem sessão OAuth.
@@ -246,6 +247,22 @@ export const action = async ({ request }) => {
         );
       } catch (err) {
         console.error("[trigger-sync] live-drift (V13) falhou:", err?.message || err);
+      }
+
+      // B14, secções 7-8 (briefing backend, 24/09/2026) — reconciliação de publicação
+      // de coleções Universe/Line, V14. Cobre coleções que já existiam antes deste
+      // ciclo ou que perderam a publicação por um erro pontual (a publicação-na-criação
+      // vive em universeCollections.server.js). Nunca despublica — uma "closed" já
+      // publicada fica só registada. Travão MAX_AUTO_PUBLISH: acima disso não publica
+      // nenhuma, fica vermelho para um humano ver. Nunca bloqueia o ciclo.
+      try {
+        const collPubClient = createShopifyClientFromSession(session);
+        const collPubResult = await reconcileCollectionPublicationCycle(collPubClient, shop);
+        console.log(
+          `[trigger-sync] collection-publication (V14): ${collPubResult.status}${collPubResult.reason ? ` (${collPubResult.reason})` : ""} — ${collPubResult.published.length} publicada(s), ${collPubResult.registerOnly.length} registada(s) (closed publicada), ${collPubResult.blocked.length} bloqueada(s) pelo travão.`
+        );
+      } catch (err) {
+        console.error("[trigger-sync] collection-publication (V14) falhou:", err?.message || err);
       }
 
       // B7, passo 9 (briefing backend, 17/09/2026) — ciclo de metaobjects `character`.
