@@ -64,13 +64,26 @@ check("FRANCHISE_UNIVERSES — todas as entradas têm status \"open\" ou \"close
   }
 });
 
-check("status — zelda e studio-ghibli são os dois únicos handles closed", () => {
+// zelda e studio-ghibli (decisão editorial) + os 5 dormentes (decisão do Carlos,
+// 24/09/2026: não fazem parte da lista de universos da loja, mas ficam na tabela — o
+// resolver de franquia depende dela, remover exige medição própria).
+const EXPECTED_CLOSED_HANDLES = [
+  "zelda",
+  "studio-ghibli",
+  "wonder-woman",
+  "sailor-moon",
+  "final-fantasy",
+  "resident-evil",
+  "the-last-of-us",
+].sort();
+
+check("status — 7 handles closed: zelda, studio-ghibli e os 5 dormentes", () => {
   const closed = FRANCHISE_UNIVERSES.filter((u) => u.status === "closed").map((u) => u.handle).sort();
-  assert.deepEqual(closed, ["studio-ghibli", "zelda"]);
+  assert.deepEqual(closed, EXPECTED_CLOSED_HANDLES);
 });
 
-check("status — os dois handles closed existem na tabela (getUniverseByHandle)", () => {
-  for (const handle of ["zelda", "studio-ghibli"]) {
+check("status — os 7 handles closed existem na tabela (getUniverseByHandle)", () => {
+  for (const handle of EXPECTED_CLOSED_HANDLES) {
     const u = getUniverseByHandle(handle);
     assert.ok(u, `handle "${handle}" não existe em FRANCHISE_UNIVERSES`);
     assert.equal(u.status, "closed");
