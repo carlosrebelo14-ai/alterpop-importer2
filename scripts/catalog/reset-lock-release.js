@@ -99,9 +99,17 @@ async function main() {
     `Reset original nunca retomado.`;
 
   if (!EXECUTE) {
+    // Mesmo padrão de nome que archiveCurrentFile() usaria — calculado agora, só para
+    // pré-visualização. O --execute real usa a hora exata desse momento, não esta.
+    const previewDest = statusPath(SHOP).replace(
+      /-status\.json$/,
+      `-status.${new Date().toISOString().replace(/[:.]/g, "-")}.json`
+    );
     console.log(`\nDRY-RUN — nada escrito. Corre com --execute para libertar.`);
     console.log(`Escreveria: state="failed", failureReason="orphaned", finishedAt=<agora>`);
-    console.log(`Arquivaria o ficheiro atual antes de sobrescrever.`);
+    console.log(`Arquivaria o ficheiro atual em (exemplo, hora real será a do --execute):`);
+    console.log(`  ${previewDest}`);
+    console.log(`Reset retomado: não — este script nunca importa runShopifyCatalogReset.`);
     return;
   }
 
