@@ -21,7 +21,7 @@ import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionF
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { buildPublishPayload } from "../../lib/importer/shopify/shopifyMapper.server.js";
-import { runPrePublishChecks, checkTitleDuplicate } from "../../lib/importer/curation/prePublishChecks.server.js";
+import { runPrePublishChecks, checkTitleDuplicate, findUnknownFranchiseValues } from "../../lib/importer/curation/prePublishChecks.server.js";
 import { computeLiveDrift } from "../../lib/importer/curation/liveDrift.server.js";
 import { isWarningAccepted } from "../../lib/importer/curation/acceptedWarnings.js";
 
@@ -65,6 +65,18 @@ function metafieldValue(node, key) {
     return Array.isArray(parsed) ? parsed[0] ?? null : m.value;
   } catch {
     return m.value;
+  }
+}
+
+/** Todos os valores de um metafield lista (metafieldValue só devolve o primeiro). */
+function metafieldValues(node, key) {
+  const m = (node.metafields?.nodes || []).find((mf) => mf.key === key);
+  if (!m) return [];
+  try {
+    const parsed = JSON.parse(m.value);
+    return Array.isArray(parsed) ? parsed : [m.value];
+  } catch {
+    return [m.value];
   }
 }
 
@@ -116,12 +128,14 @@ async function main() {
       const liveByCode = {
         PREFIX_RESIDUE: node.title,
         MISSING_FRANCHISE: metafieldValue(node, "franchise"),
+        FRANCHISE_UNKNOWN: metafieldValues(node, "franchise"),
         MISSING_FORMAT: metafieldValue(node, "format"),
         SUPPLIER_TOKENS: node.descriptionHtml,
       };
       const expectedByCode = {
         PREFIX_RESIDUE: payload.title,
         MISSING_FRANCHISE: payload.resolvedFranchise,
+        FRANCHISE_UNKNOWN: payload.resolvedFranchise,
         MISSING_FORMAT: payload.resolvedFormat,
         SUPPLIER_TOKENS: payload.descriptionHtml,
       };
@@ -131,7 +145,23 @@ async function main() {
         sku,
         live: liveByCode[w.code] ?? null,
         expected: expectedByCode[w.code] ?? null,
-        evidence: w.evidence,
+        evidence: w.code === "FRANCHISE_UNKNOWN" ? { ...w.evidence, source: "payload" } : w.evidence,
+      });
+    }
+
+    // FRANCHISE_UNKNOWN (briefing 27/09, N2) — também sobre o valor REAL na loja, todos
+    // os valores da lista. Um valor antigo na Shopify pode estar fora da tabela mesmo
+    // com o payload reconstruído limpo (mesma lógica do LIVE_DRIFT abaixo).
+    const liveFranchise = metafieldValues(node, "franchise");
+    const liveUnknown = findUnknownFranchiseValues(liveFranchise);
+    if (liveUnknown.length) {
+      findings.push({
+        code: "FRANCHISE_UNKNOWN",
+        handle: node.handle,
+        sku,
+        live: liveFranchise,
+        expected: payload.resolvedFranchise,
+        evidence: { values: liveUnknown, source: "live" },
       });
     }
 

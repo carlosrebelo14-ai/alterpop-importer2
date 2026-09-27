@@ -9,6 +9,8 @@ import {
   checkTitleDuplicate,
   checkPrefixResidue,
   checkMissingFranchise,
+  checkFranchiseUnknown,
+  findUnknownFranchiseValues,
   checkMissingFormat,
   checkSupplierTokens,
   checkPriceRule,
@@ -128,6 +130,50 @@ check("SUPPLIER_TOKENS — dispara com o placeholder de coleção automática", 
   assert.deepEqual(result.evidence.tokens, ["Coleção criada automaticamente —"]);
 });
 
+// ── FRANCHISE_UNKNOWN — briefing 27/09 (N2): categorias/marcas misturadas com franquias ──
+
+check("FRANCHISE_UNKNOWN — dispara com \"Anime\" (categoria, não universo)", () => {
+  const r = checkFranchiseUnknown({ resolvedFranchise: "Anime" });
+  assert.equal(r?.code, "FRANCHISE_UNKNOWN");
+  assert.deepEqual(r.evidence.values, ["Anime"]);
+});
+
+check("FRANCHISE_UNKNOWN — dispara com \"Funko\" (marca, não universo)", () => {
+  assert.equal(checkFranchiseUnknown({ resolvedFranchise: "Funko" })?.code, "FRANCHISE_UNKNOWN");
+});
+
+check("FRANCHISE_UNKNOWN — não dispara com \"The Legend of Zelda\" (status closed continua resolvido)", () => {
+  assert.equal(checkFranchiseUnknown({ resolvedFranchise: "The Legend of Zelda" }), null);
+});
+
+check("FRANCHISE_UNKNOWN — não dispara com um universo dormente (Wonder Woman)", () => {
+  assert.equal(checkFranchiseUnknown({ resolvedFranchise: "Wonder Woman" }), null);
+});
+
+check("FRANCHISE_UNKNOWN — dispara com \"Pokémon\" de acento decomposto (NFD ≠ canónico NFC)", () => {
+  const nfd = "Pokémon".normalize("NFD");
+  assert.notEqual(nfd, "Pokémon".normalize("NFC"));
+  assert.equal(checkFranchiseUnknown({ resolvedFranchise: nfd })?.code, "FRANCHISE_UNKNOWN");
+});
+
+check("FRANCHISE_UNKNOWN — não dispara com \"Pokémon\" canónico (NFC)", () => {
+  assert.equal(checkFranchiseUnknown({ resolvedFranchise: "Pokémon".normalize("NFC") }), null);
+});
+
+check("FRANCHISE_UNKNOWN — sem valor não dispara (isso é MISSING_FRANCHISE)", () => {
+  assert.equal(checkFranchiseUnknown({ resolvedFranchise: null }), null);
+  assert.equal(checkFranchiseUnknown({ resolvedFranchise: "" }), null);
+});
+
+check("findUnknownFranchiseValues — lista do metafield: só devolve os valores fora da tabela", () => {
+  assert.deepEqual(findUnknownFranchiseValues(["Star Wars", "Funko", "Anime"]), ["Funko", "Anime"]);
+  assert.deepEqual(findUnknownFranchiseValues(["One Piece"]), []);
+});
+
+check("findUnknownFranchiseValues — sem igualdade aproximada: caixa diferente conta como desconhecido", () => {
+  assert.deepEqual(findUnknownFranchiseValues("star wars"), ["star wars"]);
+});
+
 // ── PRICE_RULE — implementada, mas FORA de PRE_PUBLISH_CHECKS até o B10 existir ──
 
 check("PRICE_RULE — dispara para preço fora da regra do B10 (caso real: 20.76)", () => {
@@ -160,6 +206,17 @@ check("runPrePublishChecks — agrega vários avisos, nunca lança", () => {
   assert.deepEqual(codes, ["MISSING_FORMAT", "MISSING_FRANCHISE", "PREFIX_RESIDUE", "SUPPLIER_TOKENS"]);
 });
 
+check("runPrePublishChecks — FRANCHISE_UNKNOWN chega pelo agregador (caso real: \"Funko\")", () => {
+  const payload = {
+    sku: "X",
+    title: "Star Wars Luke Skywalker",
+    resolvedFranchise: "Funko",
+    resolvedFormat: "Figure",
+    descriptionHtml: "<p>Official collectible.</p>",
+  };
+  assert.deepEqual(runPrePublishChecks(payload, {}).map((w) => w.code), ["FRANCHISE_UNKNOWN"]);
+});
+
 check("runPrePublishChecks — payload limpo não dispara nada", () => {
   const payload = {
     sku: "X",
@@ -175,9 +232,10 @@ check("cada verificação ativa tem de estar em PRE_PUBLISH_CHECKS (teste falha 
   assert.equal(PRE_PUBLISH_CHECKS.includes(checkTitleDuplicate), true);
   assert.equal(PRE_PUBLISH_CHECKS.includes(checkPrefixResidue), true);
   assert.equal(PRE_PUBLISH_CHECKS.includes(checkMissingFranchise), true);
+  assert.equal(PRE_PUBLISH_CHECKS.includes(checkFranchiseUnknown), true);
   assert.equal(PRE_PUBLISH_CHECKS.includes(checkMissingFormat), true);
   assert.equal(PRE_PUBLISH_CHECKS.includes(checkSupplierTokens), true);
-  assert.equal(PRE_PUBLISH_CHECKS.length, 5);
+  assert.equal(PRE_PUBLISH_CHECKS.length, 6);
 });
 
 if (failures) {
