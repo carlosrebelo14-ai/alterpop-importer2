@@ -13,7 +13,7 @@ import { loadShopSettings } from "../../lib/importer/settings.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { ensureOciostockMetafieldDefinitions } from "../../lib/importer/shopify/metafieldSetup.js";
 import { syncFranchiseCatalog } from "../../lib/importer/shopify/franchiseCatalogSync.server.js";
-import { syncNewArrivalsTag } from "../../lib/importer/shopify/newArrivalsSync.server.js";
+import { reconcileNewArrivalsCycle } from "../../lib/importer/shopify/newArrivals.server.js";
 import { reconcileLiveDriftCycle } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
 import { reconcileCharacterPagesCycle } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
 import { reconcileCollectionPublicationCycle } from "../../lib/importer/shopify/collectionPublicationReconcileCycle.server.js";
@@ -227,22 +227,23 @@ export const action = async ({ request }) => {
         console.error("[trigger-sync] catálogo de franquias falhou:", err?.message || err);
       }
 
-      // new-arrivals — janela de N dias por published_at (ENTREGA 2 · Tarefa 6). A
-      // coleção é smart TAG EQUALS "new-arrival"; este reconciliador põe/tira a tag
-      // consoante a data de publicação real. Nunca bloqueia o ciclo.
+      // new-arrivals — N1 (briefing 27/09). Substitui o newArrivalsSync (tags): a
+      // coleção é smart por alterpop.is_new_arrival EQUALS true; este ciclo preenche
+      // first_published_at nos ACTIVE publicados sem data e expira is_new_arrival
+      // depois de NEW_ARRIVAL_DAYS. Só metafieldsSet. Grava sempre o estado V15, também
+      // em falha — nunca bloqueia o ciclo, mas nunca falha em silêncio.
       try {
         const naClient = createShopifyClientFromSession(session);
-        // N = 30 por defeito (decisão do Carlos); override por NEW_ARRIVALS_WINDOW_DAYS.
-        const naResult = await syncNewArrivalsTag(naClient, shop);
-        if (naResult.ok) {
-          console.log(
-            `[trigger-sync] new-arrivals (${naResult.windowDays}d): +${naResult.tagged} / -${naResult.untagged} tag (${naResult.scanned} verificados).`
-          );
-        } else {
-          console.error("[trigger-sync] new-arrivals falhou:", naResult.error);
-        }
+        const naState = await reconcileNewArrivalsCycle(naClient, shop);
+        const line =
+          `[trigger-sync] new-arrivals V15 ${naState.status}: ` +
+          (naState.reason
+            ? naState.reason
+            : `${naState.expirations.length} expirado(s), ${naState.fills.length} preenchido(s), ${naState.anomalies.length} anomalia(s), ${naState.processed}/${naState.activeCount} ACTIVE.`);
+        if (naState.status === "red") console.error(line);
+        else console.log(line);
       } catch (err) {
-        console.error("[trigger-sync] new-arrivals falhou:", err?.message || err);
+        console.error("[trigger-sync] new-arrivals V15 falhou:", err?.message || err);
       }
 
       // Item 7 (ADENDA 7, 17/09/2026) — reconciliador de drift alterpop.* por ciclo,
