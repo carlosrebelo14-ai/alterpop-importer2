@@ -13,6 +13,8 @@
 import assert from "node:assert/strict";
 import {
   buildDefinitionShapeUpdateInput,
+  planDefinitionShapeUpdates,
+  readSmartCollectionDefinitionUsage,
   updateMetafieldDefinitionShape,
 } from "../../lib/importer/shopify/metafieldSetup.js";
 import {
@@ -141,6 +143,67 @@ await check("update — lança em userErrors (caso real: definição usada em sm
     }),
     /being used in a smart collection/,
   );
+});
+
+// ── P1 (BLOQUEADA_POR_COLECAO) e P2 (plano calculado a partir da loja) ──
+
+const FRANCHISE_ID = "gid://shopify/MetafieldDefinition/1520603857226";
+const FORMAT_ID = "gid://shopify/MetafieldDefinition/1525101363530";
+const withId = (id, cur) => ({ id, ...cur });
+
+await check("plan — caso real 27/09: definição em uso numa smart collection sai do plano como bloqueada", () => {
+  const shape = { ...ALTERPOP_FRANCHISE_DEFINITION, access: { storefront: "PUBLIC_READ" } };
+  const usage = new Map([[FRANCHISE_ID, ["one-piece", "star-wars"]]]);
+  const { plan, blocked } = planDefinitionShapeUpdates(
+    [{ def: shape, current: withId(FRANCHISE_ID, live("NONE", true)) }],
+    usage,
+  );
+  assert.equal(plan.length, 0);
+  assert.equal(blocked.length, 1);
+  assert.deepEqual(blocked[0].collections, ["one-piece", "star-wars"]);
+});
+
+await check("plan — divergente e sem coleção entra no plano; alinhada salta", () => {
+  const usage = new Map([[FRANCHISE_ID, ["one-piece"]]]);
+  const { plan, blocked, aligned } = planDefinitionShapeUpdates(
+    [
+      { def: ALTERPOP_FRANCHISE_DEFINITION, current: withId(FRANCHISE_ID, live("NONE", true)) },
+      { def: ALTERPOP_FORMAT_DEFINITION, current: withId(FORMAT_ID, live("PUBLIC_READ", false)) },
+    ],
+    usage,
+  );
+  assert.deepEqual(plan.map((p) => p.def.key), ["format"]);
+  assert.equal(blocked.length, 0);
+  assert.deepEqual(aligned.map((a) => a.def.key), ["franchise"]);
+});
+
+await check("plan — sem máximo estático: N divergentes livres dão N no plano", () => {
+  const { plan } = planDefinitionShapeUpdates(
+    [
+      { def: ALTERPOP_FORMAT_DEFINITION, current: withId(FORMAT_ID, live("NONE", false)) },
+      { def: { ...ALTERPOP_LINE_DEFINITION, access: { storefront: "PUBLIC_READ" } }, current: withId("gid://x/2", live("NONE", true)) },
+      { def: { ...ALTERPOP_MANUFACTURER_LINE_DEFINITION, access: { storefront: "PUBLIC_READ" } }, current: withId("gid://x/3", live("NONE", true)) },
+    ],
+    new Map(),
+  );
+  assert.equal(plan.length, 3);
+});
+
+await check("usage — lê as regras de todas as páginas e mapeia definição → handles", async () => {
+  const pages = [
+    { collections: { pageInfo: { hasNextPage: true, endCursor: "c1" }, nodes: [
+      { handle: "one-piece", ruleSet: { rules: [{ column: "PRODUCT_METAFIELD_DEFINITION", conditionObject: { metafieldDefinition: { id: FRANCHISE_ID } } }] } },
+      { handle: "new-arrivals", ruleSet: { rules: [{ column: "TAG", conditionObject: {} }] } },
+    ] } },
+    { collections: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
+      { handle: "star-wars", ruleSet: { rules: [{ column: "PRODUCT_METAFIELD_DEFINITION", conditionObject: { metafieldDefinition: { id: FRANCHISE_ID } } }] } },
+    ] } },
+  ];
+  let i = 0;
+  const usage = await readSmartCollectionDefinitionUsage({ async graphql() { return pages[i++]; } });
+  assert.equal(i, 2);
+  assert.deepEqual(usage.get(FRANCHISE_ID), ["one-piece", "star-wars"]);
+  assert.equal(usage.size, 1);
 });
 
 await check("shapes — só format declara PUBLIC_READ; franchise, line e manufacturer_line ficam NONE", () => {
