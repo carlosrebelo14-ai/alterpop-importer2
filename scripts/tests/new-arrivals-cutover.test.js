@@ -10,6 +10,10 @@ import {
   planNewArrivalsBackfill,
   distributionByDay,
   buildNewArrivalsRuleSet,
+  applyNewArrivalsRuleWithRollback,
+  toRuleSetInput,
+  RULE_POLL_INTERVAL_MS,
+  RULE_POLL_TIMEOUT_MS,
   DIVERGENCE_THRESHOLD_MS,
 } from "../../lib/importer/shopify/newArrivalsCutover.js";
 
@@ -126,6 +130,97 @@ check("regra — substitui a regra inteira por is_new_arrival EQUALS true, sem T
 
 check("regra — recusa sem GID da definição", () => {
   assert.throws(() => buildNewArrivalsRuleSet(null), /falta o GID/);
+});
+
+// ── passo 3: reversão (decisão 27/09) ──
+
+async function checkAsync(name, fn) {
+  try {
+    await fn();
+    console.log(`  ok  ${name}`);
+  } catch (err) {
+    failures += 1;
+    console.error(`FAIL  ${name}\n      ${err.message}`);
+  }
+}
+
+const OLD_RULE = { appliedDisjunctively: false, rules: [{ column: "TAG", relation: "EQUALS", condition: "new-arrival" }] };
+const NEW_RULE = buildNewArrivalsRuleSet("gid://shopify/MetafieldDefinition/9");
+
+/** Loja falsa: a contagem segue a sequência dada; a regra aplicada fica registada. */
+function fakeCollection(counts) {
+  const applied = [];
+  let current = OLD_RULE;
+  let i = 0;
+  return {
+    applied,
+    sleeps: [],
+    updateRule: async (rs) => {
+      applied.push(rs);
+      current = rs;
+    },
+    readCollection: async () => {
+      const count = current === OLD_RULE || applied.at(-1)?.rules[0].column === "TAG" ? 160 : counts[Math.min(i++, counts.length - 1)];
+      return { count, ruleSet: current };
+    },
+  };
+}
+
+const run = (shop, over = {}) =>
+  applyNewArrivalsRuleWithRollback({
+    updateRule: shop.updateRule,
+    readCollection: shop.readCollection,
+    previousRuleSet: OLD_RULE,
+    newRuleSet: NEW_RULE,
+    expected: 159,
+    sleep: async (ms) => shop.sleeps.push(ms),
+    ...over,
+  });
+
+await checkAsync("espera — 15 s entre leituras, até 5 min (20 leituras)", async () => {
+  assert.equal(RULE_POLL_INTERVAL_MS, 15_000);
+  assert.equal(RULE_POLL_TIMEOUT_MS, 300_000);
+  const shop = fakeCollection([0]);
+  const r = await run(shop);
+  assert.equal(r.polls, 20);
+  assert.ok(shop.sleeps.every((ms) => ms === 15_000));
+});
+
+await checkAsync("159 → sucesso, sai logo, não reverte", async () => {
+  const shop = fakeCollection([0, 12, 159]);
+  const r = await run(shop);
+  assert.equal(r.outcome, "success");
+  assert.equal(r.polls, 3);
+  assert.equal(shop.applied.length, 1);
+});
+
+await checkAsync("0 no fim da espera → repõe TAG new-arrival e relê a regra reposta", async () => {
+  const shop = fakeCollection([0]);
+  const r = await run(shop);
+  assert.equal(r.outcome, "rolled_back");
+  assert.equal(shop.applied.length, 2);
+  assert.deepEqual(shop.applied[1], OLD_RULE);
+  assert.deepEqual(r.restoredRuleSet, OLD_RULE);
+});
+
+await checkAsync("0 transitório que chega a 159 dentro da espera → sucesso, sem reversão", async () => {
+  const shop = fakeCollection([0, 0, 0, 0, 159]);
+  const r = await run(shop);
+  assert.equal(r.outcome, "success");
+  assert.equal(shop.applied.length, 1);
+});
+
+await checkAsync("parcial (1 a 158) no fim da espera → não reverte, reporta", async () => {
+  const shop = fakeCollection([80]);
+  const r = await run(shop);
+  assert.equal(r.outcome, "partial");
+  assert.equal(r.count, 80);
+  assert.equal(shop.applied.length, 1);
+});
+
+await checkAsync("toRuleSetInput — regra lida da loja volta a input só com column/relation/condition", async () => {
+  const read = { appliedDisjunctively: false, rules: [{ column: "TAG", relation: "EQUALS", condition: "new-arrival", conditionObject: { __typename: "X" } }] };
+  assert.deepEqual(toRuleSetInput(read), OLD_RULE);
 });
 
 if (failures) {

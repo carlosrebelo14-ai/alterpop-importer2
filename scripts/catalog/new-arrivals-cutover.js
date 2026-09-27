@@ -44,6 +44,9 @@ import {
   planNewArrivalsBackfill,
   distributionByDay,
   buildNewArrivalsRuleSet,
+  applyNewArrivalsRuleWithRollback,
+  RULE_POLL_INTERVAL_MS,
+  RULE_POLL_TIMEOUT_MS,
   DIVERGENCE_THRESHOLD_MS,
 } from "../../lib/importer/shopify/newArrivalsCutover.js";
 import { loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
@@ -347,24 +350,43 @@ async function stepRule(client, defs, collection, active) {
   const ruleSet = buildNewArrivalsRuleSet(defs.isNew.id);
   console.log(`  antes: ${JSON.stringify(collection.ruleSet)} sort=${collection.sortOrder} produtos=${collection.productsCount?.count}`);
   console.log(`  nova:  ${JSON.stringify(ruleSet)} sort=CREATED_DESC`);
-  const data = await client.graphql(RULE_UPDATE, { input: { id: collection.id, ruleSet, sortOrder: "CREATED_DESC" } });
-  const userErrors = data.collectionUpdate?.userErrors || [];
-  if (userErrors.length) fatal(`collectionUpdate: ${userErrors.map((e) => e.message).join("; ")}`);
+  console.log(`  espera: productsCount a cada ${RULE_POLL_INTERVAL_MS / 1000}s até ${RULE_POLL_TIMEOUT_MS / 60000} min; 0 no fim → repõe a regra anterior`);
 
-  // A Shopify reindexa a smart collection de forma assíncrona — relê até bater (máx. ~2 min).
-  let count = null;
-  let rules = null;
-  for (let i = 0; i < 12; i++) {
+  const updateRule = async (rs) => {
+    const data = await client.graphql(RULE_UPDATE, { input: { id: collection.id, ruleSet: rs, sortOrder: "CREATED_DESC" } });
+    const userErrors = data.collectionUpdate?.userErrors || [];
+    if (userErrors.length) throw new Error(`collectionUpdate: ${userErrors.map((e) => e.message).join("; ")}`);
+  };
+  const readCollection = async () => {
     const c = (await client.graphql(NEW_ARRIVALS_COLLECTION)).collectionByIdentifier;
-    count = c?.productsCount?.count;
-    rules = c?.ruleSet;
-    if (count === trueCount) break;
-    await new Promise((r) => setTimeout(r, 10_000));
+    console.log(`    productsCount=${c?.productsCount?.count}`);
+    return { count: c?.productsCount?.count ?? null, ruleSet: c?.ruleSet };
+  };
+
+  const result = await applyNewArrivalsRuleWithRollback({
+    updateRule,
+    readCollection,
+    previousRuleSet: collection.ruleSet,
+    newRuleSet: ruleSet,
+    expected: trueCount,
+  });
+
+  const final = (await client.graphql(NEW_ARRIVALS_COLLECTION)).collectionByIdentifier;
+  console.log(`\nresultado: ${result.outcome} · productsCount=${result.count} (esperado ${trueCount}) · ${result.polls} leitura(s)`);
+  console.log(`releitura: ${JSON.stringify(final?.ruleSet)} sort=${final?.sortOrder} produtos=${final?.productsCount?.count}`);
+  if (result.outcome === "rolled_back") {
+    console.error(`[${TAG}] REVERTIDO: a regra nova deu 0 produtos em ${RULE_POLL_TIMEOUT_MS / 60000} min. Regra reposta: ${JSON.stringify(result.restoredRuleSet)}`);
+  } else if (result.outcome === "partial") {
+    console.error(`[${TAG}] PARCIAL: ${result.count} de ${trueCount}. A condição funciona — não reverti. Volta ao arquiteto.`);
   }
-  console.log(`\nreleitura: ${JSON.stringify(rules)} productsCount=${count} (esperado ${trueCount})`);
-  const ok = count === trueCount;
-  if (!ok) console.error(`[${TAG}] productsCount ${count} ≠ ${trueCount}. Se a Shopify ainda estiver a reindexar, reler com o dry-run antes de concluir.`);
-  reportBatchDone({ tag: TAG, itemsRead: 1, processed: 1, total: 1, errorCount: ok ? 0 : 1, extra: `productsCount=${count}` });
+  reportBatchDone({
+    tag: TAG,
+    itemsRead: 1,
+    processed: 1,
+    total: 1,
+    errorCount: result.outcome === "success" ? 0 : 1,
+    extra: `outcome=${result.outcome} productsCount=${result.count}`,
+  });
 }
 
 main().catch((err) => {
