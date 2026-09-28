@@ -1,0 +1,43 @@
+# Suites de teste em cada PR e em cada push para main (decisão 28/09/2026).
+# As mesmas três que a guarda 4 de scripts/deploy.sh exige antes de um deploy, mais
+# os testes das próprias guardas do deploy.
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Gerar cliente Prisma
+        run: npx prisma generate
+
+      - name: test:franchise
+        run: npm run -s test:franchise
+
+      - name: test:sync-safety
+        run: npm run -s test:sync-safety
+
+      - name: test:health-gate
+        run: npm run -s test:health-gate
+
+      - name: test:deploy (guardas de scripts/deploy.sh)
+        run: npm run -s test:deploy

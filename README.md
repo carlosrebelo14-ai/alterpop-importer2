@@ -50,16 +50,24 @@ Rotas legadas (`/app/import`, `/app/jobs`, `/app/history`) redireccionam para o 
 
 Large catalog imports run **asynchronously** (background job + status polling).
 
-### 4. Production
+### 4. Production (Fly.io, `alterpop-importer-app`)
+
+**Único caminho de deploy:**
 
 ```bash
-shopify app deploy
-npm run setup    # prisma migrate
-npm run build
-npm run start
+bash scripts/deploy.sh
 ```
 
-Host on Fly.io, Railway, or similar with `SHOPIFY_APP_URL` set to your public URL.
+Recusa o deploy, sem enviar nada, se: o branch não for `main`; o working tree tiver
+alterações ou ficheiros por seguir fora do `.gitignore`; `main` não for igual a
+`origin/main` depois de `git fetch`; ou `test:franchise`, `test:sync-safety` ou
+`test:health-gate` falharem. Imprime o commit que vai para produção e só então corre
+`flyctl deploy -a alterpop-importer-app`. Nunca correr `flyctl deploy` à mão: o flyctl
+empacota o diretório local, não o GitHub (incidente de 28/09/2026).
+
+Relatórios gerados por scripts vão para `reports/` (no `.gitignore`), nunca para a raiz.
+
+Para correr um script no Fly sem deploy: [docs/FLY-STAGING.md](./docs/FLY-STAGING.md).
 
 ## Project layout
 

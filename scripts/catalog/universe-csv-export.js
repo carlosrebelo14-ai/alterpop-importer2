@@ -40,9 +40,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
-import { getDefaultConfig } from "../../lib/importer/config.js";
 import { FRANCHISE_UNIVERSES } from "../../lib/importer/catalog/franchiseUniverses.js";
 import { isCollectibleVendor } from "../../lib/importer/catalog/manufacturerTierResolver.server.js";
+import { REPORTS_DIR } from "../../lib/maintenance/reportsDir.js";
 
 const args = process.argv.slice(2);
 const valOf = (f, d) => {
@@ -52,7 +52,7 @@ const valOf = (f, d) => {
 const SHOP = valOf("--shop", process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com");
 const UM_UNIVERSO = valOf("--universo", null);
 const TODOS = args.includes("--all");
-const OUTDIR = valOf("--outdir", path.join(getDefaultConfig().paths.data, "universe-export"));
+const OUTDIR = valOf("--outdir", path.join(REPORTS_DIR, "universe-export"));
 const COM_FILTRO = !args.includes("--sem-filtro");
 const EXCLUIR_OMISSAO = ["Studio Ghibli", "The Legend of Zelda"];
 const EXCLUIR = args.includes("--excluir")

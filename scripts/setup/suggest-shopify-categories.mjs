@@ -18,6 +18,7 @@ import fs from "fs";
 import path from "path";
 import prisma from "../../app/db.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
+import { reportPath } from "../../lib/maintenance/reportsDir.js";
 
 /**
  * Termos a pesquisar na taxonomia, com o nosso conceito de origem (categories.json /
@@ -133,8 +134,7 @@ async function main() {
     lines.push(`| ${row.ours} | ${row.search} | ${cols[0]} | ${cols[1]} | ${cols[2]} |`);
   }
 
-  const outPath = path.join(process.cwd(), "results", "shopify-category-suggestions.md");
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  const outPath = reportPath("shopify-category-suggestions.md");
   fs.writeFileSync(outPath, lines.join("\n"), "utf8");
   console.log(`\nOutput escrito em ${outPath}`);
 }
