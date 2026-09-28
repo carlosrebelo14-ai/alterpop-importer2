@@ -101,6 +101,7 @@ import {
 } from "../../lib/health/gateState.server.js";
 import { planUniverseCollections } from "../../lib/importer/shopify/universeCollections.server.js";
 import { loadLiveDriftCycleState, MAX_AUTO_RECONCILE } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
+import { loadNewArrivalsCycleState, NEW_ARRIVAL_DAYS } from "../../lib/importer/shopify/newArrivals.server.js";
 import { loadCollectionPublicationCycleState } from "../../lib/importer/shopify/collectionPublicationReconcileCycle.server.js";
 import { MAX_AUTO_PUBLISH } from "../../lib/importer/shopify/collectionPublication.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
@@ -556,6 +557,41 @@ async function main() {
       v14State.reason || "falhou",
       false
     );
+  }
+
+  // V15 — Novidades por metafield (N1, briefing 27/09). Este script não corre o ciclo —
+  // só lê o último estado que trigger-sync gravou (newArrivals.server.js). Sem travão
+  // por volume (os lotes expiram juntos). Verde: nada a fazer, sem anomalias. Amarelo:
+  // expirações ou preenchimentos no ciclo, com a lista. Vermelho: produto true sem
+  // first_published_at, data no futuro, data alterada desde o ciclo anterior, erro de
+  // escrita ou definição em falta.
+  const v15State = await loadNewArrivalsCycleState();
+  if (!v15State) {
+    info("V15", "novidades por ciclo", "sem estado — trigger-sync ainda não correu com esta versão");
+  } else if (v15State.status === "green") {
+    check("V15", `novidades por ciclo (${v15State.ranAt}, ${NEW_ARRIVAL_DAYS}d)`, "sem expirações nem anomalias", `${v15State.trueCount} em Novidades`, true);
+  } else if (v15State.status === "yellow") {
+    const exp = v15State.expirations.map((e) => e.handle).join(", ") || "—";
+    const fil = v15State.fills.map((f) => f.handle).join(", ") || "—";
+    warn(
+      "V15",
+      `novidades por ciclo (${v15State.ranAt}, ${NEW_ARRIVAL_DAYS}d)`,
+      "sem expirações nem anomalias",
+      `expirou ${v15State.expirations.length} (${exp}); preencheu ${v15State.fills.length} (${fil})`,
+      false
+    );
+  } else {
+    const anomalias = (v15State.anomalies || []).map((a) => `${a.handle} ${a.code}`).join(", ");
+    check(
+      "V15",
+      `novidades por ciclo (${v15State.ranAt}) — ${v15State.reason || "anomalias"}`,
+      "0 anomalias, 0 erros",
+      anomalias || v15State.reason || "falhou",
+      false
+    );
+    for (const a of v15State.anomalies || []) {
+      console.log(`      ${a.handle} (${a.sku}): ${a.detail}`);
+    }
   }
 
   // V16 — publish cancelado por falha de indexação (incidente 24/09: trigger-sync só
