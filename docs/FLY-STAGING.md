@@ -14,7 +14,9 @@ e os tamanhos esperados; o Carlos corre e cola a saída.
   produção, antes de o código estar em `main`.
 - `--execute` só depois do dry-run revisto e com OK explícito do Carlos no momento.
 
-Para código que já está em `main`, preferir o deploy normal.
+Para código que já está em `main`, o caminho é o deploy — e o único deploy é
+`bash scripts/deploy.sh` (guardas de branch, working tree, `origin/main` e testes).
+Nunca `flyctl deploy` à mão.
 
 ## Estrutura
 
@@ -74,7 +76,7 @@ Dry-run por omissão. `--execute` só com OK do Carlos depois de ler o dry-run.
 flyctl ssh console -a alterpop-importer-app -C "rm -rf /app/tmp-2709"
 ```
 
-Um deploy também limpa (a imagem nova não traz a pasta). Não deixar staging
+Um deploy (`bash scripts/deploy.sh`) também limpa (a imagem nova não traz a pasta). Não deixar staging
 esquecido entre briefings: a cópia de `lib/` fica desatualizada no deploy seguinte.
 
 ## Erros conhecidos

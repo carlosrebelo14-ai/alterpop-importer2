@@ -29,6 +29,7 @@ import {
   checkPrecedenceInvariants,
   checkRefIndexCollisions,
 } from "../../lib/importer/catalog/franchiseResolver.server.js";
+import { reportPath } from "../../lib/maintenance/reportsDir.js";
 
 const args = process.argv.slice(2);
 const has = (f) => args.includes(f);
@@ -282,10 +283,8 @@ function printReport(t) {
 }
 
 function writeJson(t) {
-  const outDir = path.join(process.cwd(), "results");
-  fs.mkdirSync(outDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const file = path.join(outDir, `franchise-report-${stamp}.json`);
+  const file = reportPath(`franchise-report-${stamp}.json`);
   const payload = {
     generatedAt: new Date().toISOString(),
     source: FROM_DB ? `db:${SHOP}` : "csv",

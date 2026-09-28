@@ -481,7 +481,7 @@ Ficheiro novo: `scripts/catalog/franchise-resolve-report.js`
        nos casos de sobreposição o real deve ficar perto do LOW (ex.: Mandalorian ~54,
        não ~82); perto do topo ⇒ confirmar que não há dupla contagem / precedência mal afinada.
   4. Amostra de 12 títulos por universo (com camada + padrão que bateu) e 30 "vazios".
-- `--json` escreve `results/franchise-report-<timestamp>.json` para diff entre corridas.
+- `--json` escreve `reports/franchise-report-<timestamp>.json` para diff entre corridas (era `results/` até 28/09/2026).
 
 **PORTÃO A** — o Carlos revê estas contagens contra a tabela antes de qualquer escrita.
 

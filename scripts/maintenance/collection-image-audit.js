@@ -22,11 +22,11 @@ import fs from "fs/promises";
 import path from "path";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
-import { getDefaultConfig } from "../../lib/importer/config.js";
 import { UNIVERSE_TEMPLATE_SUFFIX } from "../../lib/importer/catalog/franchiseUniverses.js";
 import { LINE_TEMPLATE_SUFFIX } from "../../lib/importer/catalog/franchiseLines.js";
 import { reportBatchDone } from "../../lib/maintenance/batchReport.js";
 import { auditCollectionImages } from "../../lib/importer/shopify/collectionImageAudit.js";
+import { reportPath } from "../../lib/maintenance/reportsDir.js";
 
 const SHOP = process.env.SHOPIFY_SHOP_URL;
 const IN_SCOPE_TEMPLATE_SUFFIXES = new Set([UNIVERSE_TEMPLATE_SUFFIX, LINE_TEMPLATE_SUFFIX]);
@@ -131,10 +131,9 @@ async function main() {
   const nonSquareCount = rows.filter((r) => r.nonSquare).length;
   console.log(`[collection-image-audit] tiles não quadradas: ${nonSquareCount}`);
 
-  const reportPath = path.join(getDefaultConfig().paths.data, "collection-image-audit.html");
-  await fs.mkdir(path.dirname(reportPath), { recursive: true });
-  await fs.writeFile(reportPath, buildReportHtml(rows), "utf8");
-  console.log(`[collection-image-audit] página para revisão a olho: ${reportPath}`);
+  const htmlPath = reportPath("collection-image-audit.html");
+  await fs.writeFile(htmlPath, buildReportHtml(rows), "utf8");
+  console.log(`[collection-image-audit] página para revisão a olho: ${htmlPath}`);
 
   reportBatchDone({
     tag: "collection-image-audit",

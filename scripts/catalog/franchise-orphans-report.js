@@ -22,6 +22,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
+import { reportPath } from "../../lib/maintenance/reportsDir.js";
 
 const args = process.argv.slice(2);
 const AS_JSON = args.includes("--json");
@@ -110,10 +111,8 @@ async function main() {
   }
 
   if (AS_JSON) {
-    const outDir = path.join(process.cwd(), "results");
-    fs.mkdirSync(outDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const file = path.join(outDir, `franchise-orphans-report-${stamp}.json`);
+    const file = reportPath(`franchise-orphans-report-${stamp}.json`);
     fs.writeFileSync(
       file,
       JSON.stringify(

@@ -17,6 +17,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
+import { reportPath } from "../../lib/maintenance/reportsDir.js";
 
 const args = process.argv.slice(2);
 const AS_JSON = args.includes("--json");
@@ -120,10 +121,8 @@ async function main() {
   console.log(`\n(nada escrito — só relatório. Decisão sobre deny-list fica para pós-inauguração.)`);
 
   if (AS_JSON) {
-    const outDir = path.join(process.cwd(), "results");
-    fs.mkdirSync(outDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const file = path.join(outDir, `franchise-brand-overlap-audit-${stamp}.json`);
+    const file = reportPath(`franchise-brand-overlap-audit-${stamp}.json`);
     fs.writeFileSync(file, JSON.stringify({ shop: SHOP, layer1Checked, brands: rows2 }, null, 2));
     console.log(`\nJSON: ${path.relative(process.cwd(), file)}`);
   }
