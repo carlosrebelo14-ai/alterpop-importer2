@@ -131,6 +131,7 @@ async function main() {
         FRANCHISE_UNKNOWN: metafieldValues(node, "franchise"),
         MISSING_FORMAT: metafieldValue(node, "format"),
         SUPPLIER_TOKENS: node.descriptionHtml,
+        VENDOR_UNMAPPED: node.vendor,
       };
       const expectedByCode = {
         PREFIX_RESIDUE: payload.title,
@@ -138,6 +139,7 @@ async function main() {
         FRANCHISE_UNKNOWN: payload.resolvedFranchise,
         MISSING_FORMAT: payload.resolvedFormat,
         SUPPLIER_TOKENS: payload.descriptionHtml,
+        VENDOR_UNMAPPED: payload.vendor,
       };
       findings.push({
         code: w.code,

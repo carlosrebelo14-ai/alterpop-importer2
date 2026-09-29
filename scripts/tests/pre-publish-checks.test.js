@@ -13,6 +13,7 @@ import {
   findUnknownFranchiseValues,
   checkMissingFormat,
   checkSupplierTokens,
+  checkVendorUnmapped,
   checkPriceRule,
   runPrePublishChecks,
   normalizeTitleForDuplicate,
@@ -235,7 +236,8 @@ check("cada verificação ativa tem de estar em PRE_PUBLISH_CHECKS (teste falha 
   assert.equal(PRE_PUBLISH_CHECKS.includes(checkFranchiseUnknown), true);
   assert.equal(PRE_PUBLISH_CHECKS.includes(checkMissingFormat), true);
   assert.equal(PRE_PUBLISH_CHECKS.includes(checkSupplierTokens), true);
-  assert.equal(PRE_PUBLISH_CHECKS.length, 6);
+  assert.equal(PRE_PUBLISH_CHECKS.includes(checkVendorUnmapped), true);
+  assert.equal(PRE_PUBLISH_CHECKS.length, 7);
 });
 
 if (failures) {
