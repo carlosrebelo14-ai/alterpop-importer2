@@ -9,7 +9,9 @@ import {
   formatMetafieldInput,
   formatMetafieldDeleteInput,
   emptiesByVendor,
+  formatInputFromCatalogRow,
 } from "../../lib/importer/catalog/formatBackfillPlan.js";
+import { extractProductFormat } from "../../lib/importer/catalog/formatExtractor.server.js";
 
 let failures = 0;
 function check(name, fn) {
@@ -119,6 +121,17 @@ check("metafield — list.single_line_text_field com o valor em lista", () => {
     type: "list.single_line_text_field",
     value: '["Home & Gifts"]',
   });
+});
+
+check("input — o mesmo do indexador: title atual, nunca originalTitle (congelado no 1.º INSERT)", () => {
+  // Caso: o feed mudou o título depois da 1.ª indexação. O indexador calcula pelo atual.
+  const row = { sku: "S", title: "Harry Potter Hedwig plush 20cm", originalTitle: "Harry Potter Hedwig 20cm", vendor: "FUNKO" };
+  assert.deepEqual(formatInputFromCatalogRow(row), { title: "Harry Potter Hedwig plush 20cm", vendor: "FUNKO" });
+  assert.equal(extractProductFormat(formatInputFromCatalogRow(row)), "Plush");
+});
+
+check("input — sem título cai para o SKU, como o indexador", () => {
+  assert.deepEqual(formatInputFromCatalogRow({ sku: "S1", title: null, vendor: null }), { title: "S1", vendor: "" });
 });
 
 if (failures) {
