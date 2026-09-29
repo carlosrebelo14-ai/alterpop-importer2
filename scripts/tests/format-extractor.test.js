@@ -87,10 +87,11 @@ check("dry-run 29/09 — Jakks Mario 13cm → Action Figure (omissão Jakks Paci
 });
 
 check("tamanho — 7 cm ainda é Mini Figure; 8 cm já não; sem \"figure\" não conta", () => {
-  assert.equal(fmt("One Piece Log Stories Luffy vs Local Sea figure 7cm", "BANPRESTO"), "Mini Figure");
-  assert.equal(fmt("One Piece Luffy Going Merry Log Stories figure 8cm", "BANPRESTO"), "Prize Figure");
+  // Jakks Pacific (omissão Action Figure): o tamanho vem antes da omissão.
+  assert.equal(fmt("Mario Kart Yoshi figure 7cm", "JAKKS PACIFIC"), "Mini Figure");
+  assert.equal(fmt("Mario Kart Yoshi figure 8cm", "JAKKS PACIFIC"), "Action Figure");
   assert.equal(fmt("Sonic plush toy 6cm", "JAKKS PACIFIC"), "Plush");
-  assert.equal(fmt("Harry Potter keyring 5cm", "STAR ACE"), null);
+  assert.equal(fmt("Harry Potter keyring 5cm", "SD TOYS"), null);
 });
 
 check("tamanho — linha do fabricante vence o tamanho (Funko Pop! pequeno continua Vinyl Figure)", () => {
@@ -105,6 +106,43 @@ check("tamanho — leitura: maior valor, decimais e intervalos", () => {
   // Dois tamanhos em cm: conta o maior — uma figura de 20 cm com base de 5 cm não é Mini.
   assert.equal(largestSizeCm("figure 5cm base, 20cm total"), 20);
   assert.equal(fmt("Dragon Ball Goku figure 5cm base 20cm", "JAKKS PACIFIC"), "Action Figure");
+});
+
+// ── decisão de 29/09 (PR #86): casos reais do backfill ──
+
+check("#86 — os 3 mealheiros Plastoy → Home & Gifts (\"money box\", não a omissão Mini Figure)", () => {
+  assert.equal(fmt("Dragon Ball Son Goku Kinton Cloud money box figure 22cm", "PLASTOY"), "Home & Gifts");
+  assert.equal(fmt("Dragon Ball Super Son Goku Super Saiyan Blue money box figure 15cm", "PLASTOY"), "Home & Gifts");
+  assert.equal(fmt("Dragon Ball Super Son Goku Super Saiyan money box figure 15cm", "PLASTOY"), "Home & Gifts");
+  assert.equal(fmt("Dragon Ball hucha Goku 20cm", "PLASTOY"), "Home & Gifts");
+});
+
+check("#86 — Banpresto é linha: Log Stories 7cm e Bakudog 6cm → Prize Figure (antes do tamanho)", () => {
+  assert.equal(fmt("One Piece Log Stories Monkey D Luffy vs Local Sea figure 7cm", "BANPRESTO"), "Prize Figure");
+  assert.equal(fmt("One Piece Log Stories Monkey D Luffy Roronoa Zoro figure 7cm", "BANPRESTO"), "Prize Figure");
+  assert.equal(fmt("My Hero Academia Bakudog Fluffy Puffy figure 6cm", "BANPRESTO"), "Prize Figure");
+});
+
+check("#86 — Banpresto: palavra explícita continua a vencer a linha (peluche Banpresto é Plush)", () => {
+  assert.equal(fmt("One Piece Chopper plush 20cm", "BANPRESTO"), "Plush");
+});
+
+check("#86 — Diamond Select fora da Gallery → Action Figure (Moria Orc, Merry, Pippin)", () => {
+  assert.equal(fmt("The Lord of the Rings Moria Orc figure 18cm", "DIAMOND SELECT"), "Action Figure");
+  assert.equal(fmt("The Lord of the Rings Merry Deluxe figure 10cm", "DIAMOND SELECT"), "Action Figure");
+  assert.equal(fmt("The Lord of the Rings Pippin Deluxe figure 10cm", "DIAMOND SELECT"), "Action Figure");
+});
+
+check("#86 — Diamond Select Gallery continua Statue (a linha vem antes da omissão)", () => {
+  assert.equal(fmt("Marvel Gallery Venom 25cm", "DIAMOND SELECT"), "Statue");
+});
+
+check("#86 — Star Ace → Action Figure (Aragorn Real Master 23cm)", () => {
+  assert.equal(fmt("The Lord of the Rings Aragorn Real Master figure 23cm", "STAR ACE"), "Action Figure");
+});
+
+check("#86 — SD Toys continua sem omissão: Gandalf en Moria fica vazio", () => {
+  assert.equal(fmt("The Lord of the Rings Gandalf En Moria 18cm", "SD TOYS"), null);
 });
 
 check("briefing — título sem pista e vendor sem omissão → vazio e MISSING_FORMAT", () => {
@@ -152,12 +190,12 @@ check("regra 2 — Ichibansho → Prize Figure, com qualquer vendor", () => {
 
 check("regra 2 — Gallery → Statue só na Diamond Select", () => {
   assert.equal(fmt("Marvel Gallery Venom 25cm", "DIAMOND SELECT"), "Statue");
-  // Vendor sem omissão (Star Ace) — Hasbro passou a ter omissão a 29/09.
-  assert.equal(fmt("Marvel Gallery Venom 25cm", "STAR ACE"), null);
+  // Vendor sem omissão (SD Toys) — Hasbro e Star Ace passaram a ter omissão a 29/09.
+  assert.equal(fmt("Marvel Gallery Venom 25cm", "SD TOYS"), null);
 });
 
 check("regra 2 — \"pop\" fora da Funko não é Vinyl Figure (\"Pop Culture\")", () => {
-  assert.equal(fmt("Pop Culture tote", "STAR ACE"), null);
+  assert.equal(fmt("Pop Culture tote", "SD TOYS"), null);
 });
 
 // ── regra 3: omissão por vendor ──
