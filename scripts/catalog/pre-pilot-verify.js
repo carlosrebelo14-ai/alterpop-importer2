@@ -102,6 +102,8 @@ import {
 import { planUniverseCollections } from "../../lib/importer/shopify/universeCollections.server.js";
 import { loadLiveDriftCycleState, MAX_AUTO_RECONCILE } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
 import { loadNewArrivalsCycleState, NEW_ARRIVAL_DAYS } from "../../lib/importer/shopify/newArrivals.server.js";
+import { fetchProductTags } from "../../lib/importer/shopify/productTags.server.js";
+import { findTagsOutsideAllowlist, ALLOWED_PRODUCT_TAGS } from "../../lib/importer/shopify/tagAllowlist.js";
 import { loadCollectionPublicationCycleState } from "../../lib/importer/shopify/collectionPublicationReconcileCycle.server.js";
 import { MAX_AUTO_PUBLISH } from "../../lib/importer/shopify/collectionPublication.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
@@ -673,6 +675,25 @@ async function main() {
       if (d.soNoMetafield.length) {
         console.log(`      ${d.handle}: só no alterpop.character (fora de products): ${d.soNoMetafield.join(", ")}`);
       }
+    }
+  }
+
+  // V18 — TAG_OUTSIDE_ALLOWLIST (N4, opção A, 29/09/2026). Lê as tags dos ACTIVE na loja,
+  // ao vivo. Vermelho com qualquer tag fora de ALLOWED_PRODUCT_TAGS, com a lista de
+  // produtos e tags. Fica vermelho até o tags-cleanup.js correr — é esse o sinal.
+  const tagged = await fetchProductTags(client, "status:active");
+  const tagCheck = findTagsOutsideAllowlist(tagged);
+  check(
+    "V18",
+    `TAG_OUTSIDE_ALLOWLIST — tags dos ${tagged.length} ACTIVE (permitidas: ${ALLOWED_PRODUCT_TAGS.join(", ")})`,
+    "0 produto(s) com tags fora da lista",
+    `${tagCheck.offenders.length} produto(s), ${tagCheck.distinctTags.length} tag(s) distinta(s)`,
+    tagCheck.ok
+  );
+  if (!tagCheck.ok) {
+    console.log(`      tags: ${tagCheck.distinctTags.map((t) => `${t.tag} (${t.count})`).join(", ")}`);
+    for (const o of tagCheck.offenders) {
+      console.log(`      ${o.handle} (${o.sku}): ${o.tags.join(", ")}`);
     }
   }
 
