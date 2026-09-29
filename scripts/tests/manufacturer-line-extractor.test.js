@@ -6,7 +6,6 @@
 import assert from "node:assert/strict";
 import {
   extractManufacturerLine,
-  isKnownFigureOnlyManufacturerLine,
 } from "../../lib/importer/catalog/manufacturerLineExtractor.server.js";
 
 let failures = 0;
@@ -133,51 +132,6 @@ check("título vazio/ausente não rebenta", () => {
   assert.equal(extractManufacturerLine({}), null);
 });
 
-// R2 (auditoria live, 17/09/2026) — isKnownFigureOnlyManufacturerLine, usado pelo
-// formatExtractor como fallback de formato.
-check("R2 · Banpresto inteiro conta como figura (qualquer linha do mapa)", () => {
-  assert.equal(
-    isKnownFigureOnlyManufacturerLine({ vendor: "Banpresto", title: "One Piece Luffy WCF 13cm" }),
-    true
-  );
-  assert.equal(
-    isKnownFigureOnlyManufacturerLine({ vendor: "Banpresto", title: "One Piece Luffy Grandista 25cm" }),
-    true
-  );
-});
-check("R2 · Tamashii Nations inteiro conta como figura", () => {
-  assert.equal(
-    isKnownFigureOnlyManufacturerLine({ vendor: "Tamashii Nations", title: "Goku S.H.Figuarts 15cm" }),
-    true
-  );
-});
-check("R2 · NECA só conta com a linha Ultimate", () => {
-  assert.equal(isKnownFigureOnlyManufacturerLine({ vendor: "NECA", title: "Predator Ultimate 18cm" }), true);
-  assert.equal(isKnownFigureOnlyManufacturerLine({ vendor: "NECA", title: "Alien Kenner Tribute" }), false);
-});
-check("R2 · McFarlane Toys só conta com DC Multiverse", () => {
-  assert.equal(
-    isKnownFigureOnlyManufacturerLine({ vendor: "McFarlane Toys", title: "Batman DC Multiverse 18cm" }),
-    true
-  );
-  assert.equal(
-    isKnownFigureOnlyManufacturerLine({ vendor: "McFarlane Toys", title: "Batman Theatrical Edition" }),
-    false
-  );
-});
-check("R2 · fabricante fora do mapa nunca conta", () => {
-  assert.equal(
-    isKnownFigureOnlyManufacturerLine({ vendor: "Desconhecido Ltd", title: "Something 13cm" }),
-    false
-  );
-});
-check("R2 · sem linha resolvida (nenhuma needle bate) nunca conta, mesmo em fabricante inteiro", () => {
-  assert.equal(
-    isKnownFigureOnlyManufacturerLine({ vendor: "Banpresto", title: "Produto sem needle nenhuma" }),
-    false
-  );
-});
-
 // P3 (ADENDA 3/5, 17/09/2026) — "Rides" é a linha POP! Rides da Funko, não ruído sem
 // informação. Corre sobre o título BRUTO (com "POP figure" ainda por tirar).
 check("P3 · Funko 'Rides' → POP! Rides (caso real: SKU 889698744041)", () => {
@@ -192,13 +146,6 @@ check("P3 · Funko 'Rides' → POP! Rides (caso real: SKU 889698744041)", () => 
 check("P3 · Funko sem 'rides' no título fica sem linha", () => {
   assert.equal(extractManufacturerLine({ vendor: "Funko", title: "POP figure Star Wars Luke Skywalker" }), null);
 });
-check("P3 · Funko não entra no fallback de formato do R2 — POP! Rides não é linha só-figuras", () => {
-  assert.equal(
-    isKnownFigureOnlyManufacturerLine({ vendor: "Funko", title: "Rides Star Wars Luke Skywalker" }),
-    false
-  );
-});
-
 if (failures) {
   console.error(`\n${failures} falha(s)`);
   process.exit(1);

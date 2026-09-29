@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 /**
- * BRIEFING BACKEND · Tarefa 34 (Decisão 18) — formatExtractor.server.js.
+ * C3 (briefing "catálogo limpo", 29/09/2026) — formatExtractor.server.js, vocabulário
+ * novo de alterpop.format. Casos da secção 6 do briefing + títulos reais do live (os 8
+ * Lord of the Rings ERIK sem formato na auditoria de 27/09).
  * Uso: node scripts/tests/format-extractor.test.js
  */
 import assert from "node:assert/strict";
 import {
   extractProductFormat,
-  FORMAT_VALUES,
-  APPROVED_FORMAT_VALUES,
+  FORMAT_VOCABULARY,
+  FORMAT_TITLE_KEYWORDS,
+  FORMAT_BY_LINE,
+  FORMAT_BY_VENDOR,
 } from "../../lib/importer/catalog/formatExtractor.server.js";
+import { checkMissingFormat } from "../../lib/importer/curation/prePublishChecks.server.js";
 
 let failures = 0;
 function check(name, fn) {
@@ -21,99 +26,124 @@ function check(name, fn) {
   }
 }
 
-check("POP figure → Figure", () => {
-  assert.equal(extractProductFormat({ title: "POP figure One Piece Luffy" }), "Figure");
+const fmt = (title, vendor = null) => extractProductFormat({ title, vendor });
+
+// ── vocabulário ──
+
+check("vocabulário — os 11 valores do briefing, sem Figure", () => {
+  assert.deepEqual([...FORMAT_VOCABULARY], [
+    "Vinyl Figure", "Prize Figure", "Statue", "Action Figure", "Mini Figure", "Model Kit",
+    "Plush", "Doll", "Puzzle", "Keychain", "Home & Gifts",
+  ]);
+  assert.equal(FORMAT_VOCABULARY.includes("Figure"), false);
 });
 
-check("Pocket POP Keychain → Keychain (Keychain vence Figure, mais específico)", () => {
-  assert.equal(extractProductFormat({ title: "Pocket POP Keychain Batman" }), "Keychain");
+check("vocabulário — todas as tabelas só produzem valores do vocabulário", () => {
+  const produced = [
+    ...FORMAT_TITLE_KEYWORDS.map((r) => r.format),
+    ...FORMAT_BY_LINE.map((r) => r.format),
+    ...Object.values(FORMAT_BY_VENDOR),
+  ];
+  for (const v of produced) assert.ok(FORMAT_VOCABULARY.includes(v), `"${v}" fora do vocabulário`);
 });
 
-check("Loungefly backpack → Backpack", () => {
-  assert.equal(extractProductFormat({ title: "Loungefly Disney Cars Mystery Blind Box Enamel Pins" }), "Backpack");
+// ── casos do briefing (secção 6) ──
+
+check("briefing — Funko com \"Pop!\" no título → Vinyl Figure", () => {
+  assert.equal(fmt("Pop! One Piece Monkey D Luffy", "FUNKO"), "Vinyl Figure");
+  assert.equal(fmt("POP figure Star Wars Luke Skywalker", "FUNKO"), "Vinyl Figure");
 });
 
-check("puzzle → Puzzle", () => {
-  assert.equal(extractProductFormat({ title: "Minecraft puzzle 3D 54pcs" }), "Puzzle");
+check("briefing — Funko porta-chaves → Keychain (regra 1 antes da linha Pop!)", () => {
+  assert.equal(fmt("Pocket POP Keychain Batman", "FUNKO"), "Keychain");
 });
 
-check("plush toy → Plush", () => {
-  assert.equal(extractProductFormat({ title: "Care Bears Good Luck Bear plush toy 35cm" }), "Plush");
+check("briefing — Banpresto → Prize Figure", () => {
+  assert.equal(fmt("One Piece Monkey D Luffy Gear 5 WCF Special 13cm", "BANPRESTO"), "Prize Figure");
 });
 
-check("mug → Mug", () => {
-  assert.equal(extractProductFormat({ title: "Rick and Morty Retro Poster mug" }), "Mug");
+check("briefing — ERIK candeeiro → Home & Gifts (caso real LOTR)", () => {
+  assert.equal(fmt("The Lord of the Rings Earendil lamp", "ERIK"), "Home & Gifts");
+  assert.equal(fmt("The Lord of the Rings One Ring lamp", "ERIK"), "Home & Gifts");
 });
 
-check("sem sinal nenhum → null", () => {
-  assert.equal(extractProductFormat({ title: "Form Words game" }), null);
+check("briefing — título sem pista e vendor sem omissão → vazio e MISSING_FORMAT", () => {
+  assert.equal(fmt("Gandalf en Moria 18cm", "ERIK"), null);
+  assert.equal(checkMissingFormat({ resolvedFormat: fmt("Gandalf en Moria 18cm", "ERIK") })?.code, "MISSING_FORMAT");
+});
+
+// ── regra 1: palavra explícita ──
+
+check("regra 1 — os restantes LOTR ERIK: calendário, suportes de livros, porta-chaves de parede", () => {
+  assert.equal(fmt("The Lord of the Rings 3D Nazgul perpetual calendar", "ERIK"), "Home & Gifts");
+  assert.equal(fmt("The Lord of the Rings Argonath bookends", "ERIK"), "Home & Gifts");
+  assert.equal(fmt("The Lord of the Rings Moria gate key hangers", "ERIK"), "Home & Gifts");
+});
+
+check("regra 1 — plush, puzzle, statue, bust, diorama, model kit, caneca", () => {
+  assert.equal(fmt("Care Bears Good Luck Bear plush toy 35cm"), "Plush");
+  assert.equal(fmt("Minecraft puzzle 3D 54pcs", "RAVENSBURGER"), "Puzzle");
+  assert.equal(fmt("Batman 1989 statue 30cm", "STAR ACE"), "Statue");
+  assert.equal(fmt("Robocop bust 1/2"), "Statue");
+  assert.equal(fmt("Marvel Gallery diorama Spider-Man"), "Statue");
+  assert.equal(fmt("Gundam RX-78-2 model kit 1/144", "BANDAI HOBBY"), "Model Kit");
+  assert.equal(fmt("Rick and Morty Retro Poster mug"), "Home & Gifts");
+});
+
+check("regra 1 — espanhol do feed e plural", () => {
+  assert.equal(fmt("Barbie Fashionista muñeca surtida"), "Doll");
+  assert.equal(fmt("Barbie Fashionista assorted dolls"), "Doll");
+  assert.equal(fmt("Harry Potter llavero Hedwig"), "Keychain");
+});
+
+check("regra 1 — palavra inteira, não substring (\"Ghostbusters\" não é \"bust\")", () => {
+  assert.equal(fmt("Ghostbusters Slimer 15cm"), null);
+});
+
+check("regra 1 — action figure explícita", () => {
+  assert.equal(fmt("Star Wars Black Series Boba Fett action figure 15cm", "HASBRO"), "Action Figure");
+});
+
+// ── regra 2: linha do fabricante ──
+
+check("regra 2 — Ichibansho → Prize Figure, com qualquer vendor", () => {
+  assert.equal(fmt("Dragon Ball Vegeta Ichibansho figure 17cm", "BANDAI SPIRITS"), "Prize Figure");
+});
+
+check("regra 2 — Gallery → Statue só na Diamond Select", () => {
+  assert.equal(fmt("Marvel Gallery Venom 25cm", "DIAMOND SELECT"), "Statue");
+  assert.equal(fmt("Marvel Gallery Venom 25cm", "HASBRO"), null);
+});
+
+check("regra 2 — \"pop\" fora da Funko não é Vinyl Figure (\"Pop Culture\")", () => {
+  assert.equal(fmt("Pop Culture tote", "HASBRO"), null);
+});
+
+// ── regra 3: omissão por vendor ──
+
+check("regra 3 — omissões do briefing: Funko, Banpresto, Bandai Hobby, Minix, Plastoy", () => {
+  assert.equal(fmt("Star Wars Luke Skywalker 9cm", "FUNKO"), "Vinyl Figure");
+  assert.equal(fmt("Goku 17cm", "BANPRESTO"), "Prize Figure");
+  assert.equal(fmt("RX-78-2 1/144", "BANDAI HOBBY"), "Model Kit");
+  assert.equal(fmt("Harry Potter 12cm", "MINIX"), "Mini Figure");
+  assert.equal(fmt("Tintin 8cm", "PLASTOY"), "Mini Figure");
+});
+
+check("regra 3 — vendor pela chave do feed (nome do mapa ou maiúsculas dão o mesmo)", () => {
+  assert.equal(fmt("Luke 9cm", "Funko"), "Vinyl Figure");
+  assert.equal(fmt("Luke 9cm", " funko "), "Vinyl Figure");
+});
+
+check("regra 3 — produto atípico da marca não leva a omissão (mochila Funko fica vazia)", () => {
+  assert.equal(fmt("Loungefly Disney Cars backpack", "FUNKO"), null);
+  assert.equal(fmt("Loungefly Disney Cars Mystery Blind Box Enamel Pins", "FUNKO"), null);
+});
+
+// ── regra 4 ──
+
+check("regra 4 — sem título e sem vendor → null", () => {
   assert.equal(extractProductFormat({}), null);
-});
-
-// R1 (auditoria live, 17/09/2026) — plural aceite, não só singular.
-check("R1 · plural 'figures' → Figure (caso real: pack Darth Vader & Luke Skywalker)", () => {
-  assert.equal(
-    extractProductFormat({ title: "POP pack 2 figures Star Wars Darth Vader & Luke Skywalker" }),
-    "Figure"
-  );
-});
-check("R1 · singular continua a bater (não regrediu)", () => {
-  assert.equal(extractProductFormat({ title: "POP figure One Piece Luffy" }), "Figure");
-});
-
-// R2 (auditoria live, 17/09/2026) — formato implícito pela manufacturer_line, só para
-// linhas confirmadas como sempre-figura, e só quando o título não dá formato nenhum.
-check("R2 · WCF (Banpresto, World Collectable Figure) sem a palavra 'figure' no título → Figure (caso real: Luffy Gear 5)", () => {
-  assert.equal(
-    extractProductFormat({ title: "One Piece Monkey D Luffy Gear 5 WCF Special 13cm", vendor: "Banpresto" }),
-    "Figure"
-  );
-});
-check("R2 · título já dá formato explícito vence sobre a linha implícita", () => {
-  assert.equal(
-    extractProductFormat({ title: "One Piece Luffy WCF figure 13cm", vendor: "Banpresto" }),
-    "Figure"
-  );
-});
-check("R2 · linha Tamashii (S.H.Figuarts) sem 'figure' no título → Figure", () => {
-  assert.equal(
-    extractProductFormat({ title: "Dragon Ball Z Goku S.H.Figuarts 15cm", vendor: "Tamashii Nations" }),
-    "Figure"
-  );
-});
-check("R2 · NECA Ultimate → Figure, mas outra linha NECA sem sinal fica null", () => {
-  assert.equal(extractProductFormat({ title: "Predator Ultimate 18cm", vendor: "NECA" }), "Figure");
-  assert.equal(extractProductFormat({ title: "Alien Kenner Tribute pack", vendor: "NECA" }), null);
-});
-check("R2 · McFarlane DC Multiverse → Figure, mas Theatrical Edition (fora da tabela) fica null", () => {
-  assert.equal(extractProductFormat({ title: "Batman DC Multiverse 18cm", vendor: "McFarlane Toys" }), "Figure");
-  assert.equal(extractProductFormat({ title: "Batman Theatrical Edition 18cm", vendor: "McFarlane Toys" }), null);
-});
-check("R2 · fabricante fora do mapa nunca infere formato", () => {
-  assert.equal(extractProductFormat({ title: "Something 13cm", vendor: "Desconhecido Ltd" }), null);
-});
-
-// R3/D2 (ADENDA 4, 17/09/2026) — o Carlos decidiu criar a categoria Doll. Substitui o
-// teste anterior (que documentava o null de propósito, antes da decisão).
-check("R3/D2 · 'doll' → Doll (caso real: Elsa doll, resolvido pela decisão do Carlos)", () => {
-  assert.equal(extractProductFormat({ title: "Disney Frozen Tea set Elsa doll 38cm" }), "Doll");
-});
-check("D2 · plural 'dolls' também bate (R1 continua a aplicar-se a Doll)", () => {
-  assert.equal(extractProductFormat({ title: "Barbie Fashionista assorted dolls" }), "Doll");
-});
-check("D2 · needle em espanhol do fornecedor ('muñeca')", () => {
-  assert.equal(extractProductFormat({ title: "Barbie Fashionista muñeca surtida" }), "Doll");
-});
-
-// D2 — auditoria de idioma: todos os VALORES de formato (não as needles) são em
-// inglês. Um valor fora da lista aprovada falha aqui, não só num relatório informal.
-check("D2 · FORMAT_VALUES nunca tem um valor fora da lista aprovada (auditoria de idioma)", () => {
-  for (const value of FORMAT_VALUES) {
-    assert.ok(
-      APPROVED_FORMAT_VALUES.includes(value),
-      `"${value}" não está em APPROVED_FORMAT_VALUES — decisão do Carlos em falta`
-    );
-  }
+  assert.equal(fmt("Form Words game"), null);
 });
 
 if (failures) {
