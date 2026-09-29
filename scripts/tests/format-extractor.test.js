@@ -12,6 +12,7 @@ import {
   FORMAT_TITLE_KEYWORDS,
   FORMAT_BY_LINE,
   FORMAT_BY_VENDOR,
+  largestSizeCm,
 } from "../../lib/importer/catalog/formatExtractor.server.js";
 import { checkMissingFormat } from "../../lib/importer/curation/prePublishChecks.server.js";
 
@@ -67,6 +68,45 @@ check("briefing — ERIK candeeiro → Home & Gifts (caso real LOTR)", () => {
   assert.equal(fmt("The Lord of the Rings One Ring lamp", "ERIK"), "Home & Gifts");
 });
 
+// ── decisão de 29/09: os 4 casos do dry-run do format-backfill ──
+
+check("dry-run 29/09 — Hasbro Armorer 10cm → Action Figure (omissão Hasbro)", () => {
+  assert.equal(fmt("Star Wars Carbonized Collection The Armorer figure 10cm Vintage", "HASBRO"), "Action Figure");
+});
+
+check("dry-run 29/09 — Jakks Tsum Tsum → Mini Figure (palavra-chave)", () => {
+  assert.equal(fmt("Disney Stitch Tsum Tsum Story Moment figure", "JAKKS PACIFIC"), "Mini Figure");
+});
+
+check("dry-run 29/09 — Jakks Mario Kart 6cm → Mini Figure (tamanho ≤ 7 cm, antes da omissão)", () => {
+  assert.equal(fmt("Mario Kart Spinout Luigi Kart figure 6cm", "JAKKS PACIFIC"), "Mini Figure");
+});
+
+check("dry-run 29/09 — Jakks Mario 13cm → Action Figure (omissão Jakks Pacific)", () => {
+  assert.equal(fmt("Super Mario Bros Mario figure 13cm", "JAKKS PACIFIC"), "Action Figure");
+});
+
+check("tamanho — 7 cm ainda é Mini Figure; 8 cm já não; sem \"figure\" não conta", () => {
+  assert.equal(fmt("One Piece Log Stories Luffy vs Local Sea figure 7cm", "BANPRESTO"), "Mini Figure");
+  assert.equal(fmt("One Piece Luffy Going Merry Log Stories figure 8cm", "BANPRESTO"), "Prize Figure");
+  assert.equal(fmt("Sonic plush toy 6cm", "JAKKS PACIFIC"), "Plush");
+  assert.equal(fmt("Harry Potter keyring 5cm", "STAR ACE"), null);
+});
+
+check("tamanho — linha do fabricante vence o tamanho (Funko Pop! pequeno continua Vinyl Figure)", () => {
+  assert.equal(fmt("Pop! Mini Luke Skywalker figure 5cm", "FUNKO"), "Vinyl Figure");
+});
+
+check("tamanho — leitura: maior valor, decimais e intervalos", () => {
+  assert.equal(largestSizeCm("figure 13.5cm"), 13.5);
+  assert.equal(largestSizeCm("figure 12/16cm"), 16);
+  assert.equal(largestSizeCm("figure 6 cm"), 6);
+  assert.equal(largestSizeCm("sem tamanho"), null);
+  // Dois tamanhos em cm: conta o maior — uma figura de 20 cm com base de 5 cm não é Mini.
+  assert.equal(largestSizeCm("figure 5cm base, 20cm total"), 20);
+  assert.equal(fmt("Dragon Ball Goku figure 5cm base 20cm", "JAKKS PACIFIC"), "Action Figure");
+});
+
 check("briefing — título sem pista e vendor sem omissão → vazio e MISSING_FORMAT", () => {
   assert.equal(fmt("Gandalf en Moria 18cm", "ERIK"), null);
   assert.equal(checkMissingFormat({ resolvedFormat: fmt("Gandalf en Moria 18cm", "ERIK") })?.code, "MISSING_FORMAT");
@@ -112,11 +152,12 @@ check("regra 2 — Ichibansho → Prize Figure, com qualquer vendor", () => {
 
 check("regra 2 — Gallery → Statue só na Diamond Select", () => {
   assert.equal(fmt("Marvel Gallery Venom 25cm", "DIAMOND SELECT"), "Statue");
-  assert.equal(fmt("Marvel Gallery Venom 25cm", "HASBRO"), null);
+  // Vendor sem omissão (Star Ace) — Hasbro passou a ter omissão a 29/09.
+  assert.equal(fmt("Marvel Gallery Venom 25cm", "STAR ACE"), null);
 });
 
 check("regra 2 — \"pop\" fora da Funko não é Vinyl Figure (\"Pop Culture\")", () => {
-  assert.equal(fmt("Pop Culture tote", "HASBRO"), null);
+  assert.equal(fmt("Pop Culture tote", "STAR ACE"), null);
 });
 
 // ── regra 3: omissão por vendor ──

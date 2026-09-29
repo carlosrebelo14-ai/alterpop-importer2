@@ -32,6 +32,7 @@ import {
   formatMetafieldInput,
   formatMetafieldDeleteInput,
   emptiesByVendor,
+  formatInputFromCatalogRow,
 } from "../../lib/importer/catalog/formatBackfillPlan.js";
 import { readSmartCollectionDefinitionUsage } from "../../lib/importer/shopify/metafieldSetup.js";
 import { writeNewArrivalMetafields as writeMetafieldsBatched } from "../../lib/importer/shopify/newArrivals.server.js";
@@ -104,7 +105,7 @@ async function readRows(client) {
     const row = sku
       ? await prisma.catalogProduct.findFirst({
           where: { shop: SHOP, sku },
-          select: { title: true, originalTitle: true, vendor: true, resolvedFormat: true },
+          select: { title: true, vendor: true, resolvedFormat: true },
         })
       : null;
     rows.push({
@@ -112,13 +113,13 @@ async function readRows(client) {
       handle: n.handle,
       sku,
       liveFormat: firstListValue(n.format?.value),
-      // Mesmo input que o indexador (catalogProducts.server.js): título bruto do feed.
-      computed: row ? extractProductFormat({ title: row.originalTitle || row.title, vendor: row.vendor || "" }) : null,
+      // Mesmo input que o indexador (catalogProducts.server.js) — formatInputFromCatalogRow.
+      computed: row ? extractProductFormat(formatInputFromCatalogRow({ ...row, sku })) : null,
       prismaFormat: row?.resolvedFormat ?? null,
       hasCatalogRow: !!row,
       syncLocked: n.syncLocked?.value === "true",
       vendor: row?.vendor || null,
-      title: row?.originalTitle || row?.title || null,
+      title: row?.title || null,
     });
   }
   return rows;
