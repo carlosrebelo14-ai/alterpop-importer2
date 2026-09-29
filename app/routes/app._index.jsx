@@ -1273,7 +1273,7 @@ export default function CurationDashboard() {
   );
 
   const confirmStagingSync = useCallback(
-    async (customTags = []) => {
+    async () => {
       setStagingOpen(false);
       if (stagingLiveMode) {
         setShopifyPublishBusy(true);
@@ -1283,7 +1283,6 @@ export default function CurationDashboard() {
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              customTags,
               skus: selectedSkus.length > 0 ? selectedSkus : approvedSkus,
             }),
           });

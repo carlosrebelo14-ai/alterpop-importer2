@@ -7,12 +7,16 @@
  * Uso: node scripts/tests/tag-allowlist.test.js
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ALLOWED_PRODUCT_TAGS,
   isAllowedTag,
   findTagsOutsideAllowlist,
   planTagsCleanup,
   probeTagBuilder,
+  rejectCustomTags,
 } from "../../lib/importer/shopify/tagAllowlist.js";
 import {
   buildShopifyProductTags,
@@ -129,6 +133,38 @@ check("limpeza — produto limpo não entra; processed = total", () => {
   const plan = planTagsCleanup([P(), P({ productId: "2", tags: ["alterpop"] }), P({ productId: "3", syncLocked: true })]);
   assert.equal(plan.clean, 1);
   assert.equal(plan.processed, 3);
+});
+
+// ── A2: custom tags fora do painel, recusados no endpoint ──
+
+check("A2 — customTags com valores é recusado com mensagem visível", () => {
+  const err = rejectCustomTags(["may-4th", "destaque"]);
+  assert.match(err, /customTags já não é suportado/);
+  assert.match(err, /Nada foi publicado/);
+  assert.match(rejectCustomTags("may-4th"), /customTags/);
+});
+
+check("A2 — sem customTags (ausente, [], \"\", só espaços) passa", () => {
+  for (const v of [undefined, null, [], "", "  ", ["", " "]]) assert.equal(rejectCustomTags(v), null, JSON.stringify(v));
+});
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
+
+check("A2 — o campo \"Tags personalizadas\" não volta ao SyncStagingModal (estático)", () => {
+  const src = read("app/components/SyncStagingModal.jsx");
+  assert.equal(/customTags|Tags personalizadas|TextField/.test(src), false);
+});
+
+check("A2 — o endpoint chama rejectCustomTags e responde 400, e já não passa customTags ao publisher (estático)", () => {
+  const src = read("app/routes/api.shopify-sync.jsx");
+  assert.match(src, /rejectCustomTags\(json\.customTags\)/);
+  // A condição e o return juntos — só a linha do 400 passava com a condição desligada.
+  assert.match(
+    src,
+    /if \(customTagsError && !isCancel\) \{\s*return Response\.json\(\{ ok: false, error: customTagsError \}, \{ status: 400 \}\);/,
+  );
+  assert.equal(/startApprovedShopifySyncInBackground\(session, \{[^}]*customTags/.test(src), false);
 });
 
 if (failures) {

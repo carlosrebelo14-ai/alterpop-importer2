@@ -14,7 +14,7 @@
  * V2 e V4 ficaram vermelhas para sempre: medem loja vazia e fila sem publicações, que
  * são pré-condições de um momento que já passou. Fixar o esperado em 8 só adiava o
  * problema até ao nono produto.
- *   SAÚDE CORRENTE (V3, V5–V17), por omissão — invariantes que têm de valer sempre, em
+ *   SAÚDE CORRENTE (V3, V5–V18), por omissão — invariantes que têm de valer sempre, em
  *     qualquer altura da vida da loja. É este que se corre de rotina.
  *   HISTÓRICO (V1, V2, V4), só com `--pre-wipe` — pré-condições da Tarefa 48, verdadeiras
  *     entre o wipe e o primeiro publish. Guardadas para poderem voltar a servir se
@@ -86,7 +86,7 @@
  * se algo escreveu um dos dois lados sem o outro. Sem Character ACTIVE ainda, é informativo.
  *
  * Correr na Fly:
- *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V17)
+ *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V18)
  *   node scripts/catalog/pre-pilot-verify.js --pre-wipe   # + histórico (V1, V2, V4)
  *   node scripts/catalog/pre-pilot-verify.js --aceitar-base  # aceita descida legítima
  */
@@ -307,7 +307,7 @@ function horasDesde(iso) {
 
 async function main() {
   console.log(
-    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V17)" : "saúde corrente (V3, V5–V17)"} ===\n`
+    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V18)" : "saúde corrente (V3, V5–V18)"} ===\n`
   );
 
   const session = await loadOfflineSessionForShop(SHOP);

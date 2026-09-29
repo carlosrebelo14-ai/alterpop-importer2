@@ -1,11 +1,9 @@
-import { useState } from "react";
 import {
   Modal,
   BlockStack,
   Text,
   Banner,
   List,
-  TextField,
 } from "@shopify/polaris";
 import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
 
@@ -13,7 +11,7 @@ import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
  * @param {{
  *   open: boolean,
  *   onClose: () => void,
- *   onConfirm: (customTags?: string[]) => void,
+ *   onConfirm: () => void,
  *   loading?: boolean,
  *   confirming?: boolean,
  *   summary: object | null,
@@ -29,7 +27,6 @@ export function SyncStagingModal({
   summary,
   liveMode = false,
 }) {
-  const [customTagsInput, setCustomTagsInput] = useState("");
   const title = liveMode
     ? "Confirmar sincronização com Shopify"
     : "Resumo de importação (staging)";
@@ -41,13 +38,8 @@ export function SyncStagingModal({
       title={title}
       primaryAction={{
         content: liveMode ? "Sim, enviar para Shopify" : "Iniciar sincronização",
-        onAction: () => {
-          const tags = customTagsInput
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean);
-          onConfirm(tags);
-        },
+        // Sem tags por lote: os produtos só levam "alterpop" (opção A, 29/09/2026).
+        onAction: () => onConfirm(),
         loading: confirming,
         disabled: loading || !summary?.approvedCount,
       }}
@@ -91,14 +83,6 @@ export function SyncStagingModal({
                   {`${summary.missingSkus.length} SKU(s) aprovados não estão no índice do catálogo — serão ignorados até reindexar.`}
                 </Banner>
               )}
-
-              <TextField
-                label="Tags personalizadas para este lote (opcional)"
-                value={customTagsInput}
-                onChange={setCustomTagsInput}
-                helpText="Separa por vírgulas. Ex: may-4th, star-wars-2026, destaque-maio"
-                autoComplete="off"
-              />
 
               <Banner tone={liveMode ? "warning" : "info"}>
                 {liveMode
