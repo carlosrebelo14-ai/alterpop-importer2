@@ -13,6 +13,7 @@ import {
   ShopifyAuthSessionError,
 } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { isShopifyResetRunning } from "../../lib/importer/shopify/shopifyResetJob.server.js";
+import { rejectCustomTags } from "../../lib/importer/shopify/tagAllowlist.js";
 
 /**
  * GET /api/shopify-sync — estado do job em curso (polling UI).
@@ -40,7 +41,7 @@ export const action = async ({ request }) => {
 
   const { session } = await authenticateAdmin(request);
 
-  let customTags = [];
+  let customTagsError = null;
   let requestedSkus = null;
   let force = false;
   let clearLock = false;
@@ -56,14 +57,17 @@ export const action = async ({ request }) => {
     if (json.force) force = true;
     if (json.clearLock) clearLock = true;
     if (json.cancel || json.intent === "cancel") isCancel = true;
-    if (Array.isArray(json.customTags)) {
-      customTags = json.customTags.map(String).filter(Boolean);
-    }
+    customTagsError = rejectCustomTags(json.customTags);
     if (Array.isArray(json.skus) && json.skus.length > 0) {
       requestedSkus = json.skus.map(String).filter(Boolean);
     }
   } catch {
     /* sem body */
+  }
+
+  // A2 (29/09/2026): customTags recusado com erro visível — nunca ignorado em silêncio.
+  if (customTagsError && !isCancel) {
+    return Response.json({ ok: false, error: customTagsError }, { status: 400 });
   }
 
   // Handle cancellation
@@ -130,7 +134,7 @@ export const action = async ({ request }) => {
   }
 
   await initShopifySyncJob(session.shop, approvedSkus.length);
-  startApprovedShopifySyncInBackground(session, { customTags, skus: approvedSkus });
+  startApprovedShopifySyncInBackground(session, { skus: approvedSkus });
 
   const status = await readShopifySyncStatus(session.shop);
 
