@@ -10,6 +10,9 @@ import {
   brandKey,
   resolveBrandDisplayName,
   planVendorBackfill,
+  rewriteVendorLink,
+  onlyVendorLinkChanged,
+  vendorLinkToken,
 } from "../../lib/importer/catalog/brandDisplayNames.js";
 import {
   mapCatalogProductToShopifyPayload,
@@ -140,6 +143,70 @@ await check("backfill — a chave é o vendor do feed (Prisma), não o live; pro
   assert.deepEqual(plan.updates.map((u) => u.to), ["SD Toys"]);
   assert.equal(plan.noVendor, 1);
   assert.equal(plan.processed, 2);
+});
+
+// ── ajuste de 29/09: link de marca na descrição ──
+
+const DESC = (vendor) => buildProductDescriptionHtml({ sku: "X", title: "Luffy", vendor: "BANPRESTO" }).replace(/filter\.p\.vendor=Banpresto"/g, `filter.p.vendor=${encodeURIComponent(vendor)}"`);
+
+await check("link — troca filter.p.vendor=BANPRESTO por filter.p.vendor=Banpresto, nada mais", () => {
+  const before = DESC("BANPRESTO");
+  const r = rewriteVendorLink(before, "BANPRESTO", "Banpresto");
+  assert.equal(r.ok, true);
+  assert.equal(r.replaced, 1);
+  assert.ok(r.html.includes('filter.p.vendor=Banpresto"'));
+  assert.equal(r.html.includes('filter.p.vendor=BANPRESTO"'), false);
+  assert.equal(r.html.length, before.length);
+});
+
+await check("link — codificado: SD TOYS → SD%20Toys", () => {
+  const r = rewriteVendorLink('<a href="/collections/all?filter.p.vendor=SD%20TOYS">x</a>', "SD TOYS", "SD Toys");
+  assert.equal(r.html, '<a href="/collections/all?filter.p.vendor=SD%20Toys">x</a>');
+});
+
+await check("link — não toca num vendor mais longo com o mesmo início (FUNKO vs FUNKO%20SPAIN)", () => {
+  const html = '<a href="?filter.p.vendor=FUNKO%20SPAIN">a</a><a href="?filter.p.vendor=FUNKO">b</a>';
+  const r = rewriteVendorLink(html, "FUNKO", "Funko");
+  assert.equal(r.html, '<a href="?filter.p.vendor=FUNKO%20SPAIN">a</a><a href="?filter.p.vendor=Funko">b</a>');
+});
+
+await check("link — descrição sem link: ok, nada a trocar", () => {
+  assert.deepEqual(rewriteVendorLink("<p>x</p>", "FUNKO", "Funko"), { ok: true, html: "<p>x</p>", replaced: 0, reason: null });
+});
+
+await check("guarda — recusa se a descrição já tiver o link novo (troca ambígua)", () => {
+  const r = rewriteVendorLink('<a href="?filter.p.vendor=FUNKO">a</a><a href="?filter.p.vendor=Funko">b</a>', "FUNKO", "Funko");
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /ambígua/);
+});
+
+await check("guarda — recusa se a descrição mudar fora do link (substituição defeituosa injetada)", () => {
+  const oldT = vendorLinkToken("FUNKO");
+  const newT = vendorLinkToken("Funko");
+  const original = `<p>Funko Pop</p><a href="?${oldT}>b</a>`;
+  const tampered = `<p>FUNKO POP</p><a href="?${newT}>b</a>`;
+  assert.equal(onlyVendorLinkChanged(original, tampered, oldT, newT), false);
+  assert.equal(onlyVendorLinkChanged(original, original.split(oldT).join(newT), oldT, newT), true);
+  const r = rewriteVendorLink(original, "FUNKO", "Funko", () => false);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /fora do link/);
+});
+
+await check("plano — produto recusado não entra (nem vendor nem descrição); os outros seguem", () => {
+  const ok = P({ productId: "1", descriptionHtml: DESC("BANPRESTO") });
+  const bad = P({ productId: "2", descriptionHtml: '<a href="?filter.p.vendor=BANPRESTO">a</a><a href="?filter.p.vendor=Banpresto">b</a>' });
+  const plan = planVendorBackfill([ok, bad]);
+  assert.deepEqual(plan.updates.map((u) => u.productId), ["1"]);
+  assert.deepEqual(plan.refused.map((u) => u.productId), ["2"]);
+  assert.equal(plan.processed, 2);
+});
+
+await check("plano — descriptionHtml só vai no input quando o link mudou", () => {
+  const withLink = planVendorBackfill([P({ descriptionHtml: DESC("BANPRESTO") })]).updates[0];
+  assert.ok(withLink.descriptionHtml.includes('filter.p.vendor=Banpresto"'));
+  assert.equal(withLink.linksReplaced, 1);
+  const noLink = planVendorBackfill([P({ descriptionHtml: "<p>x</p>" })]).updates[0];
+  assert.equal(noLink.descriptionHtml, null);
 });
 
 if (failures) {

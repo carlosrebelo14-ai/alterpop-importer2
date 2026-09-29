@@ -3,7 +3,9 @@
  * C3 (briefing "catálogo limpo", 29/09/2026) — alterpop.format dos ACTIVE passa ao
  * vocabulário novo (FORMAT_VOCABULARY, formatExtractor.server.js). `Figure` sai.
  *
- * Dry-run por omissão. Escreve só com --execute, e só com metafieldsSet.
+ * Dry-run por omissão. Escreve só com --execute: metafieldsSet para os valores novos e
+ * metafieldsDelete em alterpop.format para os que ficam vazios mas têm valor live
+ * antigo (EXCEÇÃO à regra de escrita, só neste script — decisão de 29/09/2026).
  *
  * Recusa escrever se:
  *   1. alguma regra de smart collection usar alterpop.format (pré-requisito do
@@ -15,11 +17,8 @@
  *      contrário.
  * sync_locked → de fora sem --include-locked.
  *
- * Fica fora (reportado, não escrito):
- *   - produtos que ficam vazios mas têm valor live antigo ("Figure"): tirar o valor pede
- *     metafieldsDelete, fora da regra de escrita — decisão à parte;
- *   - risco de título: produto que tinha formato e fica vazio — a guarda do titleCleaner
- *     deixa de tirar o prefixo de formato na próxima indexação.
+ * Reportado, não escrito: risco de título — produto que tinha formato e fica vazio; a
+ * guarda do titleCleaner deixa de tirar o prefixo de formato na próxima indexação.
  *
  *   flyctl ssh console -a alterpop-importer-app -C "node scripts/catalog/format-backfill.js"
  *   flyctl ssh console -a alterpop-importer-app -C "node scripts/catalog/format-backfill.js --execute"
@@ -28,7 +27,12 @@ import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionF
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { extractProductFormat, FORMAT_VOCABULARY } from "../../lib/importer/catalog/formatExtractor.server.js";
-import { planFormatBackfill, formatMetafieldInput } from "../../lib/importer/catalog/formatBackfillPlan.js";
+import {
+  planFormatBackfill,
+  formatMetafieldInput,
+  formatMetafieldDeleteInput,
+  emptiesByVendor,
+} from "../../lib/importer/catalog/formatBackfillPlan.js";
 import { readSmartCollectionDefinitionUsage } from "../../lib/importer/shopify/metafieldSetup.js";
 import { writeNewArrivalMetafields as writeMetafieldsBatched } from "../../lib/importer/shopify/newArrivals.server.js";
 import { reportBatchDone } from "../../lib/maintenance/batchReport.js";
@@ -50,6 +54,15 @@ const READ = `
         format: metafield(namespace: "alterpop", key: "format") { value }
         syncLocked: metafield(namespace: "ociostock", key: "sync_locked") { value }
       }
+    }
+  }
+`;
+
+const METAFIELDS_DELETE = `
+  mutation FormatBackfillClear($metafields: [MetafieldIdentifierInput!]!) {
+    metafieldsDelete(metafields: $metafields) {
+      deletedMetafields { ownerId namespace key }
+      userErrors { field message }
     }
   }
 `;
@@ -132,16 +145,18 @@ async function main() {
   const plan = planFormatBackfill(rows, { includeLocked: INCLUDE_LOCKED });
   if (plan.processed !== rows.length) fatal(`processed (${plan.processed}) != lidos (${rows.length})`);
 
-  console.log(`\nACTIVE: ${rows.length} · a escrever: ${plan.sets.length} · já certos: ${plan.alreadyOk.length} · ficam vazios: ${plan.staysEmpty.length + plan.liveToClear.length} · sem linha no catálogo: ${plan.noCatalogRow.length} · sync_locked de fora: ${plan.lockedSkipped.length}`);
+  console.log(`\nACTIVE: ${rows.length} · a escrever: ${plan.sets.length} · a apagar: ${plan.liveToClear.length} · já certos: ${plan.alreadyOk.length} · ficam vazios: ${plan.staysEmpty.length + plan.liveToClear.length} · sem linha no catálogo: ${plan.noCatalogRow.length} · sync_locked de fora: ${plan.lockedSkipped.length}`);
   printCounts("antes (live)", plan.before);
   printCounts("depois (com este --execute)", plan.after);
 
-  console.log(`\nficam vazios (MISSING_FORMAT) — ${plan.staysEmpty.length + plan.liveToClear.length}:`);
-  for (const r of [...plan.liveToClear, ...plan.staysEmpty]) {
-    console.log(`  ${r.sku}  ${r.handle}  vendor=${r.vendor}  live=${r.liveFormat ?? "—"}  "${r.title}"`);
+  const empties = emptiesByVendor(plan);
+  console.log(`\nficam vazios (MISSING_FORMAT) — ${plan.staysEmpty.length + plan.liveToClear.length}, por marca:`);
+  for (const g of empties) {
+    console.log(`  ${g.vendor} — ${g.count}`);
+    for (const r of g.rows) console.log(`    ${r.sku}  ${r.handle}  live=${r.liveFormat ?? "—"}${plan.liveToClear.includes(r) ? " → metafieldsDelete" : ""}  "${r.title}"`);
   }
   if (plan.liveToClear.length) {
-    console.log(`\n⚠ ${plan.liveToClear.length} ficam vazios mas têm valor live antigo — este script não o apaga (metafieldsDelete fora da regra). Ficam com o valor antigo até decisão.`);
+    console.log(`\n${plan.liveToClear.length} com valor live antigo levam metafieldsDelete em alterpop.format.`);
     console.log(`⚠ risco de título: estes ${plan.liveToClear.length} tinham formato e deixam de ter — na próxima indexação o titleCleaner deixa de tirar o prefixo de formato do título.`);
   }
   for (const r of plan.lockedSkipped) console.log(`  sync_locked, de fora: ${r.sku} ${r.handle} (${r.liveFormat} → ${r.computed})`);
@@ -163,12 +178,13 @@ async function main() {
   if (!EXECUTE) {
     console.log(`\n[dry-run] a escrever:`);
     for (const r of plan.sets) console.log(`  ${r.sku}  ${r.handle}: ${r.liveFormat ?? "—"} → ${r.computed}`);
+    for (const r of plan.liveToClear) console.log(`  ${r.sku}  ${r.handle}: ${r.liveFormat} → (apagado)`);
     reportBatchDone({
       tag: TAG,
       itemsRead: rows.length,
       processed: plan.processed,
       total: rows.length,
-      extra: `dry-run, nada escrito · a_escrever=${plan.sets.length} vazios=${plan.staysEmpty.length + plan.liveToClear.length}`,
+      extra: `dry-run, nada escrito · a_escrever=${plan.sets.length} a_apagar=${plan.liveToClear.length} vazios=${plan.staysEmpty.length + plan.liveToClear.length}`,
     });
     return;
   }
@@ -176,15 +192,31 @@ async function main() {
   const { written, errors } = await writeMetafieldsBatched(client, plan.sets.map((r) => formatMetafieldInput(r.productId, r.computed)));
   for (const e of errors) console.error(`[${TAG}] ERRO metafieldsSet (${e.productIds.join(", ")}): ${e.message}`);
 
+  // Vazios com valor live antigo: metafieldsDelete, em lotes de 25.
+  let cleared = 0;
+  for (let i = 0; i < plan.liveToClear.length; i += 25) {
+    const chunk = plan.liveToClear.slice(i, i + 25);
+    try {
+      const data = await client.graphql(METAFIELDS_DELETE, { metafields: chunk.map((r) => formatMetafieldDeleteInput(r.productId)) });
+      const ue = data.metafieldsDelete?.userErrors || [];
+      if (ue.length) throw new Error(ue.map((e) => e.message).join("; "));
+      cleared += (data.metafieldsDelete?.deletedMetafields || []).filter(Boolean).length;
+    } catch (err) {
+      errors.push({ productIds: chunk.map((r) => r.productId), message: err?.message || String(err) });
+      console.error(`[${TAG}] ERRO metafieldsDelete: ${err?.message || err}`);
+    }
+  }
+
   const after = planFormatBackfill(await readRows(client), { includeLocked: INCLUDE_LOCKED });
-  console.log(`\nreleitura: a escrever=${after.sets.length} (esperado 0)`);
+  console.log(`\nreleitura: a escrever=${after.sets.length} a apagar=${after.liveToClear.length} (esperado 0 e 0)`);
   printCounts("live depois", after.before);
   reportBatchDone({
     tag: TAG,
-    itemsRead: plan.sets.length,
-    processed: written,
-    total: plan.sets.length,
-    errorCount: errors.length + after.sets.length,
+    itemsRead: plan.sets.length + plan.liveToClear.length,
+    processed: written + cleared,
+    total: plan.sets.length + plan.liveToClear.length,
+    errorCount: errors.length + after.sets.length + after.liveToClear.length,
+    extra: `escritos=${written} apagados=${cleared}`,
   });
 }
 

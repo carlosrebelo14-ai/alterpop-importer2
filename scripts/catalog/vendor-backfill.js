@@ -4,16 +4,20 @@
  * ("BANPRESTO") para o nome do mapa BRAND_DISPLAY_NAMES ("Banpresto").
  *
  * Dry-run por omissão. Escreve só com --execute. EXCEÇÃO à regra de escrita, só neste
- * script: productUpdate com input { id, vendor } e mais nada.
+ * script: productUpdate com input { id, vendor, descriptionHtml } e mais nada.
+ *
+ * descriptionHtml (ajuste de 29/09): as descrições têm o link de marca
+ * filter.p.vendor=<CHAVE>; sem trocar, partiam todas ao mesmo tempo que o vendor muda.
+ * Troca SÓ esse link (rewriteVendorLink, brandDisplayNames.js); se a descrição mudasse
+ * em qualquer outro ponto, o produto é RECUSADO inteiro — nem vendor nem descrição.
+ * O texto visível da marca na descrição fica para a republicação.
  *
  * Chave: vendor do feed em CatalogProduct (Prisma); sem linha no catálogo, o vendor live.
  * Vendor fora do mapa → VENDOR_UNMAPPED, não toca. sync_locked → de fora sem
  * --include-locked.
  *
- * O dry-run também mede o que este script NÃO muda (fora da exceção de escrita):
- *   - descrições com link filter.p.vendor=<valor antigo> — deixam de bater com o vendor
- *     novo até o produto ser republicado (o publisher reescreve a descrição);
- *   - ociostock.brand com o valor antigo — o publisher reescreve-o na republicação.
+ * O dry-run também mede o que este script NÃO muda: ociostock.brand com o valor antigo
+ * (o publisher reescreve-o na republicação).
  *
  *   flyctl ssh console -a alterpop-importer-app -C "node scripts/catalog/vendor-backfill.js"
  *   flyctl ssh console -a alterpop-importer-app -C "node scripts/catalog/vendor-backfill.js --execute"
@@ -21,7 +25,7 @@
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
-import { planVendorBackfill, BRAND_DISPLAY_NAMES } from "../../lib/importer/catalog/brandDisplayNames.js";
+import { planVendorBackfill, vendorLinkToken, BRAND_DISPLAY_NAMES } from "../../lib/importer/catalog/brandDisplayNames.js";
 import { reportBatchDone } from "../../lib/maintenance/batchReport.js";
 
 const TAG = "vendor-backfill";
@@ -50,7 +54,7 @@ const READ = `
 const UPDATE = `
   mutation VendorBackfillUpdate($product: ProductUpdateInput!) {
     productUpdate(product: $product) {
-      product { id vendor }
+      product { id vendor descriptionHtml }
       userErrors { field message }
     }
   }
@@ -100,12 +104,20 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`\nACTIVE: ${products.length} · a mudar: ${plan.updates.length} · já certos: ${plan.alreadyOk} · VENDOR_UNMAPPED: ${plan.unmapped.length} · sync_locked de fora: ${plan.lockedSkipped.length} · sem vendor: ${plan.noVendor}`);
+  console.log(`\nACTIVE: ${products.length} · a mudar: ${plan.updates.length} · já certos: ${plan.alreadyOk} · recusados: ${plan.refused.length} · VENDOR_UNMAPPED: ${plan.unmapped.length} · sync_locked de fora: ${plan.lockedSkipped.length} · sem vendor: ${plan.noVendor}`);
 
   const byChange = new Map();
   for (const u of plan.updates) byChange.set(`${u.from} → ${u.to}`, (byChange.get(`${u.from} → ${u.to}`) || 0) + 1);
-  console.log(`\nmudanças:`);
+  console.log(`\nmudanças de vendor:`);
   for (const [k, n] of [...byChange].sort((a, b) => b[1] - a[1])) console.log(`  ${String(n).padStart(4)}  ${k}`);
+
+  const withLink = plan.updates.filter((u) => u.linksReplaced > 0);
+  console.log(`\nlink de marca na descrição: ${withLink.length} de ${plan.updates.length} a trocar (os outros não têm o link)`);
+
+  if (plan.refused.length) {
+    console.log(`\nRECUSADOS — descrição mudava fora do link, nada escrito nestes:`);
+    for (const r of plan.refused) console.log(`  ${r.sku}  ${r.handle}: ${r.reason}`);
+  }
 
   if (plan.unmapped.length) {
     const byKey = new Map();
@@ -115,15 +127,15 @@ async function main() {
   }
   for (const l of plan.lockedSkipped) console.log(`  sync_locked, de fora: ${l.sku} ${l.handle} (${l.from} → ${l.to})`);
 
-  // O que este script não muda.
   const toUpdateIds = new Set(plan.updates.map((u) => u.productId));
-  const staleLinks = products.filter(
-    (p) => toUpdateIds.has(p.productId) && p.liveVendor && p.descriptionHtml.includes(`filter.p.vendor=${encodeURIComponent(p.liveVendor)}`),
-  );
   const staleBrand = products.filter((p) => toUpdateIds.has(p.productId) && p.brand && p.brand === p.liveVendor);
-  console.log(`\nfora da exceção de escrita (corrige-se na republicação, o publisher reescreve):`);
-  console.log(`  descrições com link filter.p.vendor=<valor antigo>: ${staleLinks.length}`);
-  console.log(`  ociostock.brand com o valor antigo: ${staleBrand.length}`);
+  console.log(`\nfora deste script (corrige-se na republicação): ociostock.brand com o valor antigo: ${staleBrand.length}`);
+
+  console.log(`\npor produto (vendor antes → depois · link antes → depois):`);
+  for (const u of plan.updates) {
+    const link = u.linksReplaced > 0 ? `${vendorLinkToken(u.from).slice(0, -1)} → ${vendorLinkToken(u.to).slice(0, -1)} (${u.linksReplaced})` : "sem link";
+    console.log(`  ${u.sku}  ${u.handle}: ${u.from} → ${u.to} · ${link}`);
+  }
 
   if (!EXECUTE) {
     reportBatchDone({
@@ -131,7 +143,7 @@ async function main() {
       itemsRead: products.length,
       processed: plan.processed,
       total: products.length,
-      extra: `dry-run, nada escrito · a_mudar=${plan.updates.length} unmapped=${plan.unmapped.length}`,
+      extra: `dry-run, nada escrito · a_mudar=${plan.updates.length} links=${withLink.length} recusados=${plan.refused.length} unmapped=${plan.unmapped.length}`,
     });
     return;
   }
@@ -140,10 +152,16 @@ async function main() {
   const errors = [];
   for (const u of plan.updates) {
     try {
-      const data = await client.graphql(UPDATE, { product: { id: u.productId, vendor: u.to } });
+      const input = { id: u.productId, vendor: u.to };
+      if (u.descriptionHtml != null) input.descriptionHtml = u.descriptionHtml;
+      const data = await client.graphql(UPDATE, { product: input });
       const ue = data.productUpdate?.userErrors || [];
       if (ue.length) throw new Error(ue.map((e) => e.message).join("; "));
-      if (data.productUpdate?.product?.vendor !== u.to) throw new Error(`devolveu vendor=${data.productUpdate?.product?.vendor}`);
+      const got = data.productUpdate?.product;
+      if (got?.vendor !== u.to) throw new Error(`devolveu vendor=${got?.vendor}`);
+      if (u.descriptionHtml != null && !String(got?.descriptionHtml || "").includes(vendorLinkToken(u.to))) {
+        throw new Error("descrição devolvida sem o link novo");
+      }
       done += 1;
     } catch (err) {
       errors.push({ ...u, message: err?.message || String(err) });
@@ -158,7 +176,9 @@ async function main() {
     itemsRead: plan.updates.length,
     processed: done,
     total: plan.updates.length,
-    errorCount: errors.length + after.updates.length,
+    // Recusados contam como erro: ficaram por migrar e pedem olho humano.
+    errorCount: errors.length + after.updates.length + plan.refused.length,
+    extra: `recusados=${plan.refused.length}`,
   });
 }
 

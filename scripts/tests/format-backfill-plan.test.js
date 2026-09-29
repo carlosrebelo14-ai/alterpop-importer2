@@ -4,7 +4,12 @@
  * Uso: node scripts/tests/format-backfill-plan.test.js
  */
 import assert from "node:assert/strict";
-import { planFormatBackfill, formatMetafieldInput } from "../../lib/importer/catalog/formatBackfillPlan.js";
+import {
+  planFormatBackfill,
+  formatMetafieldInput,
+  formatMetafieldDeleteInput,
+  emptiesByVendor,
+} from "../../lib/importer/catalog/formatBackfillPlan.js";
 
 let failures = 0;
 function check(name, fn) {
@@ -61,10 +66,32 @@ check("vazio — sem valor live fica na lista dos vazios", () => {
   assert.equal(p.sets.length, 0);
 });
 
-check("vazio — com valor live antigo vai para liveToClear, nunca é escrito (metafieldsDelete fora da regra)", () => {
+check("vazio — com valor live antigo (\"Figure\") vai para liveToClear → metafieldsDelete, nunca metafieldsSet", () => {
   const p = planFormatBackfill([R({ liveFormat: "Figure", computed: null, prismaFormat: null })]);
   assert.equal(p.liveToClear.length, 1);
   assert.equal(p.sets.length, 0);
+  assert.deepEqual(Object.fromEntries(p.after), { "(vazio)": 1 });
+});
+
+check("vazio — sync_locked com valor live não é apagado sem includeLocked", () => {
+  const locked = R({ liveFormat: "Figure", computed: null, prismaFormat: null, syncLocked: true });
+  assert.equal(planFormatBackfill([locked]).liveToClear.length, 0);
+  assert.equal(planFormatBackfill([locked]).lockedSkipped.length, 1);
+  assert.equal(planFormatBackfill([locked], { includeLocked: true }).liveToClear.length, 1);
+});
+
+check("metafieldsDelete — identificador de alterpop.format", () => {
+  assert.deepEqual(formatMetafieldDeleteInput("gid://shopify/Product/9"), { ownerId: "gid://shopify/Product/9", namespace: "alterpop", key: "format" });
+});
+
+check("vazios por marca — os dois tipos de vazio, agrupados e ordenados por contagem", () => {
+  const p = planFormatBackfill([
+    R({ vendor: "ERIK", liveFormat: "Figure", computed: null, prismaFormat: null }),
+    R({ vendor: "ERIK", liveFormat: null, computed: null, prismaFormat: null }),
+    R({ vendor: "SD TOYS", liveFormat: null, computed: null, prismaFormat: null }),
+    R({ vendor: "FUNKO" }),
+  ]);
+  assert.deepEqual(emptiesByVendor(p).map((g) => [g.vendor, g.count]), [["ERIK", 2], ["SD TOYS", 1]]);
 });
 
 check("sync_locked de fora sem includeLocked; entra com includeLocked", () => {
