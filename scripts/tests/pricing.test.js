@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Briefing "Preço com margem e teto de mercado" (07/10/2026) — pricing.server.js.
+ * Briefing "Preço com margem e teto de mercado" (07/10/2026) + revisão do dry-run
+ * (piso de 80 % do PVPR, estado PISO_PVPR) — pricing.server.js.
  * Tabelas de teste do briefing + fronteiras + entradas inválidas + paridade
  * painel/publisher.
  * Uso: node scripts/tests/pricing.test.js
@@ -47,6 +48,9 @@ for (const [dist, pvpr, price, status] of [
   [12499, 22995, 21190, "MARGEM"],
   [999, 1295, 1350, "ACIMA_PVPR"],
   [999, null, 1750, "SEM_PVPR"],
+  // Revisão do dry-run — piso de 80 % do PVPR (custo anormalmente baixo face ao PVPR).
+  [1299, 4195, 3390, "PISO_PVPR"], // One Piece Film Red: custo 15,72, PVPR 41,95
+  [999, 2995, 2450, "PISO_PVPR"], // Star Wars Armorer: custo 12,09, PVPR 29,95
 ]) {
   check(`${dist / 100} / PVPR ${pvpr == null ? "vazio" : pvpr / 100} → ${price / 100} ${status}`, () => {
     const r = finalPrice(dist, pvpr, 40);
@@ -96,15 +100,27 @@ check("roundDown nunca sobe, final sempre válido, e é o maior possível", () =
   }
 });
 
-console.log("Regra — preço nunca acima do PVPR, nunca abaixo do custo + 10 %");
-check("varrimento de custos e PVPR", () => {
-  for (let dist = 100; dist <= 20000; dist += 37) {
-    for (const ratio of [1.1, 1.3, 1.5, 1.8, 2.2]) {
-      const pvpr = Math.round(dist * ratio);
-      const { price, cost, status } = finalPrice(dist, pvpr, 40);
-      assert.ok(price >= Math.ceil(cost * 1.1), `${dist}/${pvpr}: ${price} abaixo do piso`);
-      if (status !== "ACIMA_PVPR") assert.ok(price <= pvpr, `${dist}/${pvpr}: ${price} acima do PVPR`);
-      else assert.ok(price > pvpr, `${dist}/${pvpr}: ACIMA_PVPR mas ${price} ≤ PVPR`);
+console.log("Regra — nunca acima do PVPR, nunca abaixo de 80 % do PVPR nem do custo + 10 %");
+check("varrimento de custos, PVPR e margens", () => {
+  for (const margin of [5, 10, 25, 40, 60, 100]) {
+    for (let dist = 100; dist <= 20000; dist += 37) {
+      for (const ratio of [1.05, 1.1, 1.3, 1.5, 1.8, 2.2, 2.6, 3.5]) {
+        const pvpr = Math.round(dist * ratio);
+        const at = `${dist}/${pvpr}/${margin}%`;
+        const { price, cost, status } = finalPrice(dist, pvpr, margin);
+        assert.ok(validEnd(price), `${at}: ${price} com final inválido`);
+        assert.ok(price >= Math.ceil(cost * 1.1), `${at}: ${price} abaixo do custo + 10 %`);
+        if (status === "ACIMA_PVPR") {
+          assert.ok(price > pvpr, `${at}: ACIMA_PVPR mas ${price} ≤ PVPR`);
+          continue;
+        }
+        assert.ok(price <= pvpr, `${at}: ${price} acima do PVPR`);
+        // Piso de 80 %: só pode ficar abaixo quando o teto (PVPR arredondado para baixo) o impede.
+        assert.ok(price >= Math.min(Math.ceil(pvpr * 0.8), roundDown(pvpr)), `${at}: ${price} abaixo de 80 % do PVPR`);
+        if (status === "PISO_PVPR") {
+          assert.ok(price > roundUp(Math.ceil((cost * (100 + margin)) / 100)), `${at}: PISO_PVPR sem subir a margem`);
+        }
+      }
     }
   }
 });
@@ -132,6 +148,8 @@ for (const [dist, pvpr, price, profit] of [
   [17.99, 29.95, 29.9, 8.13],
   [57.99, 94.95, 94.9, 24.73],
   [124.99, 229.95, 211.9, 60.66],
+  [12.99, 41.95, 33.9, 18.18],
+  [9.99, 29.95, 24.5, 12.41],
 ]) {
   check(`${dist} / ${pvpr} → ${price}, lucro ${profit}`, () => {
     const r = priceProduct(dist, pvpr, 40);
@@ -152,6 +170,7 @@ for (const [distributorPrice, grossPrice] of [
   [124.99, 229.95],
   [9.99, 12.95],
   [9.99, null],
+  [12.99, 41.95],
 ]) {
   await checkAsync(`${distributorPrice} / ${grossPrice}`, async () => {
     const row = { sku: "T-1", title: "Test", titleSource: "supplier", distributorPrice, grossPrice };

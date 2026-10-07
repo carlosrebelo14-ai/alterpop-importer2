@@ -18,6 +18,7 @@ import { reconcileLiveDriftCycle } from "../../lib/importer/shopify/liveDriftRec
 import { reconcileCharacterPagesCycle } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
 import { reconcileCollectionPublicationCycle } from "../../lib/importer/shopify/collectionPublicationReconcileCycle.server.js";
 import { persistSyncError } from "../../lib/importer/sync/syncErrorLog.server.js";
+import { reconcileMarginErosionCycle } from "../../lib/importer/curation/marginErosion.server.js";
 
 /**
  * POST /api/trigger-sync — dispara indexação + publicação sem sessão OAuth.
@@ -208,6 +209,19 @@ export const action = async ({ request }) => {
         }
       } catch (err) {
         console.error("[trigger-sync] sync de stock de publicados falhou:", err?.message || err);
+      }
+
+      // Erosão de margem (revisão do dry-run de preços, 07/10/2026) — preço live contra
+      // o custo atual do feed, que a indexação acima acabou de refrescar. Só lê e grava
+      // o estado para Relatórios; nunca mexe em preço. Nunca bloqueia o ciclo.
+      try {
+        const erosionClient = createShopifyClientFromSession(session);
+        const erosion = await reconcileMarginErosionCycle(erosionClient, shop);
+        const line = `[trigger-sync] erosão de margem: ${erosion.status} — ${erosion.red.length} abaixo de ${erosion.thresholdPct}%, ${erosion.noData.length} sem dados, ${erosion.measured}/${erosion.publishedCount} medidos.`;
+        if (erosion.status === "red") console.error(line);
+        else console.log(line);
+      } catch (err) {
+        console.error("[trigger-sync] erosão de margem falhou:", err?.message || err);
       }
 
       // Catálogo de franquias com stock, para a grelha de /pages/franquias no tema.

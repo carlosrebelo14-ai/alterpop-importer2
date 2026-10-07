@@ -106,10 +106,6 @@ export const action = async ({ request }) => {
     batchSize: parseInt(String(form.get("batchSize") || "50"), 10) || 50,
     importInStockOnly: form.get("importInStockOnly") === "on",
     stockBuffer: Math.max(0, parseInt(String(form.get("stockBuffer") || "0"), 10) || 0),
-    marginErosionThresholdPct: Math.max(
-      0,
-      parseInt(String(form.get("marginErosionThresholdPct") || "15"), 10) || 15
-    ),
     marginWarnThresholdPct: Math.max(
       0,
       parseInt(String(form.get("marginWarnThresholdPct") || "30"), 10) || 30
@@ -323,12 +319,6 @@ export default function SettingsPage() {
                   label="Buffer de stock (unidades subtraídas antes de publicar)"
                   value={String(s.stockBuffer ?? 0)}
                   details="Ex: fornecedor diz 5, buffer 2 → publica 3. 0 = sem buffer."
-                />
-                <s-text-field
-                  name="marginErosionThresholdPct"
-                  label="Limiar de erosão de margem (%)"
-                  value={String(s.marginErosionThresholdPct ?? 15)}
-                  details="Sinaliza em Relatórios produtos publicados cujo custo do fornecedor subiu X% desde a publicação. Nunca muda preço/stock sozinho. Default 15."
                 />
                 <s-text-field
                   name="marginWarnThresholdPct"

@@ -10,25 +10,29 @@ import { SyncErrorLogsPanel } from "../components/SyncErrorLogsPanel.jsx";
 import { LastSyncRunBanner } from "../components/LastSyncRunBanner.jsx";
 import { OrderStockAlertsPanel } from "../components/OrderStockAlertsPanel.jsx";
 import { listSkusForReview } from "../../lib/importer/catalog/skuLifecycle.server.js";
-import { computeMarginErosionAlerts } from "../../lib/importer/curation/marginErosion.server.js";
-import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { loadMarginErosionState } from "../../lib/importer/curation/marginErosion.server.js";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
-  const [dashboardStats, settings] = await Promise.all([
+  const [dashboardStats, discontinuedForReview] = await Promise.all([
     getDashboardStats(session.shop),
-    loadShopSettings(session.shop),
-  ]);
-  const [discontinuedForReview, marginErosionAlerts] = await Promise.all([
     listSkusForReview(session.shop),
-    computeMarginErosionAlerts(session.shop, { thresholdPct: settings.marginErosionThresholdPct }),
   ]);
+  // Estado gravado pelo último ciclo (api.trigger-sync). Ficheiro ilegível lança —
+  // a página mostra o erro em vez de "sem alertas".
+  let marginErosion = null;
+  let marginErosionError = null;
+  try {
+    marginErosion = await loadMarginErosionState(session.shop);
+  } catch (err) {
+    marginErosionError = err?.message || String(err);
+  }
   return {
     shop: session.shop,
     dashboardStats,
     discontinuedForReview,
-    marginErosionAlerts,
-    marginErosionThresholdPct: settings.marginErosionThresholdPct,
+    marginErosion,
+    marginErosionError,
   };
 };
 
@@ -36,8 +40,8 @@ export default function ReportsPage() {
   const {
     dashboardStats,
     discontinuedForReview,
-    marginErosionAlerts,
-    marginErosionThresholdPct,
+    marginErosion,
+    marginErosionError,
   } = useLoaderData();
   const shopify = useAppBridge();
   const [salesRefreshing, setSalesRefreshing] = useState(false);
@@ -272,22 +276,45 @@ export default function ReportsPage() {
               <Card>
                 <BlockStack gap="300">
                   <Text as="h2" variant="headingMd">
-                    {`Erosão de margem (${marginErosionAlerts.length})`}
+                    {`Erosão de margem (${marginErosion?.red?.length ?? "—"})`}
                   </Text>
                   <Text as="p" tone="subdued">
-                    {`Produtos publicados cujo custo do fornecedor subiu ${marginErosionThresholdPct}%+ desde a publicação (limiar configurável em Definições). Só sinaliza — preço e stock nunca são alterados automaticamente.`}
+                    {`Em cada ciclo, compara o preço live de cada produto publicado com o custo atual do feed (precio_distribuidores + IVA). Vermelho abaixo de ${marginErosion?.thresholdPct ?? 10}% de margem efetiva sobre o custo. Só sinaliza — o preço nunca é alterado automaticamente.`}
                   </Text>
-                  {marginErosionAlerts.length === 0 ? (
-                    <Text as="p" tone="subdued">Sem alertas de erosão de margem neste momento.</Text>
+                  {marginErosionError ? (
+                    <Banner tone="critical">{`Estado da erosão de margem ilegível: ${marginErosionError}`}</Banner>
+                  ) : !marginErosion ? (
+                    <Text as="p" tone="subdued">Ainda nenhum ciclo mediu a margem — aparece depois do próximo ciclo de sync.</Text>
                   ) : (
-                    <BlockStack gap="150">
-                      {marginErosionAlerts.slice(0, 30).map((a) => (
-                        <Text as="p" key={a.sku} tone="subdued">
-                          {`${a.sku} — ${formatEur(a.costAtPublish)} → ${formatEur(a.currentCost)} (+${a.erosionPct}%)`}
-                        </Text>
-                      ))}
-                      {marginErosionAlerts.length > 30 && (
-                        <Text as="p" tone="subdued">{`+ ${marginErosionAlerts.length - 30} outro(s)…`}</Text>
+                    <BlockStack gap="200">
+                      <Text as="p" tone="subdued">
+                        {`Último ciclo: ${new Date(marginErosion.ranAt).toLocaleString("pt-PT")} · ${marginErosion.measured}/${marginErosion.publishedCount} publicados medidos.`}
+                      </Text>
+                      {marginErosion.red.length === 0 ? (
+                        <Text as="p" tone="success">{`Nenhum produto abaixo de ${marginErosion.thresholdPct}% de margem efetiva.`}</Text>
+                      ) : (
+                        <BlockStack gap="150">
+                          {marginErosion.red.slice(0, 50).map((a) => (
+                            <Text as="p" key={a.sku} tone="critical">
+                              {`${a.sku} — ${a.title}: live ${formatEur(a.livePrice)}, custo ${formatEur(a.cost)} → margem ${a.effectiveMarginPct}%`}
+                            </Text>
+                          ))}
+                          {marginErosion.red.length > 50 && (
+                            <Text as="p" tone="subdued">{`+ ${marginErosion.red.length - 50} outro(s)…`}</Text>
+                          )}
+                        </BlockStack>
+                      )}
+                      {marginErosion.noData.length > 0 && (
+                        <Banner tone="warning" title={`${marginErosion.noData.length} publicado(s) sem dados para medir`}>
+                          <BlockStack gap="100">
+                            {marginErosion.noData.slice(0, 20).map((a) => (
+                              <Text as="p" key={a.sku}>{`${a.sku} — ${a.reason}`}</Text>
+                            ))}
+                            {marginErosion.noData.length > 20 && (
+                              <Text as="p">{`+ ${marginErosion.noData.length - 20} outro(s)…`}</Text>
+                            )}
+                          </BlockStack>
+                        </Banner>
                       )}
                     </BlockStack>
                   )}

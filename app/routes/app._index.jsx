@@ -58,7 +58,8 @@ const SORT_FIELD_TO_COLUMN = { title: 0, netPrice: 3, stock: 7 };
 
 // Selos do estado do preço (pricing.server.js) — avisam, nunca bloqueiam a aprovação.
 const PRICE_STATUS_BADGE = {
-  MARGEM: { label: "Margem", tone: "success", help: "Margem global cabe abaixo do PVPR." },
+  MARGEM: { label: "Margem", tone: "success", help: "Margem global cabe entre 80 % do PVPR e o PVPR." },
+  PISO_PVPR: { label: "Piso PVPR", tone: "warning", help: "Custo anormalmente baixo (provável oferta do fornecedor) — a margem global ficava abaixo de 80 % do PVPR, preço subido para 80 % do PVPR." },
   TETO: { label: "Teto", tone: "warning", help: "A margem global passava o PVPR — preço = PVPR arredondado para baixo." },
   SEM_PVPR: { label: "Sem PVPR", tone: "warning", help: "Feed sem precio_bruto — margem global, sem teto." },
   ACIMA_PVPR: { label: "Acima PVPR", tone: "critical", help: "Nem a margem mínima (10 %) cabe abaixo do PVPR — preço = custo + 10 %, acima do PVPR." },
@@ -1948,7 +1949,7 @@ export default function CurationDashboard() {
                       Aplicar margem
                     </Button>
                     <Text as="span" tone="subdued" variant="bodySm">
-                      {`Preço = custo c/ IVA × (1 + ${appliedMarginPct ?? "—"}%), arredondado, nunca acima do PVPR`}
+                      {`Preço = custo c/ IVA × (1 + ${appliedMarginPct ?? "—"}%), arredondado, entre 80 % do PVPR e o PVPR`}
                     </Text>
                     <select
                       value={sortBy ? `${sortBy}_${sortDir}` : ""}

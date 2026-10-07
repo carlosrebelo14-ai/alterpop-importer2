@@ -82,10 +82,14 @@ export function SyncStagingModal({
                 </Banner>
               )}
 
-              {(summary.statusCounts?.ACIMA_PVPR > 0 || summary.statusCounts?.TETO > 0 || summary.statusCounts?.SEM_PVPR > 0) && (
+              {(summary.statusCounts?.ACIMA_PVPR > 0 ||
+                summary.statusCounts?.TETO > 0 ||
+                summary.statusCounts?.PISO_PVPR > 0 ||
+                summary.statusCounts?.SEM_PVPR > 0) && (
                 <Banner tone={summary.statusCounts?.ACIMA_PVPR > 0 ? "warning" : "info"}>
                   {[
                     summary.statusCounts?.TETO > 0 ? `${summary.statusCounts.TETO} no teto do PVPR` : null,
+                    summary.statusCounts?.PISO_PVPR > 0 ? `${summary.statusCounts.PISO_PVPR} no piso de 80 % do PVPR` : null,
                     summary.statusCounts?.SEM_PVPR > 0 ? `${summary.statusCounts.SEM_PVPR} sem PVPR no feed` : null,
                     summary.statusCounts?.ACIMA_PVPR > 0 ? `${summary.statusCounts.ACIMA_PVPR} acima do PVPR (nem a margem mínima cabe)` : null,
                   ]

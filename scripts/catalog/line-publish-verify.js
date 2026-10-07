@@ -45,6 +45,8 @@ function syntheticRow(suffix, resolvedFranchise, resolvedLine, title) {
     stock: 3,
     netPrice: 19.99,
     grossPrice: 24.19,
+    // Desde 07/10/2026 o publisher não cria produto sem precio_distribuidores (custo).
+    distributorPrice: 13.99,
     franchises: "[]",
     franchiseRefs: "[]",
     categoryMain: "Figure",
