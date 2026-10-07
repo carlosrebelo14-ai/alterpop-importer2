@@ -78,6 +78,10 @@ model CatalogProduct {
   resolvedLine           String?
   netPrice         Float?
   grossPrice       Float?
+  // Briefing de preço (07/10/2026) — precio_distribuidores do feed: o custo de compra
+  // SEM IVA (o carrinho OcioStock cobra × 1,21). grossPrice (precio_bruto) é o PVPR com
+  // IVA — teto do preço, nunca custo. Nullable puro (ADD COLUMN sem risco, Decisão 13).
+  distributorPrice Float?
   imageUrl         String?
   barcode          String?
   weightKg         Float?

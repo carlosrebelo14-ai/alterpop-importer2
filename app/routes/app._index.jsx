@@ -51,10 +51,18 @@ const PAGE_SIZE = 50;
 /** Redesign da Curadoria (2026-08-12) — limiar do badge "Stock baixo" na tabela. */
 const LOW_STOCK_THRESHOLD = 10;
 /** Redesign da Curadoria — margem abaixo disto é sempre crítica, independente do limiar configurável. */
-const MARGIN_CRITICAL_THRESHOLD = 15;
 /** IndexTable: índice de coluna sortável → mesmo campo já usado pelo <select> de ordenação. */
-const SORT_COLUMN_TO_FIELD = { 0: "title", 4: "netPrice", 5: "margin", 6: "stock" };
-const SORT_FIELD_TO_COLUMN = { title: 0, netPrice: 4, margin: 5, stock: 6 };
+// PVPR (coluna 3) ordena por netPrice — precio_neto = precio_bruto / 1,21, mesma ordem.
+const SORT_COLUMN_TO_FIELD = { 0: "title", 3: "netPrice", 7: "stock" };
+const SORT_FIELD_TO_COLUMN = { title: 0, netPrice: 3, stock: 7 };
+
+// Selos do estado do preço (pricing.server.js) — avisam, nunca bloqueiam a aprovação.
+const PRICE_STATUS_BADGE = {
+  MARGEM: { label: "Margem", tone: "success", help: "Margem global cabe abaixo do PVPR." },
+  TETO: { label: "Teto", tone: "warning", help: "A margem global passava o PVPR — preço = PVPR arredondado para baixo." },
+  SEM_PVPR: { label: "Sem PVPR", tone: "warning", help: "Feed sem precio_bruto — margem global, sem teto." },
+  ACIMA_PVPR: { label: "Acima PVPR", tone: "critical", help: "Nem a margem mínima (10 %) cabe abaixo do PVPR — preço = custo + 10 %, acima do PVPR." },
+};
 
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
@@ -109,6 +117,22 @@ export const action = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
   const form = await request.formData();
   const intent = form.get("intent");
+
+  // Briefing de preço (07/10/2026) — margem global, a mesma que o publisher usa.
+  if (intent === "set-price-margin") {
+    const [{ assertMarginPct }, { saveShopSettings }] = await Promise.all([
+      import("../../lib/importer/pricing/pricing.server.js"),
+      import("../../lib/importer/settings.server.js"),
+    ]);
+    try {
+      const priceMarginPct = assertMarginPct(String(form.get("priceMarginPct") || "").replace(",", "."));
+      const current = await loadShopSettings(session.shop);
+      await saveShopSettings(session.shop, { ...current, priceMarginPct });
+      return { ok: true, intent, priceMarginPct };
+    } catch (err) {
+      return { ok: false, intent, error: err?.message || String(err) };
+    }
+  }
 
   if (intent === "pause-indexing") {
     const { stopCatalogIndexingWorker } = await import("../../lib/importer/catalog/indexingStream.server.js");
@@ -187,6 +211,7 @@ export default function CurationDashboard() {
   const loaderData = useLoaderData();
   const fetcher = useFetcher();
   const importFetcher = useFetcher();
+  const marginFetcher = useFetcher();
   const shopify = useAppBridge();
 
   const settings = loaderData.settings;
@@ -219,7 +244,10 @@ export default function CurationDashboard() {
 
   const [smartFlags] = useState(() => ({ ...loaderData.smartFlags }));
   const [reasons] = useState(() => ({ ...loaderData.reasons }));
-  const marginWarnThresholdPct = Number(settings?.marginWarnThresholdPct ?? 30);
+  // Margem global de preço — input do seletor e a margem com que a lista foi calculada
+  // (vem da resposta de /api/products, por isso o que se vê é o que o publisher escreve).
+  const [priceMarginInput, setPriceMarginInput] = useState(String(settings?.priceMarginPct ?? ""));
+  const [appliedMarginPct, setAppliedMarginPct] = useState(settings?.priceMarginPct ?? null);
 
   // Redesign da Curadoria (2026-08-12) — toggle de densidade da tabela, preferência
   // local por navegador/loja (não é dado de negócio, não faz sentido no servidor).
@@ -285,6 +313,19 @@ export default function CurationDashboard() {
   const [toast, setToast] = useState(null);
   const [selectedSkus, setSelectedSkus] = useState([]);
   const [bulkMargin, setBulkMargin] = useState("1.4");
+
+  // Margem global aplicada → lista recalcula (preço final e lucro vêm do servidor).
+  useEffect(() => {
+    const d = marginFetcher.data;
+    if (!d || d.intent !== "set-price-margin") return;
+    if (d.ok) {
+      setToast({ content: `Margem global ${d.priceMarginPct}% aplicada — preços recalculados` });
+      setPriceMarginInput(String(d.priceMarginPct));
+      setListRefreshKey((k) => k + 1);
+    } else {
+      setToast({ content: d.error || "Erro ao gravar a margem", error: true });
+    }
+  }, [marginFetcher.data]);
   const [undoSnapshots, setUndoSnapshots] = useState([]);
   const [massActionConfirm, setMassActionConfirm] = useState(null);
   const [importingCsv, setImportingCsv] = useState(false);
@@ -687,6 +728,7 @@ export default function CurationDashboard() {
         }
 
         setProducts(data.products || []);
+        setAppliedMarginPct(data.marginPct ?? null);
         setTotalCount(data.totalCount ?? 0);
         setTotalPages(data.totalPages ?? 1);
       } catch (err) {
@@ -1879,6 +1921,35 @@ export default function CurationDashboard() {
                     />
                   </InlineStack>
                   <InlineStack gap="200" blockAlign="center">
+                    <div style={{ width: 110 }}>
+                      <TextField
+                        label="Margem global %"
+                        labelHidden
+                        type="number"
+                        min={5}
+                        max={100}
+                        suffix="%"
+                        value={priceMarginInput}
+                        onChange={setPriceMarginInput}
+                        autoComplete="off"
+                      />
+                    </div>
+                    <Button
+                      size="slim"
+                      loading={marginFetcher.state !== "idle"}
+                      disabled={String(appliedMarginPct ?? "") === priceMarginInput.trim()}
+                      onClick={() =>
+                        marginFetcher.submit(
+                          { intent: "set-price-margin", priceMarginPct: priceMarginInput.trim() },
+                          { method: "post" }
+                        )
+                      }
+                    >
+                      Aplicar margem
+                    </Button>
+                    <Text as="span" tone="subdued" variant="bodySm">
+                      {`Preço = custo c/ IVA × (1 + ${appliedMarginPct ?? "—"}%), arredondado, nunca acima do PVPR`}
+                    </Text>
                     <select
                       value={sortBy ? `${sortBy}_${sortDir}` : ""}
                       onChange={(e) => {
@@ -1901,8 +1972,6 @@ export default function CurationDashboard() {
                       }}
                     >
                       <option value="">Ordenar por…</option>
-                      <option value="margin_desc">Margem % ↓ (maior → menor)</option>
-                      <option value="margin_asc">Margem % ↑ (menor → maior)</option>
                       <option value="netPrice_asc">Preço ↑ (barato → caro)</option>
                       <option value="netPrice_desc">Preço ↓ (caro → barato)</option>
                       <option value="stock_desc">Stock ↓ (mais stock)</option>
@@ -1976,7 +2045,7 @@ export default function CurationDashboard() {
                             : products.filter((p) => selectedSkus.includes(p.sku)).length
                         }
                         onSelectionChange={handleTableSelectionChange}
-                        sortable={[true, false, false, false, true, true, true, false, false]}
+                        sortable={[true, false, false, true, false, false, false, true, false, false]}
                         sortDirection={sortDir === "asc" ? "ascending" : "descending"}
                         sortColumnIndex={SORT_FIELD_TO_COLUMN[sortBy]}
                         onSort={handleTableSort}
@@ -1988,10 +2057,11 @@ export default function CurationDashboard() {
                         headings={[
                           { title: "Produto" },
                           { title: "Franquia / Categoria" },
-                          { title: "Custo", alignment: "end" },
-                          { title: "MSRP", alignment: "end" },
-                          { title: "Retail", alignment: "end" },
-                          { title: "Margem", alignment: "end" },
+                          { title: "Custo c/ IVA", alignment: "end" },
+                          { title: "PVPR", alignment: "end" },
+                          { title: "Preço final", alignment: "end" },
+                          { title: "Lucro", alignment: "end" },
+                          { title: "Preço" },
                           { title: "Stock" },
                           { title: "Estado" },
                           { title: "Ações", alignment: "center" },
@@ -2005,9 +2075,12 @@ export default function CurationDashboard() {
                             categoryMain,
                             vendor,
                             stock,
-                            netPrice,
-                            grossPrice,
-                            targetRetailPrice,
+                            cost,
+                            pvpr,
+                            finalPrice,
+                            profit,
+                            priceStatus,
+                            priceError,
                             syncError,
                             salesUnits30d,
                             barcode,
@@ -2018,17 +2091,6 @@ export default function CurationDashboard() {
                           const smartAction = smartFlags[sku];
                           const reasonCode = reasons[sku];
                           const categoryLabel = translateCategoryLabel(categoryMain);
-                          const marginPct = grossPrice && netPrice && grossPrice > 0
-                            ? Math.round(((grossPrice - netPrice) / grossPrice) * 100)
-                            : null;
-                          const marginTone =
-                            marginPct === null
-                              ? "subdued"
-                              : marginPct < MARGIN_CRITICAL_THRESHOLD
-                                ? "critical"
-                                : marginPct < marginWarnThresholdPct
-                                  ? "caution"
-                                  : "success";
                           const franchiseList = (() => {
                             try {
                               const parsed = typeof franchises === "string" ? JSON.parse(franchises) : franchises;
@@ -2114,23 +2176,33 @@ export default function CurationDashboard() {
                                 </BlockStack>
                               </IndexTable.Cell>
                               <IndexTable.Cell>
-                                <Text as="span" alignment="end" tone="subdued">{formatEur(netPrice)}</Text>
+                                <Text as="span" alignment="end" tone="subdued">{cost != null ? formatEur(cost) : "—"}</Text>
                               </IndexTable.Cell>
                               <IndexTable.Cell>
-                                <Text as="span" alignment="end" tone="subdued">{grossPrice > 0 ? formatEur(grossPrice) : "—"}</Text>
+                                <Text as="span" alignment="end" tone="subdued">{pvpr != null ? formatEur(pvpr) : "—"}</Text>
                               </IndexTable.Cell>
                               <IndexTable.Cell>
-                                <Text as="span" alignment="end" fontWeight="semibold">{formatEur(targetRetailPrice)}</Text>
+                                {priceError ? (
+                                  <Tooltip content={priceError}>
+                                    <Badge tone="critical">Sem preço</Badge>
+                                  </Tooltip>
+                                ) : (
+                                  <Text as="span" alignment="end" fontWeight="semibold">{formatEur(finalPrice)}</Text>
+                                )}
                               </IndexTable.Cell>
                               <IndexTable.Cell>
-                                <Text
-                                  as="span"
-                                  alignment="end"
-                                  fontWeight="bold"
-                                  tone={marginTone}
-                                >
-                                  {marginPct !== null ? `${marginPct}%` : "—"}
+                                <Text as="span" alignment="end" fontWeight="bold" tone={priceError ? "subdued" : "success"}>
+                                  {priceError ? "—" : formatEur(profit)}
                                 </Text>
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
+                                {PRICE_STATUS_BADGE[priceStatus] ? (
+                                  <Tooltip content={PRICE_STATUS_BADGE[priceStatus].help}>
+                                    <Badge tone={PRICE_STATUS_BADGE[priceStatus].tone}>{PRICE_STATUS_BADGE[priceStatus].label}</Badge>
+                                  </Tooltip>
+                                ) : (
+                                  <Text as="span" tone="subdued">—</Text>
+                                )}
                               </IndexTable.Cell>
                               <IndexTable.Cell>
                                 <Badge tone={stockTone}>{stockLabel}</Badge>

@@ -85,7 +85,11 @@ export const action = async ({ request }) => {
     }
   }
 
+  // Campos que este formulário não edita — sem isto, guardar as Definições repunha a
+  // margem de preço (editada na Curadoria) no valor por defeito.
+  const current = await loadShopSettings(session.shop);
   const settings = {
+    priceMarginPct: current.priceMarginPct,
     ociostockCsvUrl: String(form.get("ociostockCsvUrl") || ""),
     translationProvider: String(form.get("translationProvider") || "passthrough"),
     translationApiKey: String(form.get("translationApiKey") || ""),

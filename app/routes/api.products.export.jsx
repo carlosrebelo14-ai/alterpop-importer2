@@ -4,19 +4,18 @@ import { queryCatalogProducts } from "../../lib/importer/catalog/catalogProducts
 import { buildCsv } from "../../lib/importer/catalog/csvExport.server.js";
 import { loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { computeCurationSkuFilter } from "../../lib/curation/curationStatusFilter.server.js";
-import { computeShopifyRetailPrice } from "../../lib/importer/shopify/shopifyMapper.server.js";
 
 // Limite de segurança — o mesmo já usado em getMatchingCatalogSkus() para "todos os
 // resultados do filtro" (catalogProductsDb.server.js). Ficheiros maiores do que isto
 // tornam-se difíceis de editar à mão em Excel/Sheets de qualquer forma.
 const EXPORT_LIMIT = 5000;
 
-const HEADERS = ["sku", "ean", "custo", "titulo", "categoria", "preco", "estado"];
+const HEADERS = ["sku", "ean", "custo", "pvpr", "titulo", "categoria", "preco", "estado"];
 
 /**
  * GET /api/products/export?<mesmos parâmetros de /api/products>
- * CSV com os produtos que correspondem ao filtro activo. Colunas sku/ean/custo
- * são só para referência (o re-import ignora edições nelas); titulo/categoria/
+ * CSV com os produtos que correspondem ao filtro activo. Colunas sku/ean/custo/pvpr
+ * (custo = precio_distribuidores × 1,21; pvpr = precio_bruto) são só para referência (o re-import ignora edições nelas); titulo/categoria/
  * preco/estado são editáveis e voltam pelo /api/products/import-edits.
  */
 export const loader = async ({ request }) => {
@@ -62,13 +61,15 @@ export const loader = async ({ request }) => {
     const overrides = item?.metadata?.overrides || {};
     const titulo = overrides.title || p.title || "";
     const categoria = overrides.category || p.categoryMain || "";
-    const precoBase = computeShopifyRetailPrice(p.netPrice);
+    // finalPrice já vem de queryCatalogProducts (pricing.server.js) — o mesmo do publisher.
+    const precoBase = p.finalPrice;
     const preco = overrides.price != null ? overrides.price : precoBase;
     const estado = item?.status || "NO_DECISION";
     return [
       p.sku,
       p.barcode || "",
-      p.netPrice != null ? p.netPrice.toFixed(2) : "",
+      p.cost != null ? p.cost.toFixed(2) : "",
+      p.pvpr != null ? p.pvpr.toFixed(2) : "",
       titulo,
       categoria,
       preco != null ? Number(preco).toFixed(2) : "",
