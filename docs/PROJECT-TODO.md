@@ -197,7 +197,7 @@ flowchart LR
 | PR3 | Reconciliação dos 159 PUBLISHED (`price-reconcile-apply.js`) — depois do deploy, OK do Carlos | `[ ]` |
 | PR4 | Dívida: o repositório não tem CI — PRs só com testes locais | `[ ]` |
 | PR5 | Dívida: coluna "Preço final" da Curadoria sem ordenação (ordenar pelo preço calculado pede o cálculo na query) | `[ ]` |
-| PR6 | Dívida: SKU `0030506556343` PUBLISHED na fila sem produto na Shopify — o alerta de erosão mostra a causa; decidir reabrir ou despublicar na fila | `[ ]` |
+| PR6 | SKU `0030506556343` (relógio Pikachu) PUBLISHED na fila sem produto na Shopify — apagado no admin pelo Carlos a 16/09 21:52 UTC; a app nunca apaga sem reverter a fila (shopifyReset/purge revertem; probes só apagam os seus sintéticos). V19 no portão de saúde apanha isto. Falta decidir: reabrir ou tirar da fila | `[ ]` |
 
 ---
 

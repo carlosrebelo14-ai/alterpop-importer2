@@ -14,7 +14,7 @@
  * V2 e V4 ficaram vermelhas para sempre: medem loja vazia e fila sem publicações, que
  * são pré-condições de um momento que já passou. Fixar o esperado em 8 só adiava o
  * problema até ao nono produto.
- *   SAÚDE CORRENTE (V3, V5–V18), por omissão — invariantes que têm de valer sempre, em
+ *   SAÚDE CORRENTE (V3, V5–V19), por omissão — invariantes que têm de valer sempre, em
  *     qualquer altura da vida da loja. É este que se corre de rotina.
  *   HISTÓRICO (V1, V2, V4), só com `--pre-wipe` — pré-condições da Tarefa 48, verdadeiras
  *     entre o wipe e o primeiro publish. Guardadas para poderem voltar a servir se
@@ -86,7 +86,7 @@
  * se algo escreveu um dos dois lados sem o outro. Sem Character ACTIVE ainda, é informativo.
  *
  * Correr na Fly:
- *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V18)
+ *   node scripts/catalog/pre-pilot-verify.js              # saúde corrente (V3, V5–V19)
  *   node scripts/catalog/pre-pilot-verify.js --pre-wipe   # + histórico (V1, V2, V4)
  *   node scripts/catalog/pre-pilot-verify.js --aceitar-base  # aceita descida legítima
  */
@@ -122,6 +122,7 @@ import { CHARACTER_METAOBJECT_TYPE } from "../../lib/importer/shopify/characterM
 import { readCatalogRebuildStatus } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { listApprovedSkusForShopifySync } from "../../lib/curation/curationQueue.server.js";
 import { getLatestLifecycleReport, isLifecycleReportSuspect } from "../../lib/importer/catalog/skuLifecycle.server.js";
+import { fetchLiveVariantsBySku, diagnoseMissingLive } from "../../lib/importer/shopify/liveVariantsBySku.server.js";
 
 const GOVERNED_TEMPLATE_SUFFIXES = new Set([UNIVERSE_TEMPLATE_SUFFIX, LINE_TEMPLATE_SUFFIX]);
 
@@ -307,7 +308,7 @@ function horasDesde(iso) {
 
 async function main() {
   console.log(
-    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V18)" : "saúde corrente (V3, V5–V18)"} ===\n`
+    `\n=== pre-pilot-verify (${SHOP}) — ${PRE_WIPE ? "histórico (V1, V2, V4) + saúde corrente (V3, V5–V19)" : "saúde corrente (V3, V5–V19)"} ===\n`
   );
 
   const session = await loadOfflineSessionForShop(SHOP);
@@ -695,6 +696,26 @@ async function main() {
     for (const o of tagCheck.offenders) {
       console.log(`      ${o.handle} (${o.sku}): ${o.tags.join(", ")}`);
     }
+  }
+
+  // V19 — fila e loja concordam (revisão do PR #87, 08/10/2026). Vermelho quando a fila
+  // diz PUBLISHED e não há variante live com esse SKU — o caso do relógio Pikachu,
+  // apagado no admin a 16/09 e PUBLISHED na fila durante três semanas sem ninguém ver.
+  // Mostra a causa por SKU (produto apagado e quando, ou SKU mudado fora da app).
+  const publishedNow = (await listCurationQueueItems("PUBLISHED")).filter((i) => i.sku);
+  const liveNow = await fetchLiveVariantsBySku(client, publishedNow.map((i) => i.sku));
+  const semLoja = publishedNow.filter((i) => !liveNow.has(i.sku));
+  check(
+    "V19",
+    `fila PUBLISHED × loja — ${publishedNow.length} publicados na fila`,
+    "0 sem produto na loja",
+    `${semLoja.length} sem produto na loja`,
+    semLoja.length === 0
+  );
+  if (semLoja.length) {
+    const causas = await diagnoseMissingLive(client, semLoja);
+    for (const i of semLoja.slice(0, 20)) console.log(`      ${i.sku}: ${causas.get(i.sku)}`);
+    if (semLoja.length > 20) console.log(`      … +${semLoja.length - 20}`);
   }
 
   console.log(``);
