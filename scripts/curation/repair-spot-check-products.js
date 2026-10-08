@@ -82,7 +82,7 @@ async function main() {
           id
           title
           variants(first: 1) {
-            nodes { id sku inventoryItem { id } }
+            nodes { id sku price inventoryItem { id } }
           }
         }
       }`,
@@ -100,6 +100,9 @@ async function main() {
       inventoryItem: variantNode.inventoryItem?.id
         ? { id: variantNode.inventoryItem.id }
         : null,
+      // O importer só escreve preço num produto existente quando está a 0,00 — precisa
+      // do preço live (pricing.server.js existingPriceNeedsWrite).
+      price: variantNode.price,
     });
 
     console.log(`\n▶ Reparar ${record.sku} (${status}) → ${target.productId}`);

@@ -5,9 +5,8 @@ import {
   approveProduct,
   rejectProduct,
   setManualOverride,
+  getCurationQueueEntry,
 } from "../../lib/curation/curationQueue.server.js";
-import { loadShopSettings } from "../../lib/importer/settings.server.js";
-import { resolveMarginPct, tryPriceProduct } from "../../lib/importer/pricing/pricing.server.js";
 
 const VALID_STATUSES = new Set(["APPROVED", "REJECTED"]);
 
@@ -78,28 +77,13 @@ export const action = async ({ request }) => {
         () =>
           prisma.catalogProduct.findMany({
             where: { shop: session.shop, sku: { in: chunk } },
-            select: { sku: true, distributorPrice: true, grossPrice: true },
+            select: { sku: true },
           }),
         { fallback: [] }
       )
     )
   );
-  const existingRows = existingRowChunks.flat();
-  const existingSkuSet = new Set(existingRows.map((r) => r.sku));
-
-  // preco_regra é só leitura: uma edição lá não fixa nada. Compara com a regra atual e
-  // avisa por linha, em vez de a deixar desaparecer em silêncio.
-  let ruleBySku = null;
-  if (idx.precoRegra !== -1) {
-    try {
-      const marginPct = resolveMarginPct(await loadShopSettings(session.shop));
-      ruleBySku = new Map(
-        existingRows.map((r) => [r.sku, tryPriceProduct(r.distributorPrice, r.grossPrice, marginPct).finalPrice])
-      );
-    } catch (err) {
-      warnings.push({ line: 1, sku: "", reason: `Não deu para verificar a coluna preco_regra: ${err?.message || err}` });
-    }
-  }
+  const existingSkuSet = new Set(existingRowChunks.flat().map((r) => r.sku));
 
   const applied = [];
   const rejected = [];
@@ -118,15 +102,17 @@ export const action = async ({ request }) => {
       continue;
     }
 
-    if (ruleBySku) {
+    // preco_regra é só leitura e sai como "17.50 (regra)" ou "(sem preço: …)". Uma
+    // célula que já não tem essa forma foi editada: avisa por linha, em vez de a deixar
+    // desaparecer em silêncio — sem recalcular a regra, que pode ter mudado desde a
+    // exportação (revisão do PR #87).
+    if (idx.precoRegra !== -1) {
       const ruleCell = (row[idx.precoRegra] || "").trim();
-      const ruleCellNum = parseFloat(ruleCell.replace(",", "."));
-      const rule = ruleBySku.get(sku);
-      if (Number.isFinite(ruleCellNum) && rule != null && Math.round(ruleCellNum * 100) !== Math.round(rule * 100)) {
+      if (ruleCell && !/\(regra\)$/.test(ruleCell) && !ruleCell.startsWith("(sem preço")) {
         warnings.push({
           line: lineNo,
           sku,
-          reason: `preco_regra alterado para ${ruleCell} (a regra dá ${rule.toFixed(2)}) — coluna só de leitura, ignorado. Para fixar o preço preenche a coluna preco.`,
+          reason: `preco_regra editado ("${ruleCell}") — coluna só de leitura, ignorado. Para fixar o preço preenche a coluna preco.`,
         });
       }
     }
@@ -152,6 +138,25 @@ export const action = async ({ request }) => {
     }
 
     try {
+      // Produto já publicado: o override de preço só se aplica na criação (o publisher
+      // nunca reescreve o preço de um produto existente, salvo a 0,00 — revisão do PR
+      // #87). Um preço novo aqui não teria efeito: avisa e não o grava. O mesmo valor do
+      // override existente (vem pré-preenchido na exportação) não é edição — segue.
+      if (preco != null) {
+        const entry = await getCurationQueueEntry(sku);
+        const published = entry?.status === "PUBLISHED" || entry?.status === "SYNC_ERROR" || Boolean(entry?.metadata?.shopifyProductId);
+        const current = entry?.metadata?.overrides?.price;
+        const unchanged = current != null && Math.round(Number(current) * 100) === Math.round(preco * 100);
+        if (published && !unchanged) {
+          warnings.push({
+            line: lineNo,
+            sku,
+            reason: `preço ${preco.toFixed(2)} não aplicado — produto já publicado; muda o preço no admin da Shopify.`,
+          });
+          preco = undefined;
+        }
+      }
+
       const overrides = {};
       if (titulo) overrides.title = titulo;
       if (categoria) overrides.category = categoria;

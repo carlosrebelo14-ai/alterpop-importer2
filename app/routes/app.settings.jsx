@@ -97,13 +97,14 @@ export const action = async ({ request }) => {
 
   // Campos que este formulário não edita — sem isto, guardar as Definições repunha a
   // margem de preço (editada na Curadoria) no valor por defeito. Com o ficheiro
-  // estragado não há margem a preservar: guardar repõe o ficheiro e a margem volta ao
-  // valor por defeito (a página avisa antes, ver settingsLoadError).
+  // estragado não há margem a preservar: guardar repõe o ficheiro com a margem "por
+  // definir" (null), e a publicação para até alguém a aplicar na Curadoria — nunca
+  // publica com os 40 % por defeito sem ninguém os escolher (revisão do PR #87).
   let current;
   try {
     current = await loadShopSettings(session.shop);
   } catch {
-    current = {};
+    current = { priceMarginPct: null };
   }
   const settings = {
     priceMarginPct: current.priceMarginPct,
@@ -280,7 +281,7 @@ export default function SettingsPage() {
     <s-page heading="Definições">
       {settingsLoadError && (
         <Banner tone="critical" title="Ficheiro de definições ilegível">
-          {`${settingsLoadError}. Os campos abaixo mostram os valores por defeito. Guardar substitui o ficheiro estragado; a margem de preço volta a ${settings.priceMarginPct}% — volta a aplicá-la na Curadoria.`}
+          {`${settingsLoadError}. Os campos abaixo mostram os valores por defeito. Guardar substitui o ficheiro estragado e deixa a margem de preço por definir: a publicação fica parada até a aplicares na Curadoria.`}
         </Banner>
       )}
       <fetcher.Form method="post">

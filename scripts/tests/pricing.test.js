@@ -15,6 +15,7 @@ import {
   tryPriceProduct,
   resolveMarginPct,
   effectiveMarginPct,
+  existingPriceNeedsWrite,
   DEFAULT_MARGIN_PCT,
   PricingError,
 } from "../../lib/importer/pricing/pricing.server.js";
@@ -178,6 +179,21 @@ check("piso do PVPR acima da margem efetiva é PISO_PVPR, nunca MARGEM", () => {
       if (r.status === "MARGEM") assert.equal(r.price, target, `${dist}/${pvpr}/${m}%: MARGEM mas preço ≠ margem efetiva`);
     }
   }
+});
+
+console.log("Regra de escrita num produto existente e margem por definir");
+check("só escreve preço quando o live está a 0", () => {
+  assert.equal(existingPriceNeedsWrite("0.00"), true);
+  assert.equal(existingPriceNeedsWrite(0), true);
+  assert.equal(existingPriceNeedsWrite("19.90"), false);
+});
+check("preço live desconhecido lança em vez de decidir às cegas", () => {
+  assert.throws(() => existingPriceNeedsWrite(undefined), PricingError);
+  assert.throws(() => existingPriceNeedsWrite(null), PricingError);
+});
+check("margem gravada como null (por definir) lança; ausente usa o defeito", () => {
+  assert.throws(() => resolveMarginPct({ priceMarginPct: null }), /por definir/);
+  assert.equal(resolveMarginPct({}), DEFAULT_MARGIN_PCT);
 });
 
 console.log("priceProduct (euros do catálogo) — tabela do briefing, lucro em euros");

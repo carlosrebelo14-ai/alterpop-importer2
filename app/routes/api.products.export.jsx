@@ -19,7 +19,8 @@ const HEADERS = ["sku", "ean", "custo", "pvpr", "preco_regra", "titulo", "catego
  * pricing.server.js) são só para referência — o re-import ignora edições nelas.
  * titulo/categoria/preco/estado são editáveis e voltam pelo /api/products/import-edits.
  * `preco` só vem preenchido com um override já existente: preenchê-lo à mão quer dizer
- * "fixa este preço".
+ * "fixa este preço" — só para produtos ainda não publicados (num publicado, o preço
+ * muda-se no admin da Shopify; o import avisa e não o grava).
  */
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
@@ -67,7 +68,9 @@ export const loader = async ({ request }) => {
     // preco_regra (só leitura): o preço da regra, o mesmo do publisher. preco (editável)
     // leva só um override existente — vazio por omissão, para um re-import sem edições
     // não congelar o preço calculado como override (revisão adversarial do PR #87).
-    const precoRegra = p.finalPrice != null ? p.finalPrice.toFixed(2) : p.priceError || "";
+    // Formato que marca a coluna como só leitura: o import deteta uma célula editada por
+    // já não ter esta forma (api.products.import-edits.jsx).
+    const precoRegra = p.finalPrice != null ? `${p.finalPrice.toFixed(2)} (regra)` : `(sem preço: ${p.priceError || "—"})`;
     const preco = overrides.price != null ? overrides.price : null;
     const estado = item?.status || "NO_DECISION";
     return [

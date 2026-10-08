@@ -132,15 +132,17 @@ export const action = async ({ request }) => {
     );
   }
 
-  // Definições ilegíveis não param o ciclo todo (stock, novidades, drift e erosão não
-  // dependem da margem): segue com os valores por defeito e regista o erro. O publish,
-  // que depende da margem, volta a ler as definições e falha à vista sozinho
-  // (runApprovedShopifySync) — nunca publica com uma margem que ninguém escolheu.
+  // Definições ilegíveis: o ciclo salta tudo o que depende delas — indexação (URL e
+  // mapa de colunas do CSV), publicação (margem) e stock (buffer) — e corre o resto
+  // (novidades, drift, coleções, personagens, erosão sobre o catálogo existente). O erro
+  // fica no registo de sync; sem indexação, nada o desativa até o ficheiro ser reposto.
   let settings;
+  let settingsError = null;
   try {
     settings = await loadShopSettings(shop);
   } catch (err) {
-    console.error("[trigger-sync] definições ilegíveis — ciclo segue sem publish:", err?.message || err);
+    settingsError = err?.message || String(err);
+    console.error("[trigger-sync] definições ilegíveis — indexação, publicação e stock saltados:", settingsError);
     // persistSyncError ignora entradas sem SKU — "(definições)" põe o erro no registo
     // de sync que a UI já lê.
     await persistSyncError({ shop, sku: "(definições)", reason: `Definições ilegíveis: ${err?.message || err}` }).catch(
@@ -160,26 +162,28 @@ export const action = async ({ request }) => {
   void (async () => {
     try {
       console.log(`[trigger-sync] ciclo iniciado @ ${startedAt}`);
-      await startCatalogIndexingWorker(shop, settings, { runPurge: false, resume: false });
+      if (!settingsError) {
+        await startCatalogIndexingWorker(shop, settings, { runPurge: false, resume: false });
 
-      const deadline = Date.now() + INDEXING_TIMEOUT_MS;
-      while (isCatalogIndexingRunning(shop)) {
-        if (Date.now() > deadline) {
-          console.error("[trigger-sync] indexação excedeu o tempo limite — publish cancelado.");
-          await markMarginErosionCycleSkipped(shop, "indexação excedeu o tempo limite");
+        const deadline = Date.now() + INDEXING_TIMEOUT_MS;
+        while (isCatalogIndexingRunning(shop)) {
+          if (Date.now() > deadline) {
+            console.error("[trigger-sync] indexação excedeu o tempo limite — publish cancelado.");
+            await markMarginErosionCycleSkipped(shop, "indexação excedeu o tempo limite");
+            return;
+          }
+          await new Promise((r) => setTimeout(r, INDEXING_POLL_MS));
+        }
+
+        const status = await readCatalogRebuildStatus(shop);
+        if (status.error) {
+          console.error(`[trigger-sync] indexação terminou com erro (${status.error}) — publish cancelado.`);
+          await markMarginErosionCycleSkipped(shop, `indexação terminou com erro (${status.error})`);
           return;
         }
-        await new Promise((r) => setTimeout(r, INDEXING_POLL_MS));
-      }
 
-      const status = await readCatalogRebuildStatus(shop);
-      if (status.error) {
-        console.error(`[trigger-sync] indexação terminou com erro (${status.error}) — publish cancelado.`);
-        await markMarginErosionCycleSkipped(shop, `indexação terminou com erro (${status.error})`);
-        return;
+        console.log(`[trigger-sync] indexação concluída (${status.totalRows ?? "?"} linhas).`);
       }
-
-      console.log(`[trigger-sync] indexação concluída (${status.totalRows ?? "?"} linhas).`);
 
       // Garante que as definições de metafield existem (ociostock.net_price e
       // ociostock.dimensions) — na primeira execução automática ninguém abriu o Admin
@@ -193,12 +197,14 @@ export const action = async ({ request }) => {
         console.warn("[trigger-sync] definições de metafield falharam:", err?.message || err);
       }
 
-      console.log("[trigger-sync] a publicar aprovados…");
-      try {
-        await runApprovedShopifySync(session, { skipInit: true });
-        console.log("[trigger-sync] publicação de aprovados concluída.");
-      } catch (err) {
-        console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
+      if (!settingsError) {
+        console.log("[trigger-sync] a publicar aprovados…");
+        try {
+          await runApprovedShopifySync(session, { skipInit: true });
+          console.log("[trigger-sync] publicação de aprovados concluída.");
+        } catch (err) {
+          console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
+        }
       }
 
       // As coleções automáticas por licença (ociostock.licence) foram substituídas pelas
@@ -210,25 +216,27 @@ export const action = async ({ request }) => {
       // fornecedor repõe stock ficava preso a "sem stock" na Shopify até alguém o
       // reaprovar manualmente. Corre sempre a seguir ao publish normal, nunca em
       // paralelo — evita as duas rotinas disputarem o mesmo variantCache/rate limit.
-      try {
-        const stockClient = createShopifyClientFromSession(session);
-        const stockResult = await syncPublishedStockLevels(stockClient, shop, {
-          stockBuffer: settings.stockBuffer,
-        });
-        console.log(
-          `[trigger-sync] stock de publicados: ${stockResult.checked} verificados, ${stockResult.updated} atualizados, ${stockResult.skipped} sem alteração, ${stockResult.failed} falhas.`
-        );
-        // stockResult.failures[] era calculado e nunca lido por ninguém — a falha
-        // ficava só na contagem, sem SKU nem mensagem (achado 24/09). Grava no mesmo
-        // registo de sync que a UI já lê, em vez de inventar um caminho novo.
-        for (const f of stockResult.failures || []) {
-          console.error(`[trigger-sync] stock de publicados — falha em ${f.sku}: ${f.message}`);
-          await persistSyncError({ shop, sku: f.sku, reason: f.message }).catch((err) => {
-            console.error(`[trigger-sync] persistSyncError falhou para ${f.sku}:`, err?.message || err);
+      if (!settingsError) {
+        try {
+          const stockClient = createShopifyClientFromSession(session);
+          const stockResult = await syncPublishedStockLevels(stockClient, shop, {
+            stockBuffer: settings.stockBuffer,
           });
+          console.log(
+            `[trigger-sync] stock de publicados: ${stockResult.checked} verificados, ${stockResult.updated} atualizados, ${stockResult.skipped} sem alteração, ${stockResult.failed} falhas.`
+          );
+          // stockResult.failures[] era calculado e nunca lido por ninguém — a falha
+          // ficava só na contagem, sem SKU nem mensagem (achado 24/09). Grava no mesmo
+          // registo de sync que a UI já lê, em vez de inventar um caminho novo.
+          for (const f of stockResult.failures || []) {
+            console.error(`[trigger-sync] stock de publicados — falha em ${f.sku}: ${f.message}`);
+            await persistSyncError({ shop, sku: f.sku, reason: f.message }).catch((err) => {
+              console.error(`[trigger-sync] persistSyncError falhou para ${f.sku}:`, err?.message || err);
+            });
+          }
+        } catch (err) {
+          console.error("[trigger-sync] sync de stock de publicados falhou:", err?.message || err);
         }
-      } catch (err) {
-        console.error("[trigger-sync] sync de stock de publicados falhou:", err?.message || err);
       }
 
       // Erosão de margem (revisão do dry-run de preços, 07/10/2026) — preço live contra

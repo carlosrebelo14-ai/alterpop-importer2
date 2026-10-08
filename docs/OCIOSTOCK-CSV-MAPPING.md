@@ -38,7 +38,9 @@ price = roundUp(cost × (1 + global margin))         (endings .50/.90; only .90 
         never below roundUp(cost × 1.10)            (wins over the other two)
 ```
 
-Global margin: Settings `priceMarginPct` (5–100 %, default 40 %), set from the curation panel. Already-published products keep their Shopify price on republish; repricing them is a separate, approved step (`scripts/catalog/price-reconcile-apply.js`).
+Global margin: Settings `priceMarginPct` (5–100 %, max 2 decimals, default 40 %; below 10 % the 10 % floor applies), set from the curation panel.
+
+Existing products: the app never rewrites the price of a product that already exists in Shopify — not on republish, not from the Import page, not from a curation price override (overrides only apply when the product is created). The only exception is a live price of 0.00, which gets the rule price; with no computable price the product is refused (publisher) or set to DRAFT (Import page). Repricing published products to the rule is a separate, approved step (`scripts/catalog/price-reconcile-apply.js`).
 
 ## Category glossary (deterministic ES → EN)
 

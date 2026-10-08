@@ -24,7 +24,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { reasonLabel } from "../utils/curationReasonLabels.js";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateAdmin } from "../utils/authenticate.server";
-import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { loadShopSettings, getDefaultSettings } from "../../lib/importer/settings.server.js";
 import { getCurationLiteStats } from "../../lib/importer/dashboard/getDashboardStats.server.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
 import {
@@ -67,7 +67,17 @@ const PRICE_STATUS_BADGE = {
 
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
-  const settings = await loadShopSettings(session.shop);
+  // Definições ilegíveis não derrubam o painel: abre com os valores por defeito e um
+  // aviso a apontar para Definições (em produção o erro do loader seria só "Unexpected
+  // Server Error"). A lista de produtos falha à vista por si (margem não resolvida).
+  let settings;
+  let settingsLoadError = null;
+  try {
+    settings = await loadShopSettings(session.shop);
+  } catch (err) {
+    settingsLoadError = err?.message || String(err);
+    settings = getDefaultSettings();
+  }
   const dashboardStats = await getCurationLiteStats(session.shop);
   const indexingActive = isCatalogIndexingRunning(session.shop);
   const catalogRebuildStatus = await readCatalogRebuildStatus(session.shop);
@@ -111,6 +121,7 @@ export const loader = async ({ request }) => {
     reasons,
     smartStats,
     settings,
+    settingsLoadError,
   };
 };
 
@@ -1517,6 +1528,11 @@ export default function CurationDashboard() {
       subtitle={`${dashboardStats.totalIndexed.toLocaleString("pt-PT")} produtos na base de dados (SQLite)`}
     >
       <BlockStack gap="400">
+        {loaderData.settingsLoadError && (
+          <Banner tone="critical" title="Ficheiro de definições ilegível">
+            {`${loaderData.settingsLoadError}. Abre Definições e guarda para o repor; depois aplica a margem global aqui.`}
+          </Banner>
+        )}
         <DashboardPageToolbar
           onRefreshCatalog={handleRefreshCatalog}
           refreshStarting={refreshStarting}
@@ -1607,14 +1623,20 @@ export default function CurationDashboard() {
               importJobStatus.state === "failed"
                 ? "critical"
                 : importJobStatus.state === "completed"
-                  ? "success"
+                  ? importJobStatus.summary?.metrics?.dryRunPriceErrors > 0
+                    ? "warning"
+                    : "success"
                   : "info"
             }
           >
             {importJobStatus.state === "running"
               ? `Sincronização: ${Math.round(importJobStatus.progressPercent || 0)}% · ${importJobStatus.processedRows ?? 0}/${importJobStatus.totalRows ?? "?"} · ${importJobStatus.currentSku || "—"}`
               : importJobStatus.state === "completed"
-                ? `Job concluído: ${importJobId} · ${importJobStatus.summary?.metrics?.failed ?? 0} falha(s) · lotes: ${importJobStatus.summary?.metrics?.batchesCompleted ?? 0}`
+                ? `Job concluído: ${importJobId} · ${importJobStatus.summary?.metrics?.failed ?? 0} falha(s) · lotes: ${importJobStatus.summary?.metrics?.batchesCompleted ?? 0}${
+                    importJobStatus.summary?.metrics?.dryRunPriceErrors > 0
+                      ? ` · ${importJobStatus.summary.metrics.dryRunPriceErrors} sem preço calculável (sem precio_distribuidores — o import real recusa criá-los)`
+                      : ""
+                  }`
                 : importJobStatus.state === "failed"
                   ? `Job falhou: ${importJobStatus.error || importJobId}`
                   : `Job ${importJobId}: ${importJobStatus.state}`}
