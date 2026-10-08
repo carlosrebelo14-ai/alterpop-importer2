@@ -27,3 +27,7 @@ server/data/curation-queue.json
 
 # Relatórios gerados por scripts (lib/maintenance/reportsDir.js) — nunca commitados
 reports/
+
+# Ficheiros WAL do SQLite local (testes) — nunca commitados; sem isto o deploy.sh recusa na guarda 2
+dev.sqlite-shm
+dev.sqlite-wal
