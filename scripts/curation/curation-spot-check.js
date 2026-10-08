@@ -33,6 +33,7 @@ import { ProductImporter } from "../../lib/importer/importers/ProductImporter.js
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { assertLiveImportAllowed } from "../../lib/importer/jobs/dryRunGuard.js";
 import prisma from "../../app/db.server.js";
+import { loadShopSettings } from "../../lib/importer/settings.server.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.join(__dirname, "..", "..");
@@ -422,6 +423,8 @@ async function executeSpotCases(cases, dryRun) {
   await job.ensureResultsDir();
 
   let client;
+
+  let shopSettings = {};
   if (dryRun) {
     client = {
       graphql: async () => {
@@ -430,6 +433,8 @@ async function executeSpotCases(cases, dryRun) {
     };
   } else {
     const session = await loadDevStoreSession();
+    // Live escreve preços: margem da loja, nunca a de defeito (revisão do PR #87).
+    shopSettings = await loadShopSettings(session.shop);
     client = createShopifyClientFromSession(session);
     client = wrapShopifyClientWithSpotCheckLogs(client);
     logCor(`Ligação live: ${session.shop}`, cor.verde);
@@ -440,6 +445,7 @@ async function executeSpotCases(cases, dryRun) {
   }
 
   const importer = new ProductImporter(job, client, {
+    ...shopSettings,
     syncImages: !dryRun,
     syncPrices: true,
     importMode: "CREATE_AND_UPDATE",

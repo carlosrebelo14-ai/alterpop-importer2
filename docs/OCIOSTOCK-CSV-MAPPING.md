@@ -12,8 +12,9 @@ Semicolon-delimited (`;`) CSV from OcioStock. Spanish column headers mapped to i
 | `descripcion` | `description` | `descriptionHtml` | DeepL | No |
 | `categoria_principal` | `category`, `categoryMain`, `categorySegments[]` | `productType`, `tags` | Glossary + DeepL | No |
 | `marca` | `vendor` | Product `vendor` | — (brand names) | No |
-| `precio_bruto` | `grossPrice` | Variant `price` | — | Yes if syncPrices |
-| `precio_neto` | `netPrice` | Metafield `ociostock.net_price` | — | Yes if syncPrices (one of gross/net) |
+| `precio_distribuidores` | `distributorPrice` | Cost — Variant `price` is computed from it (see below) | — | Yes (no cost → no price, product not created) |
+| `precio_bruto` | `grossPrice` | PVPR (RRP incl. VAT) — ceiling and 80 % floor of the price | — | No (missing → `SEM_PVPR`) |
+| `precio_neto` | `netPrice` | Metafield `ociostock.net_price` (= `precio_bruto` / 1.21, not a cost) | — | No |
 | `stock_disponible` | `availableQuantity` | `inventorySetQuantities` | — | Yes (>= 0) |
 | `hay_stock` | `hasStock` | Filter only | — | No |
 | `disponibilidad` | `availability` | Filter only | — | No |
@@ -24,6 +25,22 @@ Semicolon-delimited (`;`) CSV from OcioStock. Spanish column headers mapped to i
 | `xml_campos_dinamicos` | `productTypePath`, segmentos | Curadoria + `productType` | — | No |
 | `tipo_promocion` | `promotionType` | Filter only | — | No |
 | `id_producto` | `supplierProductId` | — | — | No |
+
+## Variant price
+
+Single path: [`lib/importer/pricing/pricing.server.js`](../lib/importer/pricing/pricing.server.js), used by the curation panel, staging, CSV export, the publisher and the Import page.
+
+```
+cost  = round(precio_distribuidores × 1.21)        (Spanish VAT charged by OcioStock)
+price = roundUp(cost × (1 + global margin))         (endings .50/.90; only .90 from 100 €)
+        never below roundUp(80 % × precio_bruto)
+        never above roundDown(precio_bruto)
+        never below roundUp(cost × 1.10)            (wins over the other two)
+```
+
+Global margin: Settings `priceMarginPct` (5–100 %, max 2 decimals, default 40 %; below 10 % the 10 % floor applies), set from the curation panel.
+
+Existing products: the app never rewrites the price of a product that already exists in Shopify — not on republish, not from the Import page, not from a curation price override (overrides only apply when the product is created). The only exception is a live price of 0.00, which gets the rule price; with no computable price the product is refused (publisher) or set to DRAFT (Import page). Repricing published products to the rule is a separate, approved step (`scripts/catalog/price-reconcile-apply.js`).
 
 ## Category glossary (deterministic ES → EN)
 
@@ -130,4 +147,4 @@ For manual bulk operations, align columns with Matrixify:
 | SKU | `referencia` |
 | Handle | Shopify-generated or existing |
 | Title | `nombre` (translated EN) |
-| Variant Price | `precio_bruto` |
+| Variant Price | computed — `pricing.server.js` (see Variant price) |

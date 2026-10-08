@@ -15,7 +15,7 @@ import {
 import { ShopifyResetModal } from "../components/ShopifyResetModal.jsx";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateAdmin } from "../utils/authenticate.server";
-import { loadShopSettings, saveShopSettings } from "../../lib/importer/settings.server.js";
+import { loadShopSettings, saveShopSettings, getDefaultSettings } from "../../lib/importer/settings.server.js";
 import { resolveTranslationConfig } from "../../lib/importer/transform/translationConfig.js";
 import {
   readExcludeListJson,
@@ -29,12 +29,22 @@ import {
 
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
-  const settings = await loadShopSettings(session.shop);
+  // Ficheiro de definições ilegível: a página abre com os valores por defeito e diz
+  // porquê — guardar substitui o ficheiro estragado (revisão do PR #87). Sem isto, a
+  // única forma de recuperar era pela shell da Fly.
+  let settings;
+  let settingsLoadError = null;
+  try {
+    settings = await loadShopSettings(session.shop);
+  } catch (err) {
+    settingsLoadError = err?.message || String(err);
+    settings = getDefaultSettings();
+  }
   const translation = resolveTranslationConfig(settings);
   const excludeListJson = await readExcludeListJson();
   const marketSettings = await primeMarketSettingsForShop(session.shop);
   const marketSettingsJson = await readMarketSettingsJson(session.shop);
-  return { settings, translation, excludeListJson, marketSettings, marketSettingsJson };
+  return { settings, settingsLoadError, translation, excludeListJson, marketSettings, marketSettingsJson };
 };
 
 export const action = async ({ request }) => {
@@ -85,7 +95,19 @@ export const action = async ({ request }) => {
     }
   }
 
+  // Campos que este formulário não edita — sem isto, guardar as Definições repunha a
+  // margem de preço (editada na Curadoria) no valor por defeito. Com o ficheiro
+  // estragado não há margem a preservar: guardar repõe o ficheiro com a margem "por
+  // definir" (null), e a publicação para até alguém a aplicar na Curadoria — nunca
+  // publica com os 40 % por defeito sem ninguém os escolher (revisão do PR #87).
+  let current;
+  try {
+    current = await loadShopSettings(session.shop);
+  } catch {
+    current = { priceMarginPct: null };
+  }
   const settings = {
+    priceMarginPct: current.priceMarginPct,
     ociostockCsvUrl: String(form.get("ociostockCsvUrl") || ""),
     translationProvider: String(form.get("translationProvider") || "passthrough"),
     translationApiKey: String(form.get("translationApiKey") || ""),
@@ -102,10 +124,6 @@ export const action = async ({ request }) => {
     batchSize: parseInt(String(form.get("batchSize") || "50"), 10) || 50,
     importInStockOnly: form.get("importInStockOnly") === "on",
     stockBuffer: Math.max(0, parseInt(String(form.get("stockBuffer") || "0"), 10) || 0),
-    marginErosionThresholdPct: Math.max(
-      0,
-      parseInt(String(form.get("marginErosionThresholdPct") || "15"), 10) || 15
-    ),
     marginWarnThresholdPct: Math.max(
       0,
       parseInt(String(form.get("marginWarnThresholdPct") || "30"), 10) || 30
@@ -126,7 +144,8 @@ export const action = async ({ request }) => {
 };
 
 export default function SettingsPage() {
-  const { settings, translation, excludeListJson, marketSettings, marketSettingsJson } = useLoaderData();
+  const { settings, settingsLoadError, translation, excludeListJson, marketSettings, marketSettingsJson } =
+    useLoaderData();
   const fetcher = useFetcher();
   const excludeFetcher = useFetcher();
   const marketFetcher = useFetcher();
@@ -260,6 +279,11 @@ export default function SettingsPage() {
   return (
     <div className="alterpop-dashboard alterpop-page-shell">
     <s-page heading="Definições">
+      {settingsLoadError && (
+        <Banner tone="critical" title="Ficheiro de definições ilegível">
+          {`${settingsLoadError}. Os campos abaixo mostram os valores por defeito. Guardar substitui o ficheiro estragado e deixa a margem de preço por definir: a publicação fica parada até a aplicares na Curadoria.`}
+        </Banner>
+      )}
       <fetcher.Form method="post">
         <s-section heading="CSV URL (OcioStock)">
           <s-text-field
@@ -319,12 +343,6 @@ export default function SettingsPage() {
                   label="Buffer de stock (unidades subtraídas antes de publicar)"
                   value={String(s.stockBuffer ?? 0)}
                   details="Ex: fornecedor diz 5, buffer 2 → publica 3. 0 = sem buffer."
-                />
-                <s-text-field
-                  name="marginErosionThresholdPct"
-                  label="Limiar de erosão de margem (%)"
-                  value={String(s.marginErosionThresholdPct ?? 15)}
-                  details="Sinaliza em Relatórios produtos publicados cujo custo do fornecedor subiu X% desde a publicação. Nunca muda preço/stock sozinho. Default 15."
                 />
                 <s-text-field
                   name="marginWarnThresholdPct"

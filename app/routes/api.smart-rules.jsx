@@ -51,6 +51,9 @@ export const action = async ({ request }) => {
       const n = parseFloat(maxPriceRaw.replace(",", "."));
       if (Number.isFinite(n)) rule.maxPrice = n;
     }
+    // O filtro do painel é sobre o PVPR desde a revisão do PR #87 — a regra criada a
+    // partir dele compara o mesmo campo (ver smartRules.server.js, priceField).
+    if (rule.minPrice != null || rule.maxPrice != null) rule.priceField = "grossPrice";
 
     const next = saveSmartRules([...(rules || []), rule]);
     return Response.json({ ok: true, rule, rules: next.rules });

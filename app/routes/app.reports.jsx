@@ -10,25 +10,44 @@ import { SyncErrorLogsPanel } from "../components/SyncErrorLogsPanel.jsx";
 import { LastSyncRunBanner } from "../components/LastSyncRunBanner.jsx";
 import { OrderStockAlertsPanel } from "../components/OrderStockAlertsPanel.jsx";
 import { listSkusForReview } from "../../lib/importer/catalog/skuLifecycle.server.js";
-import { computeMarginErosionAlerts } from "../../lib/importer/curation/marginErosion.server.js";
-import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { loadMarginErosionState } from "../../lib/importer/curation/marginErosion.server.js";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
-  const [dashboardStats, settings] = await Promise.all([
+  const [dashboardStats, discontinuedForReview] = await Promise.all([
     getDashboardStats(session.shop),
-    loadShopSettings(session.shop),
-  ]);
-  const [discontinuedForReview, marginErosionAlerts] = await Promise.all([
     listSkusForReview(session.shop),
-    computeMarginErosionAlerts(session.shop, { thresholdPct: settings.marginErosionThresholdPct }),
   ]);
+  // Estado gravado pelo último ciclo (api.trigger-sync). Ficheiro ilegível lança —
+  // a página mostra o erro em vez de "sem alertas".
+  let marginErosion = null;
+  let marginErosionError = null;
+  let marginErosionFailedAt = null;
+  try {
+    const state = await loadMarginErosionState(session.shop);
+    if (state?.status === "failed") {
+      // Último ciclo falhou: mostra a falha e, abaixo, o último resultado bom (se houver).
+      // A hora vai crua e é formatada no componente, no mesmo fuso das outras.
+      marginErosionError = state.reason;
+      marginErosionFailedAt = state.ranAt;
+      marginErosion = state.lastGood || null;
+    } else {
+      marginErosion = state;
+    }
+  } catch (err) {
+    marginErosionError = err?.message || String(err);
+  }
+  // Ciclo do relógio ~45 min; acima de 3 h sem medir, o estado já não descreve a loja.
+  const marginErosionStale =
+    marginErosion?.ranAt != null && Date.now() - new Date(marginErosion.ranAt).getTime() > 3 * 60 * 60 * 1000;
   return {
     shop: session.shop,
     dashboardStats,
     discontinuedForReview,
-    marginErosionAlerts,
-    marginErosionThresholdPct: settings.marginErosionThresholdPct,
+    marginErosion,
+    marginErosionError,
+    marginErosionFailedAt,
+    marginErosionStale,
   };
 };
 
@@ -36,9 +55,13 @@ export default function ReportsPage() {
   const {
     dashboardStats,
     discontinuedForReview,
-    marginErosionAlerts,
-    marginErosionThresholdPct,
+    marginErosion,
+    marginErosionError,
+    marginErosionFailedAt,
+    marginErosionStale,
   } = useLoaderData();
+  // Mesmo fuso no servidor e no browser — horas da falha e do último ciclo comparáveis.
+  const fmtLisbon = (iso) => new Date(iso).toLocaleString("pt-PT", { timeZone: "Europe/Lisbon" });
   const shopify = useAppBridge();
   const [salesRefreshing, setSalesRefreshing] = useState(false);
   const [lastSalesResult, setLastSalesResult] = useState(null);
@@ -84,6 +107,17 @@ export default function ReportsPage() {
             <Banner tone="info">
               Aprova pelo menos 1 produto na Curadoria para veres estas métricas com dados reais.
               Por agora mostram 0€/0% porque a fila de aprovados está vazia.
+            </Banner>
+          )}
+
+          {dashboardStats.approvedPricingError && (
+            <Banner tone="critical">
+              {`Receita e lucro dos aprovados não calculados: ${dashboardStats.approvedPricingError}`}
+            </Banner>
+          )}
+          {(dashboardStats.approvedPriceErrorCount || 0) > 0 && (
+            <Banner tone="warning">
+              {`${dashboardStats.approvedPriceErrorCount} aprovado(s) sem precio_distribuidores — fora da receita e do lucro abaixo, e falham na publicação.`}
             </Banner>
           )}
 
@@ -272,22 +306,70 @@ export default function ReportsPage() {
               <Card>
                 <BlockStack gap="300">
                   <Text as="h2" variant="headingMd">
-                    {`Erosão de margem (${marginErosionAlerts.length})`}
+                    {`Erosão de margem (${marginErosion?.red?.length ?? "—"})`}
                   </Text>
                   <Text as="p" tone="subdued">
-                    {`Produtos publicados cujo custo do fornecedor subiu ${marginErosionThresholdPct}%+ desde a publicação (limiar configurável em Definições). Só sinaliza — preço e stock nunca são alterados automaticamente.`}
+                    {`Em cada ciclo, compara o preço live de cada produto publicado com o custo atual do feed (precio_distribuidores + IVA). Vermelho abaixo de ${marginErosion?.thresholdPct ?? 10}% de margem efetiva sobre o custo. Só sinaliza — o preço nunca é alterado automaticamente.`}
                   </Text>
-                  {marginErosionAlerts.length === 0 ? (
-                    <Text as="p" tone="subdued">Sem alertas de erosão de margem neste momento.</Text>
+                  {marginErosionError && (
+                    <Banner tone="critical">
+                      {marginErosionFailedAt
+                        ? `Erosão de margem: o ciclo de ${fmtLisbon(marginErosionFailedAt)} falhou — ${marginErosionError}. Abaixo, o último resultado bom.`
+                        : `Erosão de margem: ${marginErosionError}`}
+                    </Banner>
+                  )}
+                  {marginErosionStale && (
+                    <Banner tone="warning">Último ciclo com mais de 3 h — os valores abaixo podem já não descrever a loja.</Banner>
+                  )}
+                  {!marginErosion ? (
+                    marginErosionError ? null : (
+                      <Text as="p" tone="subdued">Ainda nenhum ciclo mediu a margem — aparece depois do próximo ciclo de sync.</Text>
+                    )
                   ) : (
-                    <BlockStack gap="150">
-                      {marginErosionAlerts.slice(0, 30).map((a) => (
-                        <Text as="p" key={a.sku} tone="subdued">
-                          {`${a.sku} — ${formatEur(a.costAtPublish)} → ${formatEur(a.currentCost)} (+${a.erosionPct}%)`}
-                        </Text>
-                      ))}
-                      {marginErosionAlerts.length > 30 && (
-                        <Text as="p" tone="subdued">{`+ ${marginErosionAlerts.length - 30} outro(s)…`}</Text>
+                    <BlockStack gap="200">
+                      <Text as="p" tone="subdued">
+                        {`Último ciclo medido: ${fmtLisbon(marginErosion.ranAt)} · ${marginErosion.measured}/${marginErosion.publishedCount} publicados medidos.`}
+                      </Text>
+                      {marginErosion.red.length === 0 ? (
+                        <Text as="p" tone="success">{`Nenhum produto abaixo de ${marginErosion.thresholdPct}% de margem efetiva.`}</Text>
+                      ) : (
+                        <BlockStack gap="150">
+                          {marginErosion.red.slice(0, 50).map((a) => (
+                            <Text as="p" key={a.sku} tone="critical">
+                              {`${a.sku} — ${a.title}: live ${formatEur(a.livePrice)}, custo ${formatEur(a.cost)} → margem ${a.effectiveMarginPct}%`}
+                            </Text>
+                          ))}
+                          {marginErosion.red.length > 50 && (
+                            <Text as="p" tone="subdued">{`+ ${marginErosion.red.length - 50} outro(s)…`}</Text>
+                          )}
+                        </BlockStack>
+                      )}
+                      {marginErosion.overridesNotApplied?.length > 0 && (
+                        <Banner tone="warning" title={`${marginErosion.overridesNotApplied.length} preço(s) fixado(s) na curadoria que não estão na loja`}>
+                          <BlockStack gap="100">
+                            <Text as="p">
+                              O preço fixado só se aplica quando o produto é criado. Num produto que já existe, muda-o no admin da Shopify — ou limpa o override.
+                            </Text>
+                            {marginErosion.overridesNotApplied.slice(0, 20).map((a) => (
+                              <Text as="p" key={a.sku}>{`${a.sku} — ${a.title}: fixado ${formatEur(a.override)}, na loja ${formatEur(a.livePrice)}`}</Text>
+                            ))}
+                            {marginErosion.overridesNotApplied.length > 20 && (
+                              <Text as="p">{`+ ${marginErosion.overridesNotApplied.length - 20} outro(s)…`}</Text>
+                            )}
+                          </BlockStack>
+                        </Banner>
+                      )}
+                      {marginErosion.noData.length > 0 && (
+                        <Banner tone="warning" title={`${marginErosion.noData.length} publicado(s) sem dados para medir`}>
+                          <BlockStack gap="100">
+                            {marginErosion.noData.slice(0, 20).map((a) => (
+                              <Text as="p" key={a.sku}>{`${a.sku} — ${a.reason}`}</Text>
+                            ))}
+                            {marginErosion.noData.length > 20 && (
+                              <Text as="p">{`+ ${marginErosion.noData.length - 20} outro(s)…`}</Text>
+                            )}
+                          </BlockStack>
+                        </Banner>
                       )}
                     </BlockStack>
                   )}

@@ -24,7 +24,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { reasonLabel } from "../utils/curationReasonLabels.js";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateAdmin } from "../utils/authenticate.server";
-import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { loadShopSettings, getDefaultSettings } from "../../lib/importer/settings.server.js";
 import { getCurationLiteStats } from "../../lib/importer/dashboard/getDashboardStats.server.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
 import {
@@ -51,14 +51,35 @@ const PAGE_SIZE = 50;
 /** Redesign da Curadoria (2026-08-12) — limiar do badge "Stock baixo" na tabela. */
 const LOW_STOCK_THRESHOLD = 10;
 /** Redesign da Curadoria — margem abaixo disto é sempre crítica, independente do limiar configurável. */
-const MARGIN_CRITICAL_THRESHOLD = 15;
 /** IndexTable: índice de coluna sortável → mesmo campo já usado pelo <select> de ordenação. */
-const SORT_COLUMN_TO_FIELD = { 0: "title", 4: "netPrice", 5: "margin", 6: "stock" };
-const SORT_FIELD_TO_COLUMN = { title: 0, netPrice: 4, margin: 5, stock: 6 };
+// PVPR (coluna 3) ordena pelo próprio PVPR (grossPrice).
+const SORT_COLUMN_TO_FIELD = { 0: "title", 3: "grossPrice", 7: "stock" };
+const SORT_FIELD_TO_COLUMN = { title: 0, grossPrice: 3, stock: 7 };
+
+// Selos do estado do preço (pricing.server.js) — avisam, nunca bloqueiam a aprovação.
+const PRICE_STATUS_BADGE = {
+  MARGEM: { label: "Margem", tone: "success", help: "Margem global cabe entre 80 % do PVPR e o PVPR." },
+  PISO_PVPR: { label: "Piso PVPR", tone: "warning", help: "Custo anormalmente baixo (provável oferta do fornecedor) — a margem global ficava abaixo de 80 % do PVPR, preço subido para 80 % do PVPR." },
+  TETO: { label: "Teto", tone: "warning", help: "A margem global passava o PVPR — preço = PVPR arredondado para baixo." },
+  SEM_PVPR: { label: "Sem PVPR", tone: "warning", help: "Feed sem precio_bruto — margem global, sem teto." },
+  ACIMA_PVPR: { label: "Acima PVPR", tone: "critical", help: "Nem a margem mínima (10 %) cabe abaixo do PVPR — preço = custo + 10 %, acima do PVPR." },
+};
 
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
-  const settings = await loadShopSettings(session.shop);
+  // Definições ilegíveis não derrubam o painel: abre com os valores por defeito e um
+  // aviso a apontar para Definições (em produção o erro do loader seria só "Unexpected
+  // Server Error"). A lista de produtos falha à vista por si (margem não resolvida).
+  let settings;
+  let settingsLoadError = null;
+  try {
+    settings = await loadShopSettings(session.shop);
+  } catch (err) {
+    settingsLoadError = err?.message || String(err);
+    // Margem desconhecida: o painel não mostra os 40 % de defeito como se estivessem
+    // aplicados.
+    settings = { ...getDefaultSettings(), priceMarginPct: null };
+  }
   const dashboardStats = await getCurationLiteStats(session.shop);
   const indexingActive = isCatalogIndexingRunning(session.shop);
   const catalogRebuildStatus = await readCatalogRebuildStatus(session.shop);
@@ -102,6 +123,7 @@ export const loader = async ({ request }) => {
     reasons,
     smartStats,
     settings,
+    settingsLoadError,
   };
 };
 
@@ -110,6 +132,31 @@ export const action = async ({ request }) => {
   const form = await request.formData();
   const intent = form.get("intent");
 
+  // Briefing de preço (07/10/2026) — margem global, a mesma que o publisher usa.
+  if (intent === "set-price-margin") {
+    const [{ assertMarginPct, effectiveMarginPct }, { saveShopSettings }] = await Promise.all([
+      import("../../lib/importer/pricing/pricing.server.js"),
+      import("../../lib/importer/settings.server.js"),
+    ]);
+    try {
+      const priceMarginPct = assertMarginPct(String(form.get("priceMarginPct") || "").replace(",", "."));
+      const current = await loadShopSettings(session.shop);
+      await saveShopSettings(session.shop, { ...current, priceMarginPct });
+      const effective = effectiveMarginPct(priceMarginPct);
+      return {
+        ok: true,
+        intent,
+        priceMarginPct,
+        warning:
+          effective !== priceMarginPct
+            ? `A margem mínima é ${effective}%: abaixo disso aplica-se ${effective}% (a margem gravada não tem efeito).`
+            : null,
+      };
+    } catch (err) {
+      return { ok: false, intent, error: err?.message || String(err) };
+    }
+  }
+
   if (intent === "pause-indexing") {
     const { stopCatalogIndexingWorker } = await import("../../lib/importer/catalog/indexingStream.server.js");
     await stopCatalogIndexingWorker(session.shop);
@@ -117,7 +164,12 @@ export const action = async ({ request }) => {
   }
 
   if (intent === "refresh-catalog" || intent === "purge-catalog" || intent === "force-reindex-catalog") {
-    const settings = await loadShopSettings(session.shop);
+    let settings;
+    try {
+      settings = await loadShopSettings(session.shop);
+    } catch (err) {
+      return { ok: false, error: `Definições ilegíveis — abre Definições e guarda para as repor (${err?.message || err})` };
+    }
     const purge = intent === "purge-catalog";
     const forceFull = intent === "force-reindex-catalog";
     const fileStatus = await readCatalogRebuildStatus(session.shop);
@@ -187,6 +239,7 @@ export default function CurationDashboard() {
   const loaderData = useLoaderData();
   const fetcher = useFetcher();
   const importFetcher = useFetcher();
+  const marginFetcher = useFetcher();
   const shopify = useAppBridge();
 
   const settings = loaderData.settings;
@@ -219,7 +272,11 @@ export default function CurationDashboard() {
 
   const [smartFlags] = useState(() => ({ ...loaderData.smartFlags }));
   const [reasons] = useState(() => ({ ...loaderData.reasons }));
-  const marginWarnThresholdPct = Number(settings?.marginWarnThresholdPct ?? 30);
+  // Margem global de preço — input do seletor e a margem com que a lista foi calculada
+  // (vem da resposta de /api/products, por isso o que se vê é o que o publisher escreve).
+  const [priceMarginInput, setPriceMarginInput] = useState(String(settings?.priceMarginPct ?? ""));
+  const [appliedMarginPct, setAppliedMarginPct] = useState(settings?.priceMarginPct ?? null);
+  const [effectivePct, setEffectivePct] = useState(null);
 
   // Redesign da Curadoria (2026-08-12) — toggle de densidade da tabela, preferência
   // local por navegador/loja (não é dado de negócio, não faz sentido no servidor).
@@ -285,6 +342,23 @@ export default function CurationDashboard() {
   const [toast, setToast] = useState(null);
   const [selectedSkus, setSelectedSkus] = useState([]);
   const [bulkMargin, setBulkMargin] = useState("1.4");
+
+  // Margem global aplicada → lista recalcula (preço final e lucro vêm do servidor).
+  useEffect(() => {
+    const d = marginFetcher.data;
+    if (!d || d.intent !== "set-price-margin") return;
+    if (d.ok) {
+      setToast({
+        content: d.warning
+          ? `Margem ${d.priceMarginPct}% gravada. ${d.warning}`
+          : `Margem global ${d.priceMarginPct}% aplicada — preços recalculados`,
+      });
+      setPriceMarginInput(String(d.priceMarginPct));
+      setListRefreshKey((k) => k + 1);
+    } else {
+      setToast({ content: d.error || "Erro ao gravar a margem", error: true });
+    }
+  }, [marginFetcher.data]);
   const [undoSnapshots, setUndoSnapshots] = useState([]);
   const [massActionConfirm, setMassActionConfirm] = useState(null);
   const [importingCsv, setImportingCsv] = useState(false);
@@ -441,6 +515,10 @@ export default function CurationDashboard() {
     }
     if (fetcher.data?.message) {
       shopify.toast.show(fetcher.data.message);
+    }
+    // Ações de catálogo recusadas (ex.: definições ilegíveis) — nunca um clique sem resposta.
+    if (fetcher.data?.ok === false && fetcher.data?.error) {
+      shopify.toast.show(fetcher.data.error, { isError: true });
     }
   }, [fetcher.data, shopify]);
 
@@ -687,6 +765,8 @@ export default function CurationDashboard() {
         }
 
         setProducts(data.products || []);
+        setAppliedMarginPct(data.marginPct ?? null);
+        setEffectivePct(data.effectiveMarginPct ?? null);
         setTotalCount(data.totalCount ?? 0);
         setTotalPages(data.totalPages ?? 1);
       } catch (err) {
@@ -925,9 +1005,20 @@ export default function CurationDashboard() {
           return;
         }
         shopify.toast.show(
-          `${data.appliedCount} linhas aplicadas, ${data.rejectedCount} rejeitadas de ${data.totalRows}`,
-          { isError: data.rejectedCount > 0 && data.appliedCount === 0 }
+          `${data.appliedCount} linhas aplicadas, ${data.rejectedCount} rejeitadas de ${data.totalRows}` +
+            (data.warningCount > 0
+              ? ` · ${data.warningCount} aviso(s): ` +
+                data.warnings
+                  .slice(0, 3)
+                  .map((w) => (w.sku ? `linha ${w.line} (${w.sku}): ${w.reason}` : w.reason))
+                  .join(" | ") +
+                (data.warningCount > 3 ? ` | +${data.warningCount - 3}…` : "")
+              : ""),
+          { isError: (data.rejectedCount > 0 && data.appliedCount === 0) || data.warningCount > 0 }
         );
+        if (data.warningCount > 0) {
+          console.warn("[curation] import-edits avisos", data.warnings);
+        }
         if (data.rejectedCount > 0) {
           console.log("[debug:curation] import-edits rejeitados", data.rejected);
         }
@@ -1311,7 +1402,13 @@ export default function CurationDashboard() {
     if (importFetcher.data?.jobId) {
       setImportJobId(importFetcher.data.jobId);
     }
-  }, [importFetcher.data]);
+    // Import recusado (ex.: definições ilegíveis): o toast de "iniciado" já saiu — este
+    // corrige-o, e o import real não fica pendurado à espera de uma simulação que não houve.
+    if (importFetcher.data?.ok === false && importFetcher.data?.error) {
+      shopify.toast.show(`Import não iniciado: ${importFetcher.data.error}`, { isError: true });
+      setPendingLiveAfterDryRun(false);
+    }
+  }, [importFetcher.data, shopify]);
 
   useImportJobPolling({
     jobId: importJobId,
@@ -1455,6 +1552,11 @@ export default function CurationDashboard() {
       subtitle={`${dashboardStats.totalIndexed.toLocaleString("pt-PT")} produtos na base de dados (SQLite)`}
     >
       <BlockStack gap="400">
+        {loaderData.settingsLoadError && (
+          <Banner tone="critical" title="Ficheiro de definições ilegível">
+            {`${loaderData.settingsLoadError}. Abre Definições e guarda para o repor; depois aplica a margem global aqui.`}
+          </Banner>
+        )}
         <DashboardPageToolbar
           onRefreshCatalog={handleRefreshCatalog}
           refreshStarting={refreshStarting}
@@ -1545,14 +1647,24 @@ export default function CurationDashboard() {
               importJobStatus.state === "failed"
                 ? "critical"
                 : importJobStatus.state === "completed"
-                  ? "success"
+                  ? importJobStatus.summary?.metrics?.dryRunPriceErrors > 0 || importJobStatus.summary?.metrics?.priceNotices > 0
+                    ? "warning"
+                    : "success"
                   : "info"
             }
           >
             {importJobStatus.state === "running"
               ? `Sincronização: ${Math.round(importJobStatus.progressPercent || 0)}% · ${importJobStatus.processedRows ?? 0}/${importJobStatus.totalRows ?? "?"} · ${importJobStatus.currentSku || "—"}`
               : importJobStatus.state === "completed"
-                ? `Job concluído: ${importJobId} · ${importJobStatus.summary?.metrics?.failed ?? 0} falha(s) · lotes: ${importJobStatus.summary?.metrics?.batchesCompleted ?? 0}`
+                ? `Job concluído: ${importJobId} · ${importJobStatus.summary?.metrics?.failed ?? 0} falha(s) · lotes: ${importJobStatus.summary?.metrics?.batchesCompleted ?? 0}${
+                    importJobStatus.summary?.metrics?.dryRunPriceErrors > 0
+                      ? ` · ${importJobStatus.summary.metrics.dryRunPriceErrors} sem preço calculável — o import real recusa criá-los (ex.: ${importJobStatus.summary.metrics.dryRunPriceErrorSample || "ver linhas"})`
+                      : ""
+                  }${
+                    importJobStatus.summary?.metrics?.priceNotices > 0
+                      ? ` · ${importJobStatus.summary.metrics.priceNotices} preço(s) fixado(s) na curadoria não aplicado(s) — produto já existe; ver registo de sync`
+                      : ""
+                  }`
                 : importJobStatus.state === "failed"
                   ? `Job falhou: ${importJobStatus.error || importJobId}`
                   : `Job ${importJobId}: ${importJobStatus.state}`}
@@ -1607,7 +1719,7 @@ export default function CurationDashboard() {
                 <Text as="p">
                   <strong>Marca:</strong> {selectedBrand || "(qualquer)"}
                   {" · "}
-                  <strong>Preço:</strong> {minPrice || "0"}€ – {maxPrice || "∞"}€
+                  <strong>PVPR:</strong> {minPrice || "0"}€ – {maxPrice || "∞"}€
                 </Text>
                 <TextField
                   label="Categoria (opcional, texto livre)"
@@ -1879,6 +1991,39 @@ export default function CurationDashboard() {
                     />
                   </InlineStack>
                   <InlineStack gap="200" blockAlign="center">
+                    <div style={{ width: 110 }}>
+                      <TextField
+                        label="Margem global %"
+                        labelHidden
+                        type="number"
+                        min={5}
+                        max={100}
+                        suffix="%"
+                        value={priceMarginInput}
+                        onChange={setPriceMarginInput}
+                        autoComplete="off"
+                      />
+                    </div>
+                    <Button
+                      size="slim"
+                      loading={marginFetcher.state !== "idle"}
+                      disabled={String(appliedMarginPct ?? "") === priceMarginInput.trim()}
+                      onClick={() =>
+                        marginFetcher.submit(
+                          { intent: "set-price-margin", priceMarginPct: priceMarginInput.trim() },
+                          { method: "post" }
+                        )
+                      }
+                    >
+                      Aplicar margem
+                    </Button>
+                    <Text as="span" tone="subdued" variant="bodySm">
+                      {`Preço = custo c/ IVA × (1 + ${effectivePct ?? appliedMarginPct ?? "—"}%), arredondado, entre 80 % do PVPR e o PVPR${
+                        effectivePct != null && appliedMarginPct != null && Number(effectivePct) !== Number(appliedMarginPct)
+                          ? ` — margem gravada ${appliedMarginPct}% fica abaixo do mínimo, aplica-se ${effectivePct}%`
+                          : ""
+                      }`}
+                    </Text>
                     <select
                       value={sortBy ? `${sortBy}_${sortDir}` : ""}
                       onChange={(e) => {
@@ -1901,10 +2046,8 @@ export default function CurationDashboard() {
                       }}
                     >
                       <option value="">Ordenar por…</option>
-                      <option value="margin_desc">Margem % ↓ (maior → menor)</option>
-                      <option value="margin_asc">Margem % ↑ (menor → maior)</option>
-                      <option value="netPrice_asc">Preço ↑ (barato → caro)</option>
-                      <option value="netPrice_desc">Preço ↓ (caro → barato)</option>
+                      <option value="grossPrice_asc">PVPR ↑ (barato → caro)</option>
+                      <option value="grossPrice_desc">PVPR ↓ (caro → barato)</option>
                       <option value="stock_desc">Stock ↓ (mais stock)</option>
                       <option value="title_asc">Título A → Z</option>
                       <option value="title_desc">Título Z → A</option>
@@ -1976,7 +2119,7 @@ export default function CurationDashboard() {
                             : products.filter((p) => selectedSkus.includes(p.sku)).length
                         }
                         onSelectionChange={handleTableSelectionChange}
-                        sortable={[true, false, false, false, true, true, true, false, false]}
+                        sortable={[true, false, false, true, false, false, false, true, false, false]}
                         sortDirection={sortDir === "asc" ? "ascending" : "descending"}
                         sortColumnIndex={SORT_FIELD_TO_COLUMN[sortBy]}
                         onSort={handleTableSort}
@@ -1988,10 +2131,11 @@ export default function CurationDashboard() {
                         headings={[
                           { title: "Produto" },
                           { title: "Franquia / Categoria" },
-                          { title: "Custo", alignment: "end" },
-                          { title: "MSRP", alignment: "end" },
-                          { title: "Retail", alignment: "end" },
-                          { title: "Margem", alignment: "end" },
+                          { title: "Custo c/ IVA", alignment: "end" },
+                          { title: "PVPR", alignment: "end" },
+                          { title: "Preço final", alignment: "end" },
+                          { title: "Lucro", alignment: "end" },
+                          { title: "Preço" },
                           { title: "Stock" },
                           { title: "Estado" },
                           { title: "Ações", alignment: "center" },
@@ -2005,9 +2149,12 @@ export default function CurationDashboard() {
                             categoryMain,
                             vendor,
                             stock,
-                            netPrice,
-                            grossPrice,
-                            targetRetailPrice,
+                            cost,
+                            pvpr,
+                            finalPrice,
+                            profit,
+                            priceStatus,
+                            priceError,
                             syncError,
                             salesUnits30d,
                             barcode,
@@ -2018,17 +2165,6 @@ export default function CurationDashboard() {
                           const smartAction = smartFlags[sku];
                           const reasonCode = reasons[sku];
                           const categoryLabel = translateCategoryLabel(categoryMain);
-                          const marginPct = grossPrice && netPrice && grossPrice > 0
-                            ? Math.round(((grossPrice - netPrice) / grossPrice) * 100)
-                            : null;
-                          const marginTone =
-                            marginPct === null
-                              ? "subdued"
-                              : marginPct < MARGIN_CRITICAL_THRESHOLD
-                                ? "critical"
-                                : marginPct < marginWarnThresholdPct
-                                  ? "caution"
-                                  : "success";
                           const franchiseList = (() => {
                             try {
                               const parsed = typeof franchises === "string" ? JSON.parse(franchises) : franchises;
@@ -2114,23 +2250,33 @@ export default function CurationDashboard() {
                                 </BlockStack>
                               </IndexTable.Cell>
                               <IndexTable.Cell>
-                                <Text as="span" alignment="end" tone="subdued">{formatEur(netPrice)}</Text>
+                                <Text as="span" alignment="end" tone="subdued">{cost != null ? formatEur(cost) : "—"}</Text>
                               </IndexTable.Cell>
                               <IndexTable.Cell>
-                                <Text as="span" alignment="end" tone="subdued">{grossPrice > 0 ? formatEur(grossPrice) : "—"}</Text>
+                                <Text as="span" alignment="end" tone="subdued">{pvpr != null ? formatEur(pvpr) : "—"}</Text>
                               </IndexTable.Cell>
                               <IndexTable.Cell>
-                                <Text as="span" alignment="end" fontWeight="semibold">{formatEur(targetRetailPrice)}</Text>
+                                {priceError ? (
+                                  <Tooltip content={priceError}>
+                                    <Badge tone="critical">Sem preço</Badge>
+                                  </Tooltip>
+                                ) : (
+                                  <Text as="span" alignment="end" fontWeight="semibold">{formatEur(finalPrice)}</Text>
+                                )}
                               </IndexTable.Cell>
                               <IndexTable.Cell>
-                                <Text
-                                  as="span"
-                                  alignment="end"
-                                  fontWeight="bold"
-                                  tone={marginTone}
-                                >
-                                  {marginPct !== null ? `${marginPct}%` : "—"}
+                                <Text as="span" alignment="end" fontWeight="bold" tone={priceError ? "subdued" : "success"}>
+                                  {priceError ? "—" : formatEur(profit)}
                                 </Text>
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
+                                {PRICE_STATUS_BADGE[priceStatus] ? (
+                                  <Tooltip content={PRICE_STATUS_BADGE[priceStatus].help}>
+                                    <Badge tone={PRICE_STATUS_BADGE[priceStatus].tone}>{PRICE_STATUS_BADGE[priceStatus].label}</Badge>
+                                  </Tooltip>
+                                ) : (
+                                  <Text as="span" tone="subdued">—</Text>
+                                )}
                               </IndexTable.Cell>
                               <IndexTable.Cell>
                                 <Badge tone={stockTone}>{stockLabel}</Badge>

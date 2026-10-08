@@ -188,6 +188,19 @@ flowchart LR
 
 ---
 
+## P7 — Preço (briefing 07/10/2026, PR #87)
+
+| # | Tarefa | Estado |
+|---|--------|--------|
+| PR1 | Um só caminho de preço: custo × margem, teto e piso de 80 % no PVPR (`pricing.server.js`) | `[x]` |
+| PR2 | Alerta de erosão de margem: preço live contra custo atual do feed, por ciclo | `[x]` |
+| PR3 | Reconciliação dos 159 PUBLISHED (`price-reconcile-apply.js`) — depois do deploy, OK do Carlos | `[ ]` |
+| PR4 | Dívida: o repositório não tem CI — PRs só com testes locais | `[ ]` |
+| PR5 | Dívida: coluna "Preço final" da Curadoria sem ordenação (ordenar pelo preço calculado pede o cálculo na query) | `[ ]` |
+| PR6 | SKU `0030506556343` (relógio Pikachu) PUBLISHED na fila sem produto na Shopify — apagado no admin pelo Carlos a 16/09 21:52 UTC; a app nunca apaga sem reverter a fila (shopifyReset/purge revertem; probes só apagam os seus sintéticos). V19 no portão de saúde apanha isto. Falta decidir: reabrir ou tirar da fila | `[ ]` |
+
+---
+
 ## Ordem de execução recomendada
 
 1. **P2** — Limpar `.env` / `.env.save` e artefactos `.shopify/` stale  

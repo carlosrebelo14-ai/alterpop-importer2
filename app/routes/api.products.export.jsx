@@ -4,20 +4,23 @@ import { queryCatalogProducts } from "../../lib/importer/catalog/catalogProducts
 import { buildCsv } from "../../lib/importer/catalog/csvExport.server.js";
 import { loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { computeCurationSkuFilter } from "../../lib/curation/curationStatusFilter.server.js";
-import { computeShopifyRetailPrice } from "../../lib/importer/shopify/shopifyMapper.server.js";
 
 // Limite de segurança — o mesmo já usado em getMatchingCatalogSkus() para "todos os
 // resultados do filtro" (catalogProductsDb.server.js). Ficheiros maiores do que isto
 // tornam-se difíceis de editar à mão em Excel/Sheets de qualquer forma.
 const EXPORT_LIMIT = 5000;
 
-const HEADERS = ["sku", "ean", "custo", "titulo", "categoria", "preco", "estado"];
+const HEADERS = ["sku", "ean", "custo", "pvpr", "preco_regra", "titulo", "categoria", "preco", "estado"];
 
 /**
  * GET /api/products/export?<mesmos parâmetros de /api/products>
- * CSV com os produtos que correspondem ao filtro activo. Colunas sku/ean/custo
- * são só para referência (o re-import ignora edições nelas); titulo/categoria/
- * preco/estado são editáveis e voltam pelo /api/products/import-edits.
+ * CSV com os produtos que correspondem ao filtro activo. Colunas sku/ean/custo/pvpr/
+ * preco_regra (custo = precio_distribuidores × 1,21; pvpr = precio_bruto; preco_regra =
+ * pricing.server.js) são só para referência — o re-import ignora edições nelas.
+ * titulo/categoria/preco/estado são editáveis e voltam pelo /api/products/import-edits.
+ * `preco` só vem preenchido com um override já existente: preenchê-lo à mão quer dizer
+ * "fixa este preço" — só para produtos ainda não publicados (num publicado, o preço
+ * muda-se no admin da Shopify; o import avisa e não o grava).
  */
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
@@ -62,13 +65,20 @@ export const loader = async ({ request }) => {
     const overrides = item?.metadata?.overrides || {};
     const titulo = overrides.title || p.title || "";
     const categoria = overrides.category || p.categoryMain || "";
-    const precoBase = computeShopifyRetailPrice(p.netPrice);
-    const preco = overrides.price != null ? overrides.price : precoBase;
+    // preco_regra (só leitura): o preço da regra, o mesmo do publisher. preco (editável)
+    // leva só um override existente — vazio por omissão, para um re-import sem edições
+    // não congelar o preço calculado como override (revisão adversarial do PR #87).
+    // Formato que marca a coluna como só leitura: o import deteta uma célula editada por
+    // já não ter esta forma (api.products.import-edits.jsx).
+    const precoRegra = p.finalPrice != null ? `${p.finalPrice.toFixed(2)} (regra)` : `(sem preço: ${p.priceError || "—"})`;
+    const preco = overrides.price != null ? overrides.price : null;
     const estado = item?.status || "NO_DECISION";
     return [
       p.sku,
       p.barcode || "",
-      p.netPrice != null ? p.netPrice.toFixed(2) : "",
+      p.cost != null ? p.cost.toFixed(2) : "",
+      p.pvpr != null ? p.pvpr.toFixed(2) : "",
+      precoRegra,
       titulo,
       categoria,
       preco != null ? Number(preco).toFixed(2) : "",

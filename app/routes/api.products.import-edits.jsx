@@ -5,7 +5,10 @@ import {
   approveProduct,
   rejectProduct,
   setManualOverride,
+  getCurationQueueEntry,
 } from "../../lib/curation/curationQueue.server.js";
+import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { resolveMarginPct, tryPriceProduct } from "../../lib/importer/pricing/pricing.server.js";
 
 const VALID_STATUSES = new Set(["APPROVED", "REJECTED"]);
 
@@ -42,8 +45,23 @@ export const action = async ({ request }) => {
     titulo: header.indexOf("titulo"),
     categoria: header.indexOf("categoria"),
     preco: header.indexOf("preco"),
+    precoRegra: header.indexOf("preco_regra"),
     estado: header.indexOf("estado"),
   };
+
+  // Revisão do PR #87 — CSVs exportados antes da regra de preço não têm preco_regra e
+  // trazem em `preco` o netPrice × 1,4 calculado, não um override. Aplicá-lo congelava
+  // esse valor (acima do PVPR) como override em todas as linhas. A coluna é ignorada e
+  // o resultado diz porquê; o resto das edições aplica-se normalmente.
+  const warnings = [];
+  if (idx.preco !== -1 && idx.precoRegra === -1) {
+    warnings.push({
+      line: 1,
+      sku: "",
+      reason: "CSV num formato antigo (sem preco_regra): a coluna preco foi ignorada — traz o preço calculado antigo, não um override. Exporta de novo para fixar preços.",
+    });
+    idx.preco = -1;
+  }
 
   if (idx.sku === -1) {
     return Response.json({ ok: false, error: "Coluna 'sku' em falta no CSV" }, { status: 400 });
@@ -61,13 +79,26 @@ export const action = async ({ request }) => {
         () =>
           prisma.catalogProduct.findMany({
             where: { shop: session.shop, sku: { in: chunk } },
-            select: { sku: true },
+            select: { sku: true, distributorPrice: true, grossPrice: true },
           }),
         { fallback: [] }
       )
     )
   );
-  const existingSkuSet = new Set(existingRowChunks.flat().map((r) => r.sku));
+  const existingRows = existingRowChunks.flat();
+  const existingSkuSet = new Set(existingRows.map((r) => r.sku));
+
+  // Preço da regra ATUAL por SKU, para apanhar um número mudado dentro de "(regra)".
+  // Pode diferir também porque a regra mudou desde a exportação — o aviso diz as duas.
+  let ruleBySku = null;
+  if (idx.precoRegra !== -1) {
+    try {
+      const marginPct = resolveMarginPct(await loadShopSettings(session.shop));
+      ruleBySku = new Map(existingRows.map((r) => [r.sku, tryPriceProduct(r.distributorPrice, r.grossPrice, marginPct).finalPrice]));
+    } catch (err) {
+      warnings.push({ line: 1, sku: "", reason: `Não deu para comparar preco_regra com a regra atual: ${err?.message || err}` });
+    }
+  }
 
   const applied = [];
   const rejected = [];
@@ -86,6 +117,32 @@ export const action = async ({ request }) => {
       continue;
     }
 
+    // preco_regra é só leitura e sai como "17.50 (regra)" ou "(sem preço: …)". Uma
+    // célula que já não tem essa forma foi editada: avisa por linha, em vez de a deixar
+    // desaparecer em silêncio — sem recalcular a regra, que pode ter mudado desde a
+    // exportação (revisão do PR #87).
+    if (idx.precoRegra !== -1) {
+      const ruleCell = (row[idx.precoRegra] || "").trim();
+      const suffixed = /^([\d.,]+)\s*\(regra\)$/.exec(ruleCell);
+      if (ruleCell && !suffixed && !ruleCell.startsWith("(sem preço")) {
+        warnings.push({
+          line: lineNo,
+          sku,
+          reason: `preco_regra editado ("${ruleCell}") — coluna só de leitura, ignorado. Para fixar o preço preenche a coluna preco.`,
+        });
+      } else if (suffixed && ruleBySku) {
+        const n = parseFloat(suffixed[1].replace(",", "."));
+        const rule = ruleBySku.get(sku);
+        if (Number.isFinite(n) && rule != null && Math.round(n * 100) !== Math.round(rule * 100)) {
+          warnings.push({
+            line: lineNo,
+            sku,
+            reason: `preco_regra diz ${suffixed[1]} e a regra atual dá ${rule.toFixed(2)} (editado, ou a margem/custo mudou desde a exportação) — coluna só de leitura, ignorado. Para fixar o preço preenche a coluna preco.`,
+          });
+        }
+      }
+    }
+
     const titulo = idx.titulo !== -1 ? (row[idx.titulo] || "").trim() : "";
     const categoria = idx.categoria !== -1 ? (row[idx.categoria] || "").trim() : "";
     const precoRaw = idx.preco !== -1 ? (row[idx.preco] || "").trim() : "";
@@ -98,7 +155,9 @@ export const action = async ({ request }) => {
         rejected.push({ line: lineNo, sku, reason: `Preço inválido: "${precoRaw}"` });
         continue;
       }
-      preco = n;
+      // Ao cêntimo, como a Shopify o grava — 10.235 de uma fórmula ficava 10.23 na loja
+      // e 10.235 na fila, e o aviso de "não aplicado" nunca batia certo.
+      preco = Math.round(n * 100) / 100;
     }
 
     if (estadoRaw && !VALID_STATUSES.has(estadoRaw) && estadoRaw !== "PENDING" && estadoRaw !== "NO_DECISION") {
@@ -107,6 +166,29 @@ export const action = async ({ request }) => {
     }
 
     try {
+      // Produto já publicado: o override de preço só se aplica na criação (o publisher
+      // nunca reescreve o preço de um produto existente, salvo a 0,00 — revisão do PR
+      // #87). Um preço novo aqui não teria efeito: avisa e não o grava. O mesmo valor do
+      // override existente (vem pré-preenchido na exportação) não é edição — segue.
+      if (preco != null) {
+        const entry = await getCurationQueueEntry(sku);
+        // Publicado = a fila sabe que existe na Shopify. Se não souber (produto criado pela
+        // página Import, primeira publicação falhada a meio), o publisher deteta-o e regista
+        // o aviso no registo de sync — nunca se perde em silêncio.
+        const published = entry?.status === "PUBLISHED" || Boolean(entry?.metadata?.shopifyProductId);
+        const current = entry?.metadata?.overrides?.price;
+        const unchanged = current != null && Number(current).toFixed(2) === preco.toFixed(2);
+        if (published && !unchanged) {
+          warnings.push({
+            line: lineNo,
+            sku,
+            kind: "price_not_applied",
+            reason: `preço ${preco.toFixed(2)} não aplicado — produto já publicado; muda o preço no admin da Shopify.`,
+          });
+          preco = undefined;
+        }
+      }
+
       const overrides = {};
       if (titulo) overrides.title = titulo;
       if (categoria) overrides.category = categoria;
@@ -132,7 +214,10 @@ export const action = async ({ request }) => {
     totalRows: dataRows.length,
     appliedCount: applied.length,
     rejectedCount: rejected.length,
+    warningCount: warnings.length,
     applied,
     rejected,
+    // Preços não aplicados primeiro — são os que o operador tem de ver no aviso curto.
+    warnings: [...warnings].sort((a, b) => (b.kind === "price_not_applied") - (a.kind === "price_not_applied")),
   });
 };

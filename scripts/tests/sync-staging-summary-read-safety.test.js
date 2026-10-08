@@ -53,7 +53,7 @@ async function main() {
   });
 
   await check("caso 2 — findMany()/count() divergentes sem exceção: resumo não é produzido", async () => {
-    const restore = patchCatalogProduct({ rows: [{ sku: "sku-1", netPrice: 10, title: "A" }], count: 999 });
+    const restore = patchCatalogProduct({ rows: [{ sku: "sku-1", netPrice: 10, distributorPrice: 10, grossPrice: 20, title: "A" }], count: 999 });
     try {
       await assert.rejects(() => computeSyncStagingSummary("test-shop", ["sku-1", "sku-2"]), /LEITURA INCONSISTENTE/);
     } finally {
@@ -65,7 +65,7 @@ async function main() {
     "caso 3 — ausência legítima confirmada (SKU não indexado, count concorda): resumo mostra o SKU como missing, não lança",
     async () => {
       // pedidos sku-1 e sku-2; só sku-1 existe. count() com o mesmo where concorda (1).
-      const restore = patchCatalogProduct({ rows: [{ sku: "sku-1", netPrice: 10, title: "A" }], count: 1 });
+      const restore = patchCatalogProduct({ rows: [{ sku: "sku-1", netPrice: 10, distributorPrice: 10, grossPrice: 20, title: "A" }], count: 1 });
       try {
         const summary = await computeSyncStagingSummary("test-shop", ["sku-1", "sku-2"]);
         assert.equal(summary.foundCount, 1);
@@ -79,8 +79,8 @@ async function main() {
   await check("caso 4 — leitura normal: resumo correto", async () => {
     const restore = patchCatalogProduct({
       rows: [
-        { sku: "sku-1", netPrice: 10, title: "A" },
-        { sku: "sku-2", netPrice: 20, title: "B" },
+        { sku: "sku-1", netPrice: 10, distributorPrice: 10, grossPrice: 20, title: "A" },
+        { sku: "sku-2", netPrice: 20, distributorPrice: 20, grossPrice: 40, title: "B" },
       ],
       count: 2,
     });
@@ -88,7 +88,7 @@ async function main() {
       const summary = await computeSyncStagingSummary("test-shop", ["sku-1", "sku-2"]);
       assert.equal(summary.foundCount, 2);
       assert.deepEqual(summary.missingSkus, []);
-      assert.equal(summary.totalCostEur, 30);
+      assert.equal(summary.totalCostEur, 36.3); // (10 + 20) × 1,21
     } finally {
       restore();
     }

@@ -4,6 +4,7 @@
  * criados antes do fix de ProductVariantsBulkInput (SKU em inventoryItem).
  */
 import prisma from "../../app/db.server.js";
+import { loadShopSettings } from "../../lib/importer/settings.server.js";
 import { mapOcioStockRow } from "../../lib/importer/connectors/ociostock/csvFieldMap.js";
 import { streamOcioStockRows } from "../../lib/importer/connectors/ociostock/streamCsv.js";
 import { transformOcioStockRecord } from "../../lib/importer/core/transformRow.js";
@@ -61,7 +62,9 @@ async function main() {
   });
   await job.ensureResultsDir();
 
+  // Escreve preços: margem da loja, nunca a de defeito (revisão do PR #87).
   const importer = new ProductImporter(job, client, {
+    ...(await loadShopSettings(session.shop)),
     syncImages: true,
     syncPrices: true,
     importMode: "CREATE_AND_UPDATE",
@@ -82,7 +85,7 @@ async function main() {
           id
           title
           variants(first: 1) {
-            nodes { id sku inventoryItem { id } }
+            nodes { id sku price inventoryItem { id } }
           }
         }
       }`,
@@ -100,6 +103,9 @@ async function main() {
       inventoryItem: variantNode.inventoryItem?.id
         ? { id: variantNode.inventoryItem.id }
         : null,
+      // O importer só escreve preço num produto existente quando está a 0,00 — precisa
+      // do preço live (pricing.server.js existingPriceNeedsWrite).
+      price: variantNode.price,
     });
 
     console.log(`\n▶ Reparar ${record.sku} (${status}) → ${target.productId}`);

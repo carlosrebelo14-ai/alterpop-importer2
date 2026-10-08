@@ -66,21 +66,41 @@ export function SyncStagingModal({
                     : ""}
                 </List.Item>
                 <List.Item>
-                  {`Custo total estimado: ${formatEur(summary.totalCostEur)}`}
+                  {`Custo total (precio_distribuidores + IVA): ${formatEur(summary.totalCostEur)}`}
                 </List.Item>
                 <List.Item>
-                  {`Receita alvo (margem 40%): ${formatEur(summary.totalTargetRetailEur)}`}
+                  {`Receita alvo (margem ${summary.marginPct ?? "—"}%): ${formatEur(summary.totalTargetRetailEur)}`}
                 </List.Item>
                 <List.Item>
-                  {summary.averageMarginPercent != null
-                    ? `Margem média alvo: ${summary.averageMarginPercent}%`
-                    : "Margem média: — (sem preços de custo)"}
+                  {`Lucro alvo: ${formatEur(summary.totalProfitEur)}`}
                 </List.Item>
               </List>
 
-              {summary.missingSkus?.length > 0 && (
+              {summary.priceErrorCount > 0 && (
+                <Banner tone="critical">
+                  {`${summary.priceErrorCount} SKU(s) sem precio_distribuidores — não têm preço e falham na publicação: ${summary.priceErrorSkus.slice(0, 10).join(", ")}${summary.priceErrorCount > 10 ? "…" : ""}`}
+                </Banner>
+              )}
+
+              {(summary.statusCounts?.ACIMA_PVPR > 0 ||
+                summary.statusCounts?.TETO > 0 ||
+                summary.statusCounts?.PISO_PVPR > 0 ||
+                summary.statusCounts?.SEM_PVPR > 0) && (
+                <Banner tone={summary.statusCounts?.ACIMA_PVPR > 0 ? "warning" : "info"}>
+                  {[
+                    summary.statusCounts?.TETO > 0 ? `${summary.statusCounts.TETO} no teto do PVPR` : null,
+                    summary.statusCounts?.PISO_PVPR > 0 ? `${summary.statusCounts.PISO_PVPR} no piso de 80 % do PVPR` : null,
+                    summary.statusCounts?.SEM_PVPR > 0 ? `${summary.statusCounts.SEM_PVPR} sem PVPR no feed` : null,
+                    summary.statusCounts?.ACIMA_PVPR > 0 ? `${summary.statusCounts.ACIMA_PVPR} acima do PVPR (nem a margem mínima cabe)` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Banner>
+              )}
+
+              {(summary.missingCount ?? summary.missingSkus?.length) > 0 && (
                 <Banner tone="warning">
-                  {`${summary.missingSkus.length} SKU(s) aprovados não estão no índice do catálogo — serão ignorados até reindexar.`}
+                  {`${summary.missingCount ?? summary.missingSkus.length} SKU(s) aprovados não estão no índice do catálogo — serão ignorados até reindexar.`}
                 </Banner>
               )}
 
