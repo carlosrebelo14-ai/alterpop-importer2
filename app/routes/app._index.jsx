@@ -516,6 +516,10 @@ export default function CurationDashboard() {
     if (fetcher.data?.message) {
       shopify.toast.show(fetcher.data.message);
     }
+    // Ações de catálogo recusadas (ex.: definições ilegíveis) — nunca um clique sem resposta.
+    if (fetcher.data?.ok === false && fetcher.data?.error) {
+      shopify.toast.show(fetcher.data.error, { isError: true });
+    }
   }, [fetcher.data, shopify]);
 
   useEffect(() => {
@@ -1398,7 +1402,13 @@ export default function CurationDashboard() {
     if (importFetcher.data?.jobId) {
       setImportJobId(importFetcher.data.jobId);
     }
-  }, [importFetcher.data]);
+    // Import recusado (ex.: definições ilegíveis): o toast de "iniciado" já saiu — este
+    // corrige-o, e o import real não fica pendurado à espera de uma simulação que não houve.
+    if (importFetcher.data?.ok === false && importFetcher.data?.error) {
+      shopify.toast.show(`Import não iniciado: ${importFetcher.data.error}`, { isError: true });
+      setPendingLiveAfterDryRun(false);
+    }
+  }, [importFetcher.data, shopify]);
 
   useImportJobPolling({
     jobId: importJobId,
@@ -1637,7 +1647,7 @@ export default function CurationDashboard() {
               importJobStatus.state === "failed"
                 ? "critical"
                 : importJobStatus.state === "completed"
-                  ? importJobStatus.summary?.metrics?.dryRunPriceErrors > 0
+                  ? importJobStatus.summary?.metrics?.dryRunPriceErrors > 0 || importJobStatus.summary?.metrics?.priceNotices > 0
                     ? "warning"
                     : "success"
                   : "info"
@@ -1649,6 +1659,10 @@ export default function CurationDashboard() {
                 ? `Job concluído: ${importJobId} · ${importJobStatus.summary?.metrics?.failed ?? 0} falha(s) · lotes: ${importJobStatus.summary?.metrics?.batchesCompleted ?? 0}${
                     importJobStatus.summary?.metrics?.dryRunPriceErrors > 0
                       ? ` · ${importJobStatus.summary.metrics.dryRunPriceErrors} sem preço calculável — o import real recusa criá-los (ex.: ${importJobStatus.summary.metrics.dryRunPriceErrorSample || "ver linhas"})`
+                      : ""
+                  }${
+                    importJobStatus.summary?.metrics?.priceNotices > 0
+                      ? ` · ${importJobStatus.summary.metrics.priceNotices} preço(s) fixado(s) na curadoria não aplicado(s) — produto já existe; ver registo de sync`
                       : ""
                   }`
                 : importJobStatus.state === "failed"

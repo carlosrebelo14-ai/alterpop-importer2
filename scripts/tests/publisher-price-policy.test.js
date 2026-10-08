@@ -176,6 +176,14 @@ await check("override da curadoria não reescreve um produto já publicado, e de
   assert.equal(priceWrites(shop).length, 0);
   assert.match(r1.priceNotice, /não aplicado/);
 });
+await check("override com meio cêntimo (10.235) não gera aviso falso depois de criado a 10.23", async () => {
+  const shop = makeShop();
+  await q.setManualOverride("EX-7", { price: 10.235 });
+  await publish(shop, "EX-7");
+  assert.equal(shop.price("EX-7"), "10.23");
+  const r = await publish(shop, "EX-7");
+  assert.equal(r.priceNotice, null);
+});
 await check("produto existente a 0,00 recebe o preço da regra antes de publicar", async () => {
   const shop = makeShop();
   shop.existing("EX-3", "0.00");
@@ -183,11 +191,14 @@ await check("produto existente a 0,00 recebe o preço da regra antes de publicar
   assert.equal(shop.price("EX-3"), "17.50");
   assert.equal(shop.products.get("EX-3").publishedAt, "17.50");
 });
-await check("produto existente a 0,00 sem preço calculável: recusa, nada escrito nem publicado", async () => {
+await check("produto existente a 0,00 sem preço calculável: passa a DRAFT e recusa, sem preço escrito nem publicação", async () => {
   const shop = makeShop();
   shop.existing("EX-4", "0.00");
   await assert.rejects(() => publish(shop, "EX-4", { distributorPrice: null }), /não publicado a 0,00/);
-  assert.equal(shop.calls.filter((c) => ["ProductUpdate", "VariantsBulkUpdate", "PublishablePublish"].includes(c.name)).length, 0);
+  const updates = shop.calls.filter((c) => c.name === "ProductUpdate");
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].vars.input.status, "DRAFT");
+  assert.equal(shop.calls.filter((c) => ["VariantsBulkUpdate", "PublishablePublish"].includes(c.name)).length, 0);
 });
 await check("sync_locked a 0,00: recusado, nem preço escrito nem publicado", async () => {
   const shop = makeShop();

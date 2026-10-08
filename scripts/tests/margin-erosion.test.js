@@ -6,7 +6,11 @@
  * Uso: node scripts/tests/margin-erosion.test.js
  */
 import assert from "node:assert/strict";
-import { computeMarginErosion, MARGIN_EROSION_RED_PCT } from "../../lib/importer/curation/marginErosion.server.js";
+import {
+  computeMarginErosion,
+  computeOverridesNotApplied,
+  MARGIN_EROSION_RED_PCT,
+} from "../../lib/importer/curation/marginErosion.server.js";
 
 let failures = 0;
 function check(name, fn) {
@@ -86,6 +90,30 @@ check("fora do catálogo → sem dados", () => {
 check("SKU duplicado no live → sem dados", () => {
   const r = run([{ sku: "a", cat: { distributorPrice: 9.99 }, live: { price: 17.5, duplicate: true } }]);
   assert.equal(r.noData.length, 1);
+});
+
+console.log("computeOverridesNotApplied");
+check("override diferente do preço live → listado; igual, sem produto ou duplicado → não", () => {
+  const items = [
+    { sku: "a", metadata: { overrides: { price: 25 } } },
+    { sku: "b", metadata: { overrides: { price: 19.9 } } },
+    { sku: "c", metadata: { overrides: { price: 30 } } },
+    { sku: "d", metadata: { overrides: { price: 30 } } },
+    { sku: "e", metadata: {} },
+  ];
+  const live = new Map([
+    ["a", { price: 19.9, title: "A" }],
+    ["b", { price: 19.9 }],
+    ["d", { price: 20, duplicate: true }],
+    ["e", { price: 20 }],
+  ]);
+  const r = computeOverridesNotApplied(items, live);
+  assert.deepEqual(r.map((x) => x.sku), ["a"]);
+  assert.equal(r[0].override, 25);
+});
+check("meio cêntimo (10.235) compara como a loja grava (10.23)", () => {
+  const r = computeOverridesNotApplied([{ sku: "a", metadata: { overrides: { price: 10.235 } } }], new Map([["a", { price: 10.23 }]]));
+  assert.equal(r.length, 0);
 });
 
 if (failures) {

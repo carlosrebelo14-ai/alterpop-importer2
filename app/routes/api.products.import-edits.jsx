@@ -155,7 +155,9 @@ export const action = async ({ request }) => {
         rejected.push({ line: lineNo, sku, reason: `Preço inválido: "${precoRaw}"` });
         continue;
       }
-      preco = n;
+      // Ao cêntimo, como a Shopify o grava — 10.235 de uma fórmula ficava 10.23 na loja
+      // e 10.235 na fila, e o aviso de "não aplicado" nunca batia certo.
+      preco = Math.round(n * 100) / 100;
     }
 
     if (estadoRaw && !VALID_STATUSES.has(estadoRaw) && estadoRaw !== "PENDING" && estadoRaw !== "NO_DECISION") {
@@ -175,11 +177,12 @@ export const action = async ({ request }) => {
         // o aviso no registo de sync — nunca se perde em silêncio.
         const published = entry?.status === "PUBLISHED" || Boolean(entry?.metadata?.shopifyProductId);
         const current = entry?.metadata?.overrides?.price;
-        const unchanged = current != null && Math.round(Number(current) * 100) === Math.round(preco * 100);
+        const unchanged = current != null && Number(current).toFixed(2) === preco.toFixed(2);
         if (published && !unchanged) {
           warnings.push({
             line: lineNo,
             sku,
+            kind: "price_not_applied",
             reason: `preço ${preco.toFixed(2)} não aplicado — produto já publicado; muda o preço no admin da Shopify.`,
           });
           preco = undefined;
@@ -214,6 +217,7 @@ export const action = async ({ request }) => {
     warningCount: warnings.length,
     applied,
     rejected,
-    warnings,
+    // Preços não aplicados primeiro — são os que o operador tem de ver no aviso curto.
+    warnings: [...warnings].sort((a, b) => (b.kind === "price_not_applied") - (a.kind === "price_not_applied")),
   });
 };

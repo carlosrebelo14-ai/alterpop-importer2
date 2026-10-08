@@ -344,6 +344,21 @@ export default function ReportsPage() {
                           )}
                         </BlockStack>
                       )}
+                      {marginErosion.overridesNotApplied?.length > 0 && (
+                        <Banner tone="warning" title={`${marginErosion.overridesNotApplied.length} preço(s) fixado(s) na curadoria que não estão na loja`}>
+                          <BlockStack gap="100">
+                            <Text as="p">
+                              O preço fixado só se aplica quando o produto é criado. Num produto que já existe, muda-o no admin da Shopify — ou limpa o override.
+                            </Text>
+                            {marginErosion.overridesNotApplied.slice(0, 20).map((a) => (
+                              <Text as="p" key={a.sku}>{`${a.sku} — ${a.title}: fixado ${formatEur(a.override)}, na loja ${formatEur(a.livePrice)}`}</Text>
+                            ))}
+                            {marginErosion.overridesNotApplied.length > 20 && (
+                              <Text as="p">{`+ ${marginErosion.overridesNotApplied.length - 20} outro(s)…`}</Text>
+                            )}
+                          </BlockStack>
+                        </Banner>
+                      )}
                       {marginErosion.noData.length > 0 && (
                         <Banner tone="warning" title={`${marginErosion.noData.length} publicado(s) sem dados para medir`}>
                           <BlockStack gap="100">
