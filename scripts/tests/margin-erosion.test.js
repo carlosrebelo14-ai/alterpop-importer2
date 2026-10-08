@@ -50,6 +50,13 @@ check("fronteira: 10 % exatos não alerta, 9,9 % alerta", () => {
   assert.equal(below.red.length, 1);
 });
 
+check("9,95 % é vermelho (decisão exata, não arredondada) e mostra 9,9 %", () => {
+  // dist 16,53 → custo 20,00; live 21,99 → 9,95 %
+  const r = run([{ sku: "a", cat: { distributorPrice: 16.53 }, live: { price: 21.99 } }]);
+  assert.equal(r.red.length, 1);
+  assert.equal(r.red[0].effectiveMarginPct, 9.9);
+});
+
 check("ordenado do pior para o melhor", () => {
   const r = run([
     { sku: "a", cat: { distributorPrice: 10 }, live: { price: 13 } },

@@ -18,6 +18,8 @@
  *   recalculada AGORA com o preço live do momento: só escreve "muda" — preço live que
  *   ainda bate com × 1,4. Qualquer outro (editado à mão desde o dry-run, override,
  *   sync_locked, sem dados) salta e fica no relatório.
+ * - Imediatamente antes de cada escrita, relê o preço live e o sync_locked dessa
+ *   variante: se mudou desde o plano (editado à mão a meio da corrida), salta e reporta.
  * - Depois de escrever, relê o preço live de cada SKU escrito e confirma ao cêntimo.
  * - Erros (escrita e verificação) → results/errors.json (convenção do AGENTS.md).
  *
@@ -51,6 +53,15 @@ const VARIANT_PRICE_UPDATE = `
     productVariantsBulkUpdate(productId: $productId, variants: $variants) {
       productVariants { id price }
       userErrors { field message }
+    }
+  }
+`;
+
+const VARIANT_RECHECK = `
+  query PriceRecheck($id: ID!) {
+    productVariant(id: $id) {
+      price
+      product { syncLocked: metafield(namespace: "ociostock", key: "sync_locked") { value } }
     }
   }
 `;
@@ -166,7 +177,25 @@ async function main() {
   console.log(`\nA escrever ${toWrite.length} preço(s)…`);
   const errors = [];
   const written = [];
+  const skipped = [];
   for (const r of toWrite) {
+    // Compare-and-set: o plano é de há minutos; o preço live tem de ser ainda o mesmo.
+    let current;
+    try {
+      current = (await client.graphql(VARIANT_RECHECK, { id: r.live.variantId })).productVariant;
+    } catch (err) {
+      errors.push(errorEntry("RECHECK_FAILED", r.sku, err?.message || String(err), { before: r.before, after: r.after }));
+      continue;
+    }
+    if (!current || cents(current.price) !== cents(r.before) || current.product?.syncLocked?.value === "true") {
+      const why = !current
+        ? "variante desapareceu"
+        : current.product?.syncLocked?.value === "true"
+          ? "ficou sync_locked"
+          : `preço live mudou de ${r.before} para ${current.price}`;
+      skipped.push({ sku: r.sku, why });
+      continue;
+    }
     try {
       const data = await client.graphql(VARIANT_PRICE_UPDATE, {
         productId: r.live.productId,
@@ -183,7 +212,8 @@ async function main() {
     }
     await sleep(PAUSE_MS);
   }
-  console.log(`Escritos: ${written.length} · falhados: ${errors.length}`);
+  console.log(`Escritos: ${written.length} · saltados (mudaram desde o plano): ${skipped.length} · falhados: ${errors.length}`);
+  for (const s of skipped) console.log(`  saltado ${s.sku}: ${s.why}`);
 
   // Verificação por leitura: o preço live tem de ser, ao cêntimo, o que se escreveu.
   console.log("\nA verificar por leitura…");

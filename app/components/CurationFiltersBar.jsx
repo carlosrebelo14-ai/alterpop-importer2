@@ -143,7 +143,7 @@ export function CurationFiltersBar({
     },
     {
       key: "price",
-      label: "Preço",
+      label: "PVPR",
       filter: (
         <InlineStack gap="200">
           <TextField label="Mín (€)" type="number" min={0} value={minPrice} onChange={onMinPriceChange} autoComplete="off" />
@@ -203,7 +203,7 @@ export function CurationFiltersBar({
   if (minPrice || maxPrice) {
     appliedFilters.push({
       key: "price",
-      label: `Preço: ${minPrice || "0"}–${maxPrice || "∞"}€`,
+      label: `PVPR: ${minPrice || "0"}–${maxPrice || "∞"}€`,
       onRemove: () => {
         onMinPriceChange("");
         onMaxPriceChange("");

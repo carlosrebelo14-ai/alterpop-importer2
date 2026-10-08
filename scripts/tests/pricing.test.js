@@ -14,6 +14,7 @@ import {
   priceProduct,
   tryPriceProduct,
   resolveMarginPct,
+  effectiveMarginPct,
   DEFAULT_MARGIN_PCT,
   PricingError,
 } from "../../lib/importer/pricing/pricing.server.js";
@@ -139,6 +140,41 @@ check("tryPriceProduct devolve o erro em vez de lançar", () => {
   assert.match(r.priceError, /Sem precio_distribuidores/);
 });
 check("cêntimos não inteiros lançam", () => assert.throws(() => roundUp(18.5), PricingError));
+
+console.log("Revisão adversarial do PR #87");
+check("margem decimal não sobe um degrau por vírgula flutuante (31,25 × 1,328 = 41,50)", () => {
+  assert.equal(priceProduct(25.83, null, 32.8).finalPrice, 41.5);
+  assert.equal(priceProduct(51.65, 100, 28.8).finalPrice, 80.5);
+  assert.equal(priceProduct(247.93, null, 33.3).finalPrice, 399.9);
+});
+check("margem decimal: preço nunca abaixo da conta exata em inteiros", () => {
+  for (let dist = 100; dist <= 30000; dist += 17) {
+    for (const m of [12.5, 28.8, 32.8, 33.3, 48.8, 64.8]) {
+      const cost = Math.round((dist * 121) / 100);
+      const bps = Math.round(m * 100);
+      const exact = Math.ceil((cost * (10000 + bps)) / 10000); // inteiro / inteiro
+      const { price } = finalPrice(dist, null, m);
+      assert.equal(price, roundUp(exact), `${dist}/${m}%`);
+    }
+  }
+});
+check("margem 5–9 % aplica 10 % e o estado segue a margem efetiva", () => {
+  for (const m of [5, 7, 9]) {
+    assert.deepEqual(finalPrice(999, 1500, m), finalPrice(999, 1500, 10));
+  }
+  assert.equal(effectiveMarginPct(5), 10);
+  assert.equal(effectiveMarginPct(40), 40);
+});
+check("piso do PVPR acima da margem efetiva é PISO_PVPR, nunca MARGEM", () => {
+  for (const m of [5, 8, 10, 25, 40]) {
+    for (let dist = 100; dist <= 20000; dist += 41) {
+      const pvpr = Math.round(dist * 2.6);
+      const r = finalPrice(dist, pvpr, m);
+      const target = roundUp(Math.ceil((r.cost * (10000 + Math.max(m, 10) * 100)) / 10000));
+      if (r.status === "MARGEM") assert.equal(r.price, target, `${dist}/${pvpr}/${m}%: MARGEM mas preço ≠ margem efetiva`);
+    }
+  }
+});
 
 console.log("priceProduct (euros do catálogo) — tabela do briefing, lucro em euros");
 for (const [dist, pvpr, price, profit] of [

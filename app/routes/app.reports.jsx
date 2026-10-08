@@ -23,16 +23,27 @@ export const loader = async ({ request }) => {
   let marginErosion = null;
   let marginErosionError = null;
   try {
-    marginErosion = await loadMarginErosionState(session.shop);
+    const state = await loadMarginErosionState(session.shop);
+    if (state?.status === "failed") {
+      // Último ciclo falhou: mostra a falha e, abaixo, o último resultado bom (se houver).
+      marginErosionError = `o ciclo de ${new Date(state.ranAt).toLocaleString("pt-PT")} falhou — ${state.reason}`;
+      marginErosion = state.lastGood || null;
+    } else {
+      marginErosion = state;
+    }
   } catch (err) {
     marginErosionError = err?.message || String(err);
   }
+  // Ciclo do relógio ~45 min; acima de 3 h sem medir, o estado já não descreve a loja.
+  const marginErosionStale =
+    marginErosion?.ranAt != null && Date.now() - new Date(marginErosion.ranAt).getTime() > 3 * 60 * 60 * 1000;
   return {
     shop: session.shop,
     dashboardStats,
     discontinuedForReview,
     marginErosion,
     marginErosionError,
+    marginErosionStale,
   };
 };
 
@@ -42,6 +53,7 @@ export default function ReportsPage() {
     discontinuedForReview,
     marginErosion,
     marginErosionError,
+    marginErosionStale,
   } = useLoaderData();
   const shopify = useAppBridge();
   const [salesRefreshing, setSalesRefreshing] = useState(false);
@@ -88,6 +100,17 @@ export default function ReportsPage() {
             <Banner tone="info">
               Aprova pelo menos 1 produto na Curadoria para veres estas métricas com dados reais.
               Por agora mostram 0€/0% porque a fila de aprovados está vazia.
+            </Banner>
+          )}
+
+          {dashboardStats.approvedPricingError && (
+            <Banner tone="critical">
+              {`Receita e lucro dos aprovados não calculados: ${dashboardStats.approvedPricingError}`}
+            </Banner>
+          )}
+          {(dashboardStats.approvedPriceErrorCount || 0) > 0 && (
+            <Banner tone="warning">
+              {`${dashboardStats.approvedPriceErrorCount} aprovado(s) sem precio_distribuidores — fora da receita e do lucro abaixo, e falham na publicação.`}
             </Banner>
           )}
 
@@ -281,10 +304,16 @@ export default function ReportsPage() {
                   <Text as="p" tone="subdued">
                     {`Em cada ciclo, compara o preço live de cada produto publicado com o custo atual do feed (precio_distribuidores + IVA). Vermelho abaixo de ${marginErosion?.thresholdPct ?? 10}% de margem efetiva sobre o custo. Só sinaliza — o preço nunca é alterado automaticamente.`}
                   </Text>
-                  {marginErosionError ? (
-                    <Banner tone="critical">{`Estado da erosão de margem ilegível: ${marginErosionError}`}</Banner>
-                  ) : !marginErosion ? (
-                    <Text as="p" tone="subdued">Ainda nenhum ciclo mediu a margem — aparece depois do próximo ciclo de sync.</Text>
+                  {marginErosionError && (
+                    <Banner tone="critical">{`Erosão de margem: ${marginErosionError}`}</Banner>
+                  )}
+                  {marginErosionStale && (
+                    <Banner tone="warning">Último ciclo com mais de 3 h — os valores abaixo podem já não descrever a loja.</Banner>
+                  )}
+                  {!marginErosion ? (
+                    marginErosionError ? null : (
+                      <Text as="p" tone="subdued">Ainda nenhum ciclo mediu a margem — aparece depois do próximo ciclo de sync.</Text>
+                    )
                   ) : (
                     <BlockStack gap="200">
                       <Text as="p" tone="subdued">

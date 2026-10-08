@@ -52,9 +52,9 @@ const PAGE_SIZE = 50;
 const LOW_STOCK_THRESHOLD = 10;
 /** Redesign da Curadoria — margem abaixo disto é sempre crítica, independente do limiar configurável. */
 /** IndexTable: índice de coluna sortável → mesmo campo já usado pelo <select> de ordenação. */
-// PVPR (coluna 3) ordena por netPrice — precio_neto = precio_bruto / 1,21, mesma ordem.
-const SORT_COLUMN_TO_FIELD = { 0: "title", 3: "netPrice", 7: "stock" };
-const SORT_FIELD_TO_COLUMN = { title: 0, netPrice: 3, stock: 7 };
+// PVPR (coluna 3) ordena pelo próprio PVPR (grossPrice).
+const SORT_COLUMN_TO_FIELD = { 0: "title", 3: "grossPrice", 7: "stock" };
+const SORT_FIELD_TO_COLUMN = { title: 0, grossPrice: 3, stock: 7 };
 
 // Selos do estado do preço (pricing.server.js) — avisam, nunca bloqueiam a aprovação.
 const PRICE_STATUS_BADGE = {
@@ -121,7 +121,7 @@ export const action = async ({ request }) => {
 
   // Briefing de preço (07/10/2026) — margem global, a mesma que o publisher usa.
   if (intent === "set-price-margin") {
-    const [{ assertMarginPct }, { saveShopSettings }] = await Promise.all([
+    const [{ assertMarginPct, effectiveMarginPct }, { saveShopSettings }] = await Promise.all([
       import("../../lib/importer/pricing/pricing.server.js"),
       import("../../lib/importer/settings.server.js"),
     ]);
@@ -129,7 +129,16 @@ export const action = async ({ request }) => {
       const priceMarginPct = assertMarginPct(String(form.get("priceMarginPct") || "").replace(",", "."));
       const current = await loadShopSettings(session.shop);
       await saveShopSettings(session.shop, { ...current, priceMarginPct });
-      return { ok: true, intent, priceMarginPct };
+      const effective = effectiveMarginPct(priceMarginPct);
+      return {
+        ok: true,
+        intent,
+        priceMarginPct,
+        warning:
+          effective !== priceMarginPct
+            ? `Abaixo de ${effective}% o piso do custo ganha: o preço sai sempre a custo + ${effective}%.`
+            : null,
+      };
     } catch (err) {
       return { ok: false, intent, error: err?.message || String(err) };
     }
@@ -249,6 +258,7 @@ export default function CurationDashboard() {
   // (vem da resposta de /api/products, por isso o que se vê é o que o publisher escreve).
   const [priceMarginInput, setPriceMarginInput] = useState(String(settings?.priceMarginPct ?? ""));
   const [appliedMarginPct, setAppliedMarginPct] = useState(settings?.priceMarginPct ?? null);
+  const [effectivePct, setEffectivePct] = useState(null);
 
   // Redesign da Curadoria (2026-08-12) — toggle de densidade da tabela, preferência
   // local por navegador/loja (não é dado de negócio, não faz sentido no servidor).
@@ -320,7 +330,11 @@ export default function CurationDashboard() {
     const d = marginFetcher.data;
     if (!d || d.intent !== "set-price-margin") return;
     if (d.ok) {
-      setToast({ content: `Margem global ${d.priceMarginPct}% aplicada — preços recalculados` });
+      setToast(
+        d.warning
+          ? { content: `Margem ${d.priceMarginPct}% gravada. ${d.warning}`, error: true }
+          : { content: `Margem global ${d.priceMarginPct}% aplicada — preços recalculados` }
+      );
       setPriceMarginInput(String(d.priceMarginPct));
       setListRefreshKey((k) => k + 1);
     } else {
@@ -730,6 +744,7 @@ export default function CurationDashboard() {
 
         setProducts(data.products || []);
         setAppliedMarginPct(data.marginPct ?? null);
+        setEffectivePct(data.effectiveMarginPct ?? null);
         setTotalCount(data.totalCount ?? 0);
         setTotalPages(data.totalPages ?? 1);
       } catch (err) {
@@ -1949,7 +1964,11 @@ export default function CurationDashboard() {
                       Aplicar margem
                     </Button>
                     <Text as="span" tone="subdued" variant="bodySm">
-                      {`Preço = custo c/ IVA × (1 + ${appliedMarginPct ?? "—"}%), arredondado, entre 80 % do PVPR e o PVPR`}
+                      {`Preço = custo c/ IVA × (1 + ${effectivePct ?? appliedMarginPct ?? "—"}%), arredondado, entre 80 % do PVPR e o PVPR${
+                        effectivePct != null && appliedMarginPct != null && Number(effectivePct) !== Number(appliedMarginPct)
+                          ? ` — margem gravada ${appliedMarginPct}% fica abaixo do mínimo, aplica-se ${effectivePct}%`
+                          : ""
+                      }`}
                     </Text>
                     <select
                       value={sortBy ? `${sortBy}_${sortDir}` : ""}
@@ -1973,8 +1992,8 @@ export default function CurationDashboard() {
                       }}
                     >
                       <option value="">Ordenar por…</option>
-                      <option value="netPrice_asc">Preço ↑ (barato → caro)</option>
-                      <option value="netPrice_desc">Preço ↓ (caro → barato)</option>
+                      <option value="grossPrice_asc">PVPR ↑ (barato → caro)</option>
+                      <option value="grossPrice_desc">PVPR ↓ (caro → barato)</option>
                       <option value="stock_desc">Stock ↓ (mais stock)</option>
                       <option value="title_asc">Título A → Z</option>
                       <option value="title_desc">Título Z → A</option>

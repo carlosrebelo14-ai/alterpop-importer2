@@ -76,9 +76,9 @@ export function SyncStagingModal({
                 </List.Item>
               </List>
 
-              {summary.priceErrorSkus?.length > 0 && (
+              {summary.priceErrorCount > 0 && (
                 <Banner tone="critical">
-                  {`${summary.priceErrorSkus.length} SKU(s) sem precio_distribuidores — não têm preço e falham na publicação: ${summary.priceErrorSkus.slice(0, 10).join(", ")}`}
+                  {`${summary.priceErrorCount} SKU(s) sem precio_distribuidores — não têm preço e falham na publicação: ${summary.priceErrorSkus.slice(0, 10).join(", ")}${summary.priceErrorCount > 10 ? "…" : ""}`}
                 </Banner>
               )}
 
@@ -98,9 +98,9 @@ export function SyncStagingModal({
                 </Banner>
               )}
 
-              {summary.missingSkus?.length > 0 && (
+              {(summary.missingCount ?? summary.missingSkus?.length) > 0 && (
                 <Banner tone="warning">
-                  {`${summary.missingSkus.length} SKU(s) aprovados não estão no índice do catálogo — serão ignorados até reindexar.`}
+                  {`${summary.missingCount ?? summary.missingSkus.length} SKU(s) aprovados não estão no índice do catálogo — serão ignorados até reindexar.`}
                 </Banner>
               )}
 
