@@ -146,6 +146,12 @@ await check("criado com o override da curadoria", async () => {
   await publish(shop, "NEW-2");
   assert.equal(shop.price("NEW-2"), "20.00");
 });
+await check("override da curadoria não substitui o custo: sem precio_distribuidores não é criado", async () => {
+  const shop = makeShop();
+  await q.setManualOverride("NEW-4", { price: 21 });
+  await assert.rejects(() => publish(shop, "NEW-4", { distributorPrice: null }), /Sem precio_distribuidores/);
+  assert.equal(shop.calls.filter((c) => c.name === "ProductCreate").length, 0);
+});
 await check("sem precio_distribuidores não é criado", async () => {
   const shop = makeShop();
   await assert.rejects(() => publish(shop, "NEW-3", { distributorPrice: null }), /Sem precio_distribuidores/);
@@ -160,14 +166,15 @@ await check("preço editado à mão fica (republish não escreve preço)", async
   assert.equal(shop.price("EX-1"), "19.90");
   assert.equal(priceWrites(shop).length, 0);
 });
-await check("override da curadoria não reescreve um produto já publicado", async () => {
+await check("override da curadoria não reescreve um produto já publicado, e devolve o aviso", async () => {
   const shop = makeShop();
   shop.existing("EX-2", "19.90");
   await q.setManualOverride("EX-2", { price: 25 });
-  await publish(shop, "EX-2");
+  const r1 = await publish(shop, "EX-2");
   await publish(shop, "EX-2");
   assert.equal(shop.price("EX-2"), "19.90");
   assert.equal(priceWrites(shop).length, 0);
+  assert.match(r1.priceNotice, /não aplicado/);
 });
 await check("produto existente a 0,00 recebe o preço da regra antes de publicar", async () => {
   const shop = makeShop();
@@ -182,11 +189,21 @@ await check("produto existente a 0,00 sem preço calculável: recusa, nada escri
   await assert.rejects(() => publish(shop, "EX-4", { distributorPrice: null }), /não publicado a 0,00/);
   assert.equal(shop.calls.filter((c) => ["ProductUpdate", "VariantsBulkUpdate", "PublishablePublish"].includes(c.name)).length, 0);
 });
-await check("sync_locked a 0,00 não recebe escrita de preço (bloqueio vence)", async () => {
+await check("sync_locked a 0,00: recusado, nem preço escrito nem publicado", async () => {
   const shop = makeShop();
   shop.existing("EX-5", "0.00", { locked: true });
-  await publish(shop, "EX-5");
-  assert.equal(priceWrites(shop).length, 0);
+  await assert.rejects(() => publish(shop, "EX-5"), /trancado/);
+  assert.equal(shop.calls.filter((c) => ["VariantsBulkUpdate", "PublishablePublish", "ProductUpdate"].includes(c.name)).length, 0);
+});
+await check("produto a 0,00 cuja escrita do preço falha: passa a DRAFT, não publicado", async () => {
+  const shop = makeShop();
+  shop.existing("EX-6", "0.00");
+  shop.fail.variantWriteOnce = "Throttled";
+  await assert.rejects(() => publish(shop, "EX-6"), /DRAFT/);
+  const updates = shop.calls.filter((c) => c.name === "ProductUpdate");
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].vars.input.status, "DRAFT");
+  assert.equal(shop.calls.filter((c) => c.name === "PublishablePublish").length, 0);
 });
 
 console.log("Criação interrompida");

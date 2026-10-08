@@ -242,14 +242,20 @@ export const action = async ({ request }) => {
       // Erosão de margem (revisão do dry-run de preços, 07/10/2026) — preço live contra
       // o custo atual do feed, que a indexação acima acabou de refrescar. Só lê e grava
       // o estado para Relatórios; nunca mexe em preço. Nunca bloqueia o ciclo.
-      try {
-        const erosionClient = createShopifyClientFromSession(session);
-        const erosion = await reconcileMarginErosionCycle(erosionClient, shop);
-        const line = `[trigger-sync] erosão de margem: ${erosion.status} — ${erosion.red.length} abaixo de ${erosion.thresholdPct}%, ${erosion.noData.length} sem dados, ${erosion.measured}/${erosion.publishedCount} medidos.`;
-        if (erosion.status === "red") console.error(line);
-        else console.log(line);
-      } catch (err) {
-        console.error("[trigger-sync] erosão de margem falhou:", err?.message || err);
+      if (settingsError) {
+        // Sem indexação o custo do catálogo é o do último ciclo bom — medir agora daria um
+        // verde atual sobre dados velhos. Fica "não correu", à vista nos Relatórios.
+        await markMarginErosionCycleSkipped(shop, "definições ilegíveis — catálogo não reindexado");
+      } else {
+        try {
+          const erosionClient = createShopifyClientFromSession(session);
+          const erosion = await reconcileMarginErosionCycle(erosionClient, shop);
+          const line = `[trigger-sync] erosão de margem: ${erosion.status} — ${erosion.red.length} abaixo de ${erosion.thresholdPct}%, ${erosion.noData.length} sem dados, ${erosion.measured}/${erosion.publishedCount} medidos.`;
+          if (erosion.status === "red") console.error(line);
+          else console.log(line);
+        } catch (err) {
+          console.error("[trigger-sync] erosão de margem falhou:", err?.message || err);
+        }
       }
 
       // Catálogo de franquias com stock, para a grelha de /pages/franquias no tema.

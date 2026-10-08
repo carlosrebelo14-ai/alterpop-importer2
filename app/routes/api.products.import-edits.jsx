@@ -7,6 +7,8 @@ import {
   setManualOverride,
   getCurationQueueEntry,
 } from "../../lib/curation/curationQueue.server.js";
+import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { resolveMarginPct, tryPriceProduct } from "../../lib/importer/pricing/pricing.server.js";
 
 const VALID_STATUSES = new Set(["APPROVED", "REJECTED"]);
 
@@ -77,13 +79,26 @@ export const action = async ({ request }) => {
         () =>
           prisma.catalogProduct.findMany({
             where: { shop: session.shop, sku: { in: chunk } },
-            select: { sku: true },
+            select: { sku: true, distributorPrice: true, grossPrice: true },
           }),
         { fallback: [] }
       )
     )
   );
-  const existingSkuSet = new Set(existingRowChunks.flat().map((r) => r.sku));
+  const existingRows = existingRowChunks.flat();
+  const existingSkuSet = new Set(existingRows.map((r) => r.sku));
+
+  // Preço da regra ATUAL por SKU, para apanhar um número mudado dentro de "(regra)".
+  // Pode diferir também porque a regra mudou desde a exportação — o aviso diz as duas.
+  let ruleBySku = null;
+  if (idx.precoRegra !== -1) {
+    try {
+      const marginPct = resolveMarginPct(await loadShopSettings(session.shop));
+      ruleBySku = new Map(existingRows.map((r) => [r.sku, tryPriceProduct(r.distributorPrice, r.grossPrice, marginPct).finalPrice]));
+    } catch (err) {
+      warnings.push({ line: 1, sku: "", reason: `Não deu para comparar preco_regra com a regra atual: ${err?.message || err}` });
+    }
+  }
 
   const applied = [];
   const rejected = [];
@@ -108,12 +123,23 @@ export const action = async ({ request }) => {
     // exportação (revisão do PR #87).
     if (idx.precoRegra !== -1) {
       const ruleCell = (row[idx.precoRegra] || "").trim();
-      if (ruleCell && !/\(regra\)$/.test(ruleCell) && !ruleCell.startsWith("(sem preço")) {
+      const suffixed = /^([\d.,]+)\s*\(regra\)$/.exec(ruleCell);
+      if (ruleCell && !suffixed && !ruleCell.startsWith("(sem preço")) {
         warnings.push({
           line: lineNo,
           sku,
           reason: `preco_regra editado ("${ruleCell}") — coluna só de leitura, ignorado. Para fixar o preço preenche a coluna preco.`,
         });
+      } else if (suffixed && ruleBySku) {
+        const n = parseFloat(suffixed[1].replace(",", "."));
+        const rule = ruleBySku.get(sku);
+        if (Number.isFinite(n) && rule != null && Math.round(n * 100) !== Math.round(rule * 100)) {
+          warnings.push({
+            line: lineNo,
+            sku,
+            reason: `preco_regra diz ${suffixed[1]} e a regra atual dá ${rule.toFixed(2)} (editado, ou a margem/custo mudou desde a exportação) — coluna só de leitura, ignorado. Para fixar o preço preenche a coluna preco.`,
+          });
+        }
       }
     }
 
@@ -144,7 +170,10 @@ export const action = async ({ request }) => {
       // override existente (vem pré-preenchido na exportação) não é edição — segue.
       if (preco != null) {
         const entry = await getCurationQueueEntry(sku);
-        const published = entry?.status === "PUBLISHED" || entry?.status === "SYNC_ERROR" || Boolean(entry?.metadata?.shopifyProductId);
+        // Publicado = a fila sabe que existe na Shopify. Se não souber (produto criado pela
+        // página Import, primeira publicação falhada a meio), o publisher deteta-o e regista
+        // o aviso no registo de sync — nunca se perde em silêncio.
+        const published = entry?.status === "PUBLISHED" || Boolean(entry?.metadata?.shopifyProductId);
         const current = entry?.metadata?.overrides?.price;
         const unchanged = current != null && Math.round(Number(current) * 100) === Math.round(preco * 100);
         if (published && !unchanged) {

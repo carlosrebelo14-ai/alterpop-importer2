@@ -4,6 +4,7 @@
  * criados antes do fix de ProductVariantsBulkInput (SKU em inventoryItem).
  */
 import prisma from "../../app/db.server.js";
+import { loadShopSettings } from "../../lib/importer/settings.server.js";
 import { mapOcioStockRow } from "../../lib/importer/connectors/ociostock/csvFieldMap.js";
 import { streamOcioStockRows } from "../../lib/importer/connectors/ociostock/streamCsv.js";
 import { transformOcioStockRecord } from "../../lib/importer/core/transformRow.js";
@@ -61,7 +62,9 @@ async function main() {
   });
   await job.ensureResultsDir();
 
+  // Escreve preços: margem da loja, nunca a de defeito (revisão do PR #87).
   const importer = new ProductImporter(job, client, {
+    ...(await loadShopSettings(session.shop)),
     syncImages: true,
     syncPrices: true,
     importMode: "CREATE_AND_UPDATE",

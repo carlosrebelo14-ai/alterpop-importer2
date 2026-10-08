@@ -52,23 +52,31 @@ export const loader = async ({ request }) => {
 
   const { skuInclude, skuExclude } = await computeCurationSkuFilter(curationStatus, reasonFilter);
 
-  const result = await queryCatalogProducts(session.shop, {
-    page,
-    limit,
-    brand,
-    filterIds,
-    search,
-    searchScope,
-    minPrice,
-    maxPrice,
-    minConfidence,
-    inStockOnly,
-    includeCounts,
-    sortBy,
-    sortDir,
-    skuInclude,
-    skuExclude,
-  });
+  // Falha da lista (margem por definir, definições ilegíveis, leitura) volta como JSON
+  // com a causa — o painel mostra data.error em vez de "Erro ao carregar produtos".
+  let result;
+  try {
+    result = await queryCatalogProducts(session.shop, {
+      page,
+      limit,
+      brand,
+      filterIds,
+      search,
+      searchScope,
+      minPrice,
+      maxPrice,
+      minConfidence,
+      inStockOnly,
+      includeCounts,
+      sortBy,
+      sortDir,
+      skuInclude,
+      skuExclude,
+    });
+  } catch (err) {
+    console.error("[api.products] lista falhou:", err?.message || err);
+    return Response.json({ ok: false, error: err?.message || String(err) }, { status: 500 });
+  }
 
   console.log("[debug:curation] GET /api/products result", {
     totalCount: result.totalCount,

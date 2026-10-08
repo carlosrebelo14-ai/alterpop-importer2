@@ -76,7 +76,9 @@ export const loader = async ({ request }) => {
     settings = await loadShopSettings(session.shop);
   } catch (err) {
     settingsLoadError = err?.message || String(err);
-    settings = getDefaultSettings();
+    // Margem desconhecida: o painel não mostra os 40 % de defeito como se estivessem
+    // aplicados.
+    settings = { ...getDefaultSettings(), priceMarginPct: null };
   }
   const dashboardStats = await getCurationLiteStats(session.shop);
   const indexingActive = isCatalogIndexingRunning(session.shop);
@@ -162,7 +164,12 @@ export const action = async ({ request }) => {
   }
 
   if (intent === "refresh-catalog" || intent === "purge-catalog" || intent === "force-reindex-catalog") {
-    const settings = await loadShopSettings(session.shop);
+    let settings;
+    try {
+      settings = await loadShopSettings(session.shop);
+    } catch (err) {
+      return { ok: false, error: `Definições ilegíveis — abre Definições e guarda para as repor (${err?.message || err})` };
+    }
     const purge = intent === "purge-catalog";
     const forceFull = intent === "force-reindex-catalog";
     const fileStatus = await readCatalogRebuildStatus(session.shop);
@@ -995,7 +1002,14 @@ export default function CurationDashboard() {
         }
         shopify.toast.show(
           `${data.appliedCount} linhas aplicadas, ${data.rejectedCount} rejeitadas de ${data.totalRows}` +
-            (data.warningCount > 0 ? ` · ${data.warningCount} aviso(s): ${data.warnings[0].reason}` : ""),
+            (data.warningCount > 0
+              ? ` · ${data.warningCount} aviso(s): ` +
+                data.warnings
+                  .slice(0, 3)
+                  .map((w) => (w.sku ? `linha ${w.line} (${w.sku}): ${w.reason}` : w.reason))
+                  .join(" | ") +
+                (data.warningCount > 3 ? ` | +${data.warningCount - 3}…` : "")
+              : ""),
           { isError: (data.rejectedCount > 0 && data.appliedCount === 0) || data.warningCount > 0 }
         );
         if (data.warningCount > 0) {
@@ -1634,7 +1648,7 @@ export default function CurationDashboard() {
               : importJobStatus.state === "completed"
                 ? `Job concluído: ${importJobId} · ${importJobStatus.summary?.metrics?.failed ?? 0} falha(s) · lotes: ${importJobStatus.summary?.metrics?.batchesCompleted ?? 0}${
                     importJobStatus.summary?.metrics?.dryRunPriceErrors > 0
-                      ? ` · ${importJobStatus.summary.metrics.dryRunPriceErrors} sem preço calculável (sem precio_distribuidores — o import real recusa criá-los)`
+                      ? ` · ${importJobStatus.summary.metrics.dryRunPriceErrors} sem preço calculável — o import real recusa criá-los (ex.: ${importJobStatus.summary.metrics.dryRunPriceErrorSample || "ver linhas"})`
                       : ""
                   }`
                 : importJobStatus.state === "failed"
