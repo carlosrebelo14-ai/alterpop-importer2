@@ -34,7 +34,7 @@ import { listCurationQueueItems } from "../../lib/curation/curationQueue.server.
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
-import { resolveMarginPct, PRICE_STATUS } from "../../lib/importer/pricing/pricing.server.js";
+import { resolveMarginPct, effectiveMarginPct, PRICE_STATUS } from "../../lib/importer/pricing/pricing.server.js";
 import {
   classifyPriceReconcile,
   toReconcileRow,
@@ -124,7 +124,7 @@ async function main() {
   console.log(`Catálogo: distributorPrice preenchido em ${readiness.filled}/${readiness.total} linhas.`);
 
   const marginPct = resolveMarginPct(await loadShopSettings(SHOP));
-  console.log(`Margem global (definições): ${marginPct}%`);
+  console.log(`Margem global (definições): ${marginPct}%${effectiveMarginPct(marginPct) !== marginPct ? ` — abaixo do mínimo, aplica-se ${effectiveMarginPct(marginPct)}%` : ""}`);
 
   const published = (await listCurationQueueItems("PUBLISHED")).filter((i) => i.sku);
   const skus = published.map((i) => i.sku);
@@ -214,6 +214,9 @@ async function main() {
   }
   console.log(`Escritos: ${written.length} · saltados (mudaram desde o plano): ${skipped.length} · falhados: ${errors.length}`);
   for (const s of skipped) console.log(`  saltado ${s.sku}: ${s.why}`);
+  // Saltos ficam persistidos: são desvios ao plano aprovado que o Carlos tem de ver
+  // depois de o terminal fechar (revisão do PR #87).
+  for (const s of skipped) errors.push(errorEntry("SKIPPED_CHANGED_SINCE_PLAN", s.sku, s.why));
 
   // Verificação por leitura: o preço live tem de ser, ao cêntimo, o que se escreveu.
   console.log("\nA verificar por leitura…");
@@ -238,6 +241,23 @@ async function main() {
     );
   }
   console.log(`Verificados: ${verified}/${written.length}`);
+
+  // Resultado final por SKU — o plano CSV acima diz o que se ia fazer; este diz o que
+  // aconteceu (escrito e verificado, saltado, falhado).
+  const outcome = new Map();
+  for (const r of toWrite) outcome.set(r.sku, { sku: r.sku, before: r.before, planned: r.after, result: "falhou" });
+  for (const s of skipped) outcome.set(s.sku, { ...outcome.get(s.sku), result: `saltado: ${s.why}` });
+  for (const r of written) {
+    const now = verifyLive.get(r.sku);
+    const ok = now && cents(now.price) === cents(r.after);
+    outcome.set(r.sku, { ...outcome.get(r.sku), result: ok ? "escrito e verificado" : `escrito, verificação falhou (live ${now?.price ?? "—"})` });
+  }
+  const resultFile = path.join(outDir, `price-reconcile-apply-result-${stamp}.csv`);
+  fs.writeFileSync(
+    resultFile,
+    ["sku,antes,planeado,resultado", ...[...outcome.values()].map((o) => [o.sku, o.before, o.planned, `"${String(o.result).replace(/"/g, '""')}"`].join(","))].join("\n") + "\n"
+  );
+  console.log(`Resultado por SKU: ${resultFile}`);
 
   appendErrors(errors);
   if (errors.length) {

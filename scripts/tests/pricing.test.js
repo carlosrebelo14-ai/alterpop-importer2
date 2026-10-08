@@ -158,6 +158,10 @@ check("margem decimal: preço nunca abaixo da conta exata em inteiros", () => {
     }
   }
 });
+check("margem com mais de 2 casas decimais é recusada, não arredondada", () => {
+  assert.throws(() => finalPrice(1116, null, 40.001), PricingError);
+  assert.equal(finalPrice(1116, null, 40.01).price, 1950);
+});
 check("margem 5–9 % aplica 10 % e o estado segue a margem efetiva", () => {
   for (const m of [5, 7, 9]) {
     assert.deepEqual(finalPrice(999, 1500, m), finalPrice(999, 1500, 10));

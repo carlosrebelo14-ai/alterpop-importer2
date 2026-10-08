@@ -9,7 +9,7 @@ import { syncPublishedStockLevels } from "../../lib/importer/shopify/publishedSt
 import { isShopifySyncRunning } from "../../lib/importer/shopify/shopifySyncJob.server.js";
 import { listApprovedSkusForShopifySync } from "../../lib/curation/curationQueue.server.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
-import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { loadShopSettings, getDefaultSettings } from "../../lib/importer/settings.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { ensureOciostockMetafieldDefinitions } from "../../lib/importer/shopify/metafieldSetup.js";
 import { syncFranchiseCatalog } from "../../lib/importer/shopify/franchiseCatalogSync.server.js";
@@ -18,7 +18,10 @@ import { reconcileLiveDriftCycle } from "../../lib/importer/shopify/liveDriftRec
 import { reconcileCharacterPagesCycle } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
 import { reconcileCollectionPublicationCycle } from "../../lib/importer/shopify/collectionPublicationReconcileCycle.server.js";
 import { persistSyncError } from "../../lib/importer/sync/syncErrorLog.server.js";
-import { reconcileMarginErosionCycle } from "../../lib/importer/curation/marginErosion.server.js";
+import {
+  reconcileMarginErosionCycle,
+  markMarginErosionCycleSkipped,
+} from "../../lib/importer/curation/marginErosion.server.js";
 
 /**
  * POST /api/trigger-sync — dispara indexação + publicação sem sessão OAuth.
@@ -129,7 +132,22 @@ export const action = async ({ request }) => {
     );
   }
 
-  const settings = await loadShopSettings(shop);
+  // Definições ilegíveis não param o ciclo todo (stock, novidades, drift e erosão não
+  // dependem da margem): segue com os valores por defeito e regista o erro. O publish,
+  // que depende da margem, volta a ler as definições e falha à vista sozinho
+  // (runApprovedShopifySync) — nunca publica com uma margem que ninguém escolheu.
+  let settings;
+  try {
+    settings = await loadShopSettings(shop);
+  } catch (err) {
+    console.error("[trigger-sync] definições ilegíveis — ciclo segue sem publish:", err?.message || err);
+    // persistSyncError ignora entradas sem SKU — "(definições)" põe o erro no registo
+    // de sync que a UI já lê.
+    await persistSyncError({ shop, sku: "(definições)", reason: `Definições ilegíveis: ${err?.message || err}` }).catch(
+      (logErr) => console.error("[trigger-sync] persistSyncError falhou:", logErr?.message || logErr)
+    );
+    settings = getDefaultSettings();
+  }
   const startedAt = new Date().toISOString();
 
   // Arranca em background e devolve já — o ciclo demora minutos.
@@ -148,6 +166,7 @@ export const action = async ({ request }) => {
       while (isCatalogIndexingRunning(shop)) {
         if (Date.now() > deadline) {
           console.error("[trigger-sync] indexação excedeu o tempo limite — publish cancelado.");
+          await markMarginErosionCycleSkipped(shop, "indexação excedeu o tempo limite");
           return;
         }
         await new Promise((r) => setTimeout(r, INDEXING_POLL_MS));
@@ -156,6 +175,7 @@ export const action = async ({ request }) => {
       const status = await readCatalogRebuildStatus(shop);
       if (status.error) {
         console.error(`[trigger-sync] indexação terminou com erro (${status.error}) — publish cancelado.`);
+        await markMarginErosionCycleSkipped(shop, `indexação terminou com erro (${status.error})`);
         return;
       }
 

@@ -15,7 +15,7 @@ import {
 import { ShopifyResetModal } from "../components/ShopifyResetModal.jsx";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateAdmin } from "../utils/authenticate.server";
-import { loadShopSettings, saveShopSettings } from "../../lib/importer/settings.server.js";
+import { loadShopSettings, saveShopSettings, getDefaultSettings } from "../../lib/importer/settings.server.js";
 import { resolveTranslationConfig } from "../../lib/importer/transform/translationConfig.js";
 import {
   readExcludeListJson,
@@ -29,12 +29,22 @@ import {
 
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
-  const settings = await loadShopSettings(session.shop);
+  // Ficheiro de definições ilegível: a página abre com os valores por defeito e diz
+  // porquê — guardar substitui o ficheiro estragado (revisão do PR #87). Sem isto, a
+  // única forma de recuperar era pela shell da Fly.
+  let settings;
+  let settingsLoadError = null;
+  try {
+    settings = await loadShopSettings(session.shop);
+  } catch (err) {
+    settingsLoadError = err?.message || String(err);
+    settings = getDefaultSettings();
+  }
   const translation = resolveTranslationConfig(settings);
   const excludeListJson = await readExcludeListJson();
   const marketSettings = await primeMarketSettingsForShop(session.shop);
   const marketSettingsJson = await readMarketSettingsJson(session.shop);
-  return { settings, translation, excludeListJson, marketSettings, marketSettingsJson };
+  return { settings, settingsLoadError, translation, excludeListJson, marketSettings, marketSettingsJson };
 };
 
 export const action = async ({ request }) => {
@@ -86,8 +96,15 @@ export const action = async ({ request }) => {
   }
 
   // Campos que este formulário não edita — sem isto, guardar as Definições repunha a
-  // margem de preço (editada na Curadoria) no valor por defeito.
-  const current = await loadShopSettings(session.shop);
+  // margem de preço (editada na Curadoria) no valor por defeito. Com o ficheiro
+  // estragado não há margem a preservar: guardar repõe o ficheiro e a margem volta ao
+  // valor por defeito (a página avisa antes, ver settingsLoadError).
+  let current;
+  try {
+    current = await loadShopSettings(session.shop);
+  } catch {
+    current = {};
+  }
   const settings = {
     priceMarginPct: current.priceMarginPct,
     ociostockCsvUrl: String(form.get("ociostockCsvUrl") || ""),
@@ -126,7 +143,8 @@ export const action = async ({ request }) => {
 };
 
 export default function SettingsPage() {
-  const { settings, translation, excludeListJson, marketSettings, marketSettingsJson } = useLoaderData();
+  const { settings, settingsLoadError, translation, excludeListJson, marketSettings, marketSettingsJson } =
+    useLoaderData();
   const fetcher = useFetcher();
   const excludeFetcher = useFetcher();
   const marketFetcher = useFetcher();
@@ -260,6 +278,11 @@ export default function SettingsPage() {
   return (
     <div className="alterpop-dashboard alterpop-page-shell">
     <s-page heading="Definições">
+      {settingsLoadError && (
+        <Banner tone="critical" title="Ficheiro de definições ilegível">
+          {`${settingsLoadError}. Os campos abaixo mostram os valores por defeito. Guardar substitui o ficheiro estragado; a margem de preço volta a ${settings.priceMarginPct}% — volta a aplicá-la na Curadoria.`}
+        </Banner>
+      )}
       <fetcher.Form method="post">
         <s-section heading="CSV URL (OcioStock)">
           <s-text-field

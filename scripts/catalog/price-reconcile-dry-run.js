@@ -30,7 +30,7 @@ import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionF
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
 import { streamOcioStockRows } from "../../lib/importer/connectors/ociostock/streamCsv.js";
-import { resolveMarginPct, assertMarginPct, PRICE_STATUS } from "../../lib/importer/pricing/pricing.server.js";
+import { resolveMarginPct, assertMarginPct, effectiveMarginPct, PRICE_STATUS } from "../../lib/importer/pricing/pricing.server.js";
 import {
   classifyPriceReconcile,
   toReconcileRow,
@@ -74,7 +74,7 @@ async function main() {
   const marginPct = process.env.PRICE_MARGIN_PCT
     ? assertMarginPct(process.env.PRICE_MARGIN_PCT)
     : resolveMarginPct(settings);
-  console.log(`Margem global: ${marginPct}%${process.env.PRICE_MARGIN_PCT ? " (simulada via PRICE_MARGIN_PCT)" : ""}`);
+  console.log(`Margem global: ${marginPct}%${process.env.PRICE_MARGIN_PCT ? " (simulada via PRICE_MARGIN_PCT)" : ""}${effectiveMarginPct(marginPct) !== marginPct ? ` — abaixo do mínimo, aplica-se ${effectiveMarginPct(marginPct)}%` : ""}`);
 
   // O feed lê-se pelo mesmo caminho do indexador: OCIOSTOCK_CSV_URL, ou o URL das definições.
   if (settings.ociostockCsvUrl && !process.env.OCIOSTOCK_CSV_PATH) {

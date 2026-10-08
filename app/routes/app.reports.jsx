@@ -22,11 +22,14 @@ export const loader = async ({ request }) => {
   // a página mostra o erro em vez de "sem alertas".
   let marginErosion = null;
   let marginErosionError = null;
+  let marginErosionFailedAt = null;
   try {
     const state = await loadMarginErosionState(session.shop);
     if (state?.status === "failed") {
       // Último ciclo falhou: mostra a falha e, abaixo, o último resultado bom (se houver).
-      marginErosionError = `o ciclo de ${new Date(state.ranAt).toLocaleString("pt-PT")} falhou — ${state.reason}`;
+      // A hora vai crua e é formatada no componente, no mesmo fuso das outras.
+      marginErosionError = state.reason;
+      marginErosionFailedAt = state.ranAt;
       marginErosion = state.lastGood || null;
     } else {
       marginErosion = state;
@@ -43,6 +46,7 @@ export const loader = async ({ request }) => {
     discontinuedForReview,
     marginErosion,
     marginErosionError,
+    marginErosionFailedAt,
     marginErosionStale,
   };
 };
@@ -53,8 +57,11 @@ export default function ReportsPage() {
     discontinuedForReview,
     marginErosion,
     marginErosionError,
+    marginErosionFailedAt,
     marginErosionStale,
   } = useLoaderData();
+  // Mesmo fuso no servidor e no browser — horas da falha e do último ciclo comparáveis.
+  const fmtLisbon = (iso) => new Date(iso).toLocaleString("pt-PT", { timeZone: "Europe/Lisbon" });
   const shopify = useAppBridge();
   const [salesRefreshing, setSalesRefreshing] = useState(false);
   const [lastSalesResult, setLastSalesResult] = useState(null);
@@ -305,7 +312,11 @@ export default function ReportsPage() {
                     {`Em cada ciclo, compara o preço live de cada produto publicado com o custo atual do feed (precio_distribuidores + IVA). Vermelho abaixo de ${marginErosion?.thresholdPct ?? 10}% de margem efetiva sobre o custo. Só sinaliza — o preço nunca é alterado automaticamente.`}
                   </Text>
                   {marginErosionError && (
-                    <Banner tone="critical">{`Erosão de margem: ${marginErosionError}`}</Banner>
+                    <Banner tone="critical">
+                      {marginErosionFailedAt
+                        ? `Erosão de margem: o ciclo de ${fmtLisbon(marginErosionFailedAt)} falhou — ${marginErosionError}. Abaixo, o último resultado bom.`
+                        : `Erosão de margem: ${marginErosionError}`}
+                    </Banner>
                   )}
                   {marginErosionStale && (
                     <Banner tone="warning">Último ciclo com mais de 3 h — os valores abaixo podem já não descrever a loja.</Banner>
@@ -317,7 +328,7 @@ export default function ReportsPage() {
                   ) : (
                     <BlockStack gap="200">
                       <Text as="p" tone="subdued">
-                        {`Último ciclo: ${new Date(marginErosion.ranAt).toLocaleString("pt-PT")} · ${marginErosion.measured}/${marginErosion.publishedCount} publicados medidos.`}
+                        {`Último ciclo medido: ${fmtLisbon(marginErosion.ranAt)} · ${marginErosion.measured}/${marginErosion.publishedCount} publicados medidos.`}
                       </Text>
                       {marginErosion.red.length === 0 ? (
                         <Text as="p" tone="success">{`Nenhum produto abaixo de ${marginErosion.thresholdPct}% de margem efetiva.`}</Text>

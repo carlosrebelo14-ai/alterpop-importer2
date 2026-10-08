@@ -136,7 +136,7 @@ export const action = async ({ request }) => {
         priceMarginPct,
         warning:
           effective !== priceMarginPct
-            ? `Abaixo de ${effective}% o piso do custo ganha: o preço sai sempre a custo + ${effective}%.`
+            ? `A margem mínima é ${effective}%: abaixo disso aplica-se ${effective}% (a margem gravada não tem efeito).`
             : null,
       };
     } catch (err) {
@@ -330,11 +330,11 @@ export default function CurationDashboard() {
     const d = marginFetcher.data;
     if (!d || d.intent !== "set-price-margin") return;
     if (d.ok) {
-      setToast(
-        d.warning
-          ? { content: `Margem ${d.priceMarginPct}% gravada. ${d.warning}`, error: true }
-          : { content: `Margem global ${d.priceMarginPct}% aplicada — preços recalculados` }
-      );
+      setToast({
+        content: d.warning
+          ? `Margem ${d.priceMarginPct}% gravada. ${d.warning}`
+          : `Margem global ${d.priceMarginPct}% aplicada — preços recalculados`,
+      });
       setPriceMarginInput(String(d.priceMarginPct));
       setListRefreshKey((k) => k + 1);
     } else {
@@ -983,9 +983,13 @@ export default function CurationDashboard() {
           return;
         }
         shopify.toast.show(
-          `${data.appliedCount} linhas aplicadas, ${data.rejectedCount} rejeitadas de ${data.totalRows}`,
-          { isError: data.rejectedCount > 0 && data.appliedCount === 0 }
+          `${data.appliedCount} linhas aplicadas, ${data.rejectedCount} rejeitadas de ${data.totalRows}` +
+            (data.warningCount > 0 ? ` · ${data.warningCount} aviso(s): ${data.warnings[0].reason}` : ""),
+          { isError: (data.rejectedCount > 0 && data.appliedCount === 0) || data.warningCount > 0 }
         );
+        if (data.warningCount > 0) {
+          console.warn("[curation] import-edits avisos", data.warnings);
+        }
         if (data.rejectedCount > 0) {
           console.log("[debug:curation] import-edits rejeitados", data.rejected);
         }
@@ -1665,7 +1669,7 @@ export default function CurationDashboard() {
                 <Text as="p">
                   <strong>Marca:</strong> {selectedBrand || "(qualquer)"}
                   {" · "}
-                  <strong>Preço:</strong> {minPrice || "0"}€ – {maxPrice || "∞"}€
+                  <strong>PVPR:</strong> {minPrice || "0"}€ – {maxPrice || "∞"}€
                 </Text>
                 <TextField
                   label="Categoria (opcional, texto livre)"

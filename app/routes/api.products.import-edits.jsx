@@ -6,6 +6,8 @@ import {
   rejectProduct,
   setManualOverride,
 } from "../../lib/curation/curationQueue.server.js";
+import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { resolveMarginPct, tryPriceProduct } from "../../lib/importer/pricing/pricing.server.js";
 
 const VALID_STATUSES = new Set(["APPROVED", "REJECTED"]);
 
@@ -42,8 +44,23 @@ export const action = async ({ request }) => {
     titulo: header.indexOf("titulo"),
     categoria: header.indexOf("categoria"),
     preco: header.indexOf("preco"),
+    precoRegra: header.indexOf("preco_regra"),
     estado: header.indexOf("estado"),
   };
+
+  // Revisão do PR #87 — CSVs exportados antes da regra de preço não têm preco_regra e
+  // trazem em `preco` o netPrice × 1,4 calculado, não um override. Aplicá-lo congelava
+  // esse valor (acima do PVPR) como override em todas as linhas. A coluna é ignorada e
+  // o resultado diz porquê; o resto das edições aplica-se normalmente.
+  const warnings = [];
+  if (idx.preco !== -1 && idx.precoRegra === -1) {
+    warnings.push({
+      line: 1,
+      sku: "",
+      reason: "CSV num formato antigo (sem preco_regra): a coluna preco foi ignorada — traz o preço calculado antigo, não um override. Exporta de novo para fixar preços.",
+    });
+    idx.preco = -1;
+  }
 
   if (idx.sku === -1) {
     return Response.json({ ok: false, error: "Coluna 'sku' em falta no CSV" }, { status: 400 });
@@ -61,13 +78,28 @@ export const action = async ({ request }) => {
         () =>
           prisma.catalogProduct.findMany({
             where: { shop: session.shop, sku: { in: chunk } },
-            select: { sku: true },
+            select: { sku: true, distributorPrice: true, grossPrice: true },
           }),
         { fallback: [] }
       )
     )
   );
-  const existingSkuSet = new Set(existingRowChunks.flat().map((r) => r.sku));
+  const existingRows = existingRowChunks.flat();
+  const existingSkuSet = new Set(existingRows.map((r) => r.sku));
+
+  // preco_regra é só leitura: uma edição lá não fixa nada. Compara com a regra atual e
+  // avisa por linha, em vez de a deixar desaparecer em silêncio.
+  let ruleBySku = null;
+  if (idx.precoRegra !== -1) {
+    try {
+      const marginPct = resolveMarginPct(await loadShopSettings(session.shop));
+      ruleBySku = new Map(
+        existingRows.map((r) => [r.sku, tryPriceProduct(r.distributorPrice, r.grossPrice, marginPct).finalPrice])
+      );
+    } catch (err) {
+      warnings.push({ line: 1, sku: "", reason: `Não deu para verificar a coluna preco_regra: ${err?.message || err}` });
+    }
+  }
 
   const applied = [];
   const rejected = [];
@@ -84,6 +116,19 @@ export const action = async ({ request }) => {
     if (!existingSkuSet.has(sku)) {
       rejected.push({ line: lineNo, sku, reason: "SKU não existe no catálogo indexado desta loja" });
       continue;
+    }
+
+    if (ruleBySku) {
+      const ruleCell = (row[idx.precoRegra] || "").trim();
+      const ruleCellNum = parseFloat(ruleCell.replace(",", "."));
+      const rule = ruleBySku.get(sku);
+      if (Number.isFinite(ruleCellNum) && rule != null && Math.round(ruleCellNum * 100) !== Math.round(rule * 100)) {
+        warnings.push({
+          line: lineNo,
+          sku,
+          reason: `preco_regra alterado para ${ruleCell} (a regra dá ${rule.toFixed(2)}) — coluna só de leitura, ignorado. Para fixar o preço preenche a coluna preco.`,
+        });
+      }
     }
 
     const titulo = idx.titulo !== -1 ? (row[idx.titulo] || "").trim() : "";
@@ -132,7 +177,9 @@ export const action = async ({ request }) => {
     totalRows: dataRows.length,
     appliedCount: applied.length,
     rejectedCount: rejected.length,
+    warningCount: warnings.length,
     applied,
     rejected,
+    warnings,
   });
 };
