@@ -7,7 +7,10 @@
  * (APPROVED), ou sem nota/selo, ou se a contagem não for a esperada (--expect N).
  *
  *   node scripts/catalog/deleted-state-verify.js --expect 157
+ * Lista também, dos SKUs com «Produto/variante não encontrado» no SyncErrorLog, os que NÃO
+ * têm a marca (estado atual e chaves da metadata), para diagnosticar divergências.
  */
+import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 
 const args = process.argv.slice(2);
@@ -39,6 +42,21 @@ async function main() {
   console.log(`APPROVED na fila toda: ${approvedTotal}`);
   if (approved.length) console.log(`  APPROVED apagados: ${approved.map((i) => i.sku).join(", ")}`);
 
+  // SKUs do log que deviam ter a marca e não a têm.
+  const logRows = await prisma.syncErrorLog.findMany({
+    where: { message: { contains: "Produto/variante não encontrado na Shopify" } },
+    select: { sku: true },
+    distinct: ["sku"],
+  });
+  const bySku = new Map(queue.items.map((i) => [i.sku, i]));
+  const missing = logRows.map((r) => r.sku).filter((sku) => !bySku.get(sku)?.metadata?.deletedInAdmin);
+  console.log(`\nSKUs do log sem a marca: ${missing.length} (de ${logRows.length})`);
+  for (const sku of missing) {
+    const it = bySku.get(sku);
+    const m = it?.metadata || {};
+    console.log(`  ${sku.padEnd(16)} ${String(it?.status ?? "FORA DA FILA").padEnd(10)} reason=${it?.reason ?? "—"} shopifyStatus=${it?.shopifyStatus ?? "—"} chaves=[${Object.keys(m).sort().join(",")}] lastSeenAt=${m.lastSeenAt ?? "—"} smartRule=${m.smartRule ?? "—"} elite=${m.eliteAction ?? "—"}`);
+  }
+
   const problems = [];
   if (EXPECT != null && deleted.length !== EXPECT) problems.push(`contagem ${deleted.length} ≠ ${EXPECT}`);
   if (noNote.length) problems.push(`${noNote.length} sem nota/data`);
@@ -54,7 +72,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error("Erro:", err?.message || err);
-  process.exitCode = 1;
-});
+main()
+  .catch((err) => {
+    console.error("Erro:", err?.message || err);
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect?.());
