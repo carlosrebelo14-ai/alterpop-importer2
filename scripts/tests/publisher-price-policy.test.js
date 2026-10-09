@@ -317,6 +317,138 @@ await check("variante falha a seguir ao productCreate; retry no mesmo cache publ
   assert.equal(shop.calls.filter((c) => c.name === "ProductCreate").length, 1);
 });
 
+console.log("Última escrita de preço");
+const { buildLastPriceWrite, isManualPrice, changeReasons, inferMarginPct } = await import("../../lib/importer/pricing/lastPriceWrite.js");
+await check("produto novo devolve a última escrita (preço, custo, PVPR, margem, estado, origem, data)", async () => {
+  const shop = makeShop();
+  const r = await publish(shop, "LW-1");
+  assert.equal(r.priceWritten, 17.5);
+  const w = r.lastPriceWrite;
+  assert.equal(w.price, 17.5);
+  assert.equal(w.cost, 12.09);
+  assert.equal(w.pvpr, 17.95);
+  assert.equal(w.marginPct, 40);
+  assert.equal(w.priceStatus, "MARGEM");
+  assert.equal(w.source, "publisher");
+  assert.ok(!Number.isNaN(new Date(w.at).getTime()));
+});
+await check("markQueueItemPublished grava a última escrita e a leitura devolve-a igual", async () => {
+  const shop = makeShop();
+  await q.setManualOverride("LW-2", {});
+  const r = await publish(shop, "LW-2");
+  await q.markQueueItemPublished("LW-2", r.shopifyProductId, { lastPriceWrite: r.lastPriceWrite });
+  const item = await q.getCurationQueueEntry("LW-2");
+  assert.deepEqual(item.metadata.lastPriceWrite, r.lastPriceWrite);
+});
+await check("produto existente com preço não escreve preço: sem última escrita nova, a anterior mantém-se", async () => {
+  const shop = makeShop();
+  shop.existing("LW-3", "19.90");
+  await q.setManualOverride("LW-3", {});
+  const prev = buildLastPriceWrite({ price: 19.9, cost: 12.09, pvpr: 17.95, marginPct: 40, source: "backfill" });
+  await q.recordLastPriceWrites([{ sku: "LW-3", write: prev }]);
+  const r = await publish(shop, "LW-3");
+  assert.equal(r.priceWritten, null);
+  assert.equal(r.lastPriceWrite, undefined);
+  await q.markQueueItemPublished("LW-3", r.shopifyProductId, { lastPriceWrite: r.lastPriceWrite ?? null });
+  assert.deepEqual((await q.getCurationQueueEntry("LW-3")).metadata.lastPriceWrite, prev);
+});
+await check("produto existente a 0,00 que recebe preço devolve a última escrita", async () => {
+  const shop = makeShop();
+  shop.existing("LW-4", "0.00");
+  const r = await publish(shop, "LW-4");
+  assert.equal(r.priceWritten, 17.5);
+  assert.equal(r.lastPriceWrite.price, 17.5);
+});
+await check("override da curadoria: última escrita sem margem e estado OVERRIDE", async () => {
+  const shop = makeShop();
+  await q.setManualOverride("LW-5", { price: 20 });
+  const r = await publish(shop, "LW-5");
+  assert.equal(r.lastPriceWrite.price, 20);
+  assert.equal(r.lastPriceWrite.marginPct, null);
+  assert.equal(r.lastPriceWrite.priceStatus, "OVERRIDE");
+});
+await check("falha a meio da publicação (produto novo): o preço já escrito tem a última escrita gravada", async () => {
+  const shop = makeShop();
+  await q.setManualOverride("MID-1", {});
+  const orig = shop.client.graphql;
+  shop.client.graphql = async (query, vars) => {
+    if (/mutation\s+\w*Publish/i.test(query)) throw new Error("boom a meio");
+    return orig(query, vars);
+  };
+  await assert.rejects(() => publish(shop, "MID-1"), /boom a meio/);
+  assert.equal(shop.price("MID-1"), "17.50", "o preço foi escrito antes da falha");
+  const w = (await q.getCurationQueueEntry("MID-1")).metadata.lastPriceWrite;
+  assert.equal(w?.price, 17.5);
+  assert.equal(w.source, "publisher");
+});
+await check("falha a meio (produto existente a 0,00): o preço escrito tem a última escrita gravada", async () => {
+  const shop = makeShop();
+  shop.existing("MID-2", "0.00");
+  await q.setManualOverride("MID-2", {});
+  const orig = shop.client.graphql;
+  shop.client.graphql = async (query, vars) => {
+    if (/mutation\s+ProductUpdate/.test(query) && vars.input?.title) throw new Error("boom no productUpdate");
+    return orig(query, vars);
+  };
+  await assert.rejects(() => publish(shop, "MID-2"), /boom no productUpdate/);
+  assert.equal(shop.price("MID-2"), "17.50");
+  assert.equal((await q.getCurationQueueEntry("MID-2")).metadata.lastPriceWrite?.price, 17.5);
+});
+await check("falha a gravar o registo: erro à vista, e o produto NÃO é passado a DRAFT por isso", async () => {
+  const shop = makeShop();
+  shop.existing("MID-3", "0.00");
+  await q.setManualOverride("MID-3", {});
+  await assert.rejects(
+    () =>
+      pub.publishCatalogProductToShopify(shop.client, row("MID-3"), {
+        variantCache: new Map(),
+        metafieldReady: false,
+        marginPct: 40,
+        recordLastPriceWrites: async () => {
+          throw new Error("disco cheio");
+        },
+      }),
+    /disco cheio/
+  );
+  assert.equal(shop.price("MID-3"), "17.50", "o preço ficou escrito");
+  assert.equal(shop.calls.filter((c) => c.name === "ProductUpdate" && c.vars.input?.status === "DRAFT").length, 0);
+});
+await check("recordLastPriceWrites: grava vários numa passagem; SKU fora da fila volta em missing", async () => {
+  await q.setManualOverride("LW-6", {});
+  await q.setManualOverride("LW-7", {});
+  const w = buildLastPriceWrite({ price: 14.9, cost: 12.09, pvpr: 17.95, marginPct: 20, source: "reprice" });
+  const r = await q.recordLastPriceWrites([{ sku: "LW-6", write: w }, { sku: "LW-7", write: w }, { sku: "LW-NAO", write: w }]);
+  assert.deepEqual(r.recorded.sort(), ["LW-6", "LW-7"]);
+  assert.deepEqual(r.missing, ["LW-NAO"]);
+  assert.equal((await q.getCurationQueueEntry("LW-7")).metadata.lastPriceWrite.price, 14.9);
+});
+await check("buildLastPriceWrite recusa preço ou origem inválidos, nunca grava lixo", async () => {
+  assert.throws(() => buildLastPriceWrite({ price: 0, source: "publisher" }), /inválida/);
+  assert.throws(() => buildLastPriceWrite({ price: "abc", source: "publisher" }), /inválida/);
+  assert.throws(() => buildLastPriceWrite({ price: 10, source: "outro" }), /origem/);
+});
+await check("preço manual = live diferente da última escrita; sem registo = desconhecido (null)", async () => {
+  const w = buildLastPriceWrite({ price: 14.9, source: "publisher" });
+  assert.equal(isManualPrice(w, "14.90"), false);
+  assert.equal(isManualPrice(w, 15.5), true);
+  assert.equal(isManualPrice(null, 14.9), null);
+});
+await check("motivo: margem alterada, custo alterado e PVPR alterado", async () => {
+  const w = buildLastPriceWrite({ price: 14.9, cost: 12.09, pvpr: 17.95, marginPct: 20, source: "publisher" });
+  assert.deepEqual(changeReasons(w, { cost: 12.09, pvpr: 17.95, marginPct: 10 }), ["margem alterada (de 20 para 10)"]);
+  assert.deepEqual(changeReasons(w, { cost: 13, pvpr: 18.5, marginPct: 20 }), ["custo alterado (de 12.09 para 13.00)", "PVPR alterado (de 17.95 para 18.50)"]);
+  assert.deepEqual(changeReasons(w, { cost: 12.09, pvpr: 17.95, marginPct: 20 }), []);
+});
+await check("inferência da margem do Gandalf: 14,90 ↔ 20 a 23 % (degraus de ,50/,90), ambígua", async () => {
+  const { tryPriceProduct } = await import("../../lib/importer/pricing/pricing.server.js");
+  const at = (m) => tryPriceProduct(9.99, 17.95, m).finalPrice;
+  const r = inferMarginPct(at, 14.9);
+  assert.equal(r.marginPct, 20);
+  assert.deepEqual(r.range, [20, 23]);
+  assert.equal(r.ambiguous, true);
+  assert.equal(inferMarginPct(at, 16.33).marginPct, null, "preço editado à mão não se explica");
+});
+
 fs.rmSync(tmp, { recursive: true, force: true });
 if (failures) {
   console.error(`\n${failures} falha(s)`);

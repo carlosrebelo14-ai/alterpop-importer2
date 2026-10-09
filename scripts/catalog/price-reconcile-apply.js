@@ -34,7 +34,8 @@ import { listCurationQueueItems } from "../../lib/curation/curationQueue.server.
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
-import { resolveMarginPct, effectiveMarginPct, PRICE_STATUS } from "../../lib/importer/pricing/pricing.server.js";
+import { resolveMarginPct, effectiveMarginPct, PRICE_STATUS, priceRow } from "../../lib/importer/pricing/pricing.server.js";
+import { recordPriceWrite } from "../../lib/importer/pricing/recordPriceWrite.server.js";
 import {
   classifyPriceReconcile,
   toReconcileRow,
@@ -241,6 +242,32 @@ async function main() {
     );
   }
   console.log(`Verificados: ${verified}/${written.length}`);
+
+  // Última escrita de preço dos verificados (lastPriceWrite): sem ela, o produto fica fora
+  // do botão "aplicar aos publicados" como "sem última escrita". Falha lança no registo de erros.
+  const itemBySku = new Map(published.map((i) => [i.sku, i]));
+  let recordedWrites = 0;
+  for (const r of written) {
+    const now = verifyLive.get(r.sku);
+    if (!now || cents(now.price) !== cents(r.after)) continue;
+    const cat = catalogBySku.get(r.sku);
+    try {
+      const { marginPct: rowMargin } = priceRow(cat?.distributorPrice, cat?.grossPrice, marginPct, itemBySku.get(r.sku));
+      const rec = await recordPriceWrite({
+        sku: r.sku,
+        price: r.after,
+        distributorPrice: cat?.distributorPrice,
+        grossPrice: cat?.grossPrice,
+        marginPct: rowMargin,
+        source: "reconcile",
+      });
+      if (rec.recorded) recordedWrites += 1;
+      else errors.push(errorEntry("LAST_WRITE_NOT_RECORDED", r.sku, "SKU fora da fila — última escrita não gravada"));
+    } catch (err) {
+      errors.push(errorEntry("LAST_WRITE_NOT_RECORDED", r.sku, err?.message || String(err)));
+    }
+  }
+  console.log(`Última escrita gravada: ${recordedWrites}/${written.length}`);
 
   // Resultado final por SKU — o plano CSV acima diz o que se ia fazer; este diz o que
   // aconteceu (escrito e verificado, saltado, falhado).
