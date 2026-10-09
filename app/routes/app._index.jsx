@@ -40,6 +40,7 @@ import { countSmartRuleDecisions } from "../../lib/importer/curation/smartRules.
 import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
 import { translateCategoryLabel } from "../../lib/importer/catalog/categoryLabel.js";
 import { CurationFiltersBar } from "../components/CurationFiltersBar.jsx";
+import { RepricePublishedButton } from "../components/RepricePublishedButton.jsx";
 import { SyncStagingModal } from "../components/SyncStagingModal.jsx";
 import { ShopifyPublishModal } from "../components/ShopifyPublishModal.jsx";
 import { CatalogProductThumbnail } from "../components/CatalogProductThumbnail.jsx";
@@ -2030,6 +2031,25 @@ export default function CurationDashboard() {
                     >
                       Aplicar margem
                     </Button>
+                    <RepricePublishedButton
+                      filters={{
+                        brand: debouncedBrand,
+                        search: debouncedSearch,
+                        searchScope,
+                        minPrice: debouncedMinPrice,
+                        maxPrice: debouncedMaxPrice,
+                        inStockOnly,
+                        filterIds: debouncedFilterIds,
+                        curationStatus,
+                        reason: reasonFilter,
+                      }}
+                      filterSummary={activeFilterSummary}
+                      refreshKey={listRefreshKey}
+                      onApplied={(content) => {
+                        setToast({ content });
+                        setListRefreshKey((k) => k + 1);
+                      }}
+                    />
                     <Text as="span" tone="subdued" variant="bodySm">
                       {`Preço = custo c/ IVA × (1 + ${effectivePct ?? appliedMarginPct ?? "—"}%), arredondado, entre 80 % do PVPR e o PVPR${
                         effectivePct != null && appliedMarginPct != null && Number(effectivePct) !== Number(appliedMarginPct)
@@ -2174,6 +2194,8 @@ export default function CurationDashboard() {
                             liveProfit,
                             liveError,
                             syncError,
+                            wasPublished,
+                            deletedInAdminAt,
                             salesUnits30d,
                             barcode,
                             franchises,
@@ -2339,6 +2361,11 @@ export default function CurationDashboard() {
                               <IndexTable.Cell>
                                 <BlockStack gap="050">
                                   <Badge tone={curationTone}>{curationLabel}</Badge>
+                                  {wasPublished && status !== "PUBLISHED" && (
+                                    <Tooltip content={deletedInAdminAt ? `Apagado no admin em ${new Date(deletedInAdminAt).toLocaleDateString("pt-PT")}. Só volta à loja com aprovação nova.` : "Já esteve publicado e foi apagado no admin. Só volta à loja com aprovação nova."}>
+                                      <Badge tone="info">Já esteve publicado</Badge>
+                                    </Tooltip>
+                                  )}
                                   {showReason && (
                                     <Text as="span" tone="critical" variant="bodySm">
                                       {reasonLabel(reasonCode)}

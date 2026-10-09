@@ -82,6 +82,7 @@ const ALLOWED = {
     "lib/importer/importers/ProductImporter.js",
     "lib/importer/pricing/pricing.server.js",
     "lib/importer/shopify/shopifyApprovedSync.server.js",
+    "lib/importer/shopify/publishedReprice.server.js",
     "lib/importer/shopify/shopifyProductPublisher.server.js",
     "lib/importer/sync/syncStagingSummary.server.js",
   ],
