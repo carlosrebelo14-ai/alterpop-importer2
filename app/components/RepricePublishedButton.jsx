@@ -26,7 +26,7 @@ async function post(body) {
 }
 
 const th = { textAlign: "right", padding: "4px 8px", fontWeight: 600, whiteSpace: "nowrap" };
-const td = { textAlign: "right", padding: "4px 8px", whiteSpace: "nowrap" };
+const td = { textAlign: "right", padding: "6px 8px", whiteSpace: "nowrap", verticalAlign: "top" };
 const tdL = { ...td, textAlign: "left", whiteSpace: "normal" };
 
 export function RepricePublishedButton({ filters, filterSummary, refreshKey, onApplied }) {
@@ -128,7 +128,7 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
       {open && (
         <Modal
           open
-          large
+          size="large"
           onClose={close}
           title="Aplicar a regra aos publicados"
           primaryAction={
@@ -194,17 +194,17 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                         <thead>
                           <tr>
-                            <th style={{ ...th, textAlign: "left" }}>Produto</th>
+                            <th style={{ ...th, textAlign: "left", minWidth: 170 }}>Produto</th>
                             <th style={th}>Preço na loja</th>
                             <th style={th}>Preço proposto</th>
                             <th style={th}>Diferença</th>
-                            <th style={{ ...th, textAlign: "left" }}>Motivo</th>
-                            <th style={{ ...th, textAlign: "left" }}>Limite ativo</th>
+                            <th style={{ ...th, textAlign: "left", minWidth: 190 }}>Motivo</th>
+                            <th style={{ ...th, textAlign: "left", whiteSpace: "nowrap" }}>Limite ativo</th>
                           </tr>
                         </thead>
                         <tbody>
                           {updates.map((r) => (
-                            <tr key={r.sku} style={{ borderTop: "1px solid var(--p-color-border, #e1e3e5)" }}>
+                            <tr key={r.sku} style={{ borderTop: "1px solid var(--p-color-border, #e1e3e5)", verticalAlign: "top" }}>
                               <td style={tdL}>
                                 {r.title || r.sku}
                                 <div style={{ color: "#6d7175", fontSize: 12 }}>{r.sku}</div>
@@ -214,15 +214,18 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
                               <td style={td}>{`${fmtEurSigned(r.diff)} (${fmtPct(r.diffPct)})`}</td>
                               <td style={tdL}>
                                 {r.reasons.length ? r.reasons.join("; ") : "—"}
-                                {r.marginInferred && r.reasons.some((x) => x.startsWith("margem")) && (
-                                  <div style={{ color: "#6d7175", fontSize: 12 }}>margem de origem estimada pelo preço da loja</div>
-                                )}
+                                {r.marginInferred && r.reasons.some((x) => x.startsWith("margem")) ? " *" : ""}
                               </td>
                               <td style={tdL}>{r.limit}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
+                      {updates.some((r) => r.marginInferred && r.reasons.some((x) => x.startsWith("margem"))) && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          * margem de origem estimada pelo preço da loja (a regra sobe em degraus de ,50 e ,90)
+                        </Text>
+                      )}
                     </div>
                   )}
 
