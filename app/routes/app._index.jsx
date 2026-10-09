@@ -2147,7 +2147,7 @@ export default function CurationDashboard() {
                           { title: "Custo c/ IVA", alignment: "end" },
                           { title: "PVPR", alignment: "end" },
                           { title: "Preço final", alignment: "end" },
-                          { title: "Lucro", alignment: "end" },
+                          { title: "Lucro antes de portes", alignment: "end" },
                           { title: "Preço" },
                           { title: "Stock" },
                           { title: "Estado" },
@@ -2169,6 +2169,10 @@ export default function CurationDashboard() {
                             priceStatus,
                             priceError,
                             productMarginPct,
+                            liveState,
+                            livePrice,
+                            liveProfit,
+                            liveError,
                             syncError,
                             salesUnits30d,
                             barcode,
@@ -2270,7 +2274,37 @@ export default function CurationDashboard() {
                                 <Text as="span" alignment="end" tone="subdued">{pvpr != null ? formatEur(pvpr) : "—"}</Text>
                               </IndexTable.Cell>
                               <IndexTable.Cell>
-                                {priceError ? (
+                                {liveState && liveState !== "missing" && liveState !== "unread" ? (
+                                  // PUBLISHED: o número que a loja tem. O calculado só aparece como aviso.
+                                  <BlockStack gap="050" inlineAlign="end">
+                                    <Text as="span" alignment="end" fontWeight="semibold">{formatEur(livePrice)}</Text>
+                                    <Text as="span" variant="bodySm" tone="subdued">na loja</Text>
+                                    {liveState === "differs" && (
+                                      <Tooltip content={`A loja tem ${formatEur(livePrice)}, a regra dá ${formatEur(finalPrice)} com a margem atual. O preço de um produto já publicado muda-se no admin.`}>
+                                        <Badge tone="warning">{`Regra: ${formatEur(finalPrice)}`}</Badge>
+                                      </Tooltip>
+                                    )}
+                                    {liveState === "no_rule" && (
+                                      <Tooltip content={priceError || "Sem preço calculado"}>
+                                        <Badge tone="warning">Sem regra</Badge>
+                                      </Tooltip>
+                                    )}
+                                  </BlockStack>
+                                ) : liveState === "unread" ? (
+                                  <BlockStack gap="050" inlineAlign="end">
+                                    {!priceError && <Text as="span" alignment="end" tone="subdued">{formatEur(finalPrice)}</Text>}
+                                    <Tooltip content={liveError || "Preço live não lido"}>
+                                      <Badge tone="critical">Live não lido</Badge>
+                                    </Tooltip>
+                                  </BlockStack>
+                                ) : liveState === "missing" ? (
+                                  <BlockStack gap="050" inlineAlign="end">
+                                    {!priceError && <Text as="span" alignment="end" tone="subdued">{formatEur(finalPrice)}</Text>}
+                                    <Tooltip content="PUBLISHED na fila, mas sem variante com este SKU na loja.">
+                                      <Badge tone="critical">Sem produto na loja</Badge>
+                                    </Tooltip>
+                                  </BlockStack>
+                                ) : priceError ? (
                                   <Tooltip content={priceError}>
                                     <Badge tone="critical">Sem preço</Badge>
                                   </Tooltip>
@@ -2286,8 +2320,8 @@ export default function CurationDashboard() {
                                 )}
                               </IndexTable.Cell>
                               <IndexTable.Cell>
-                                <Text as="span" alignment="end" fontWeight="bold" tone={priceError ? "subdued" : "success"}>
-                                  {priceError ? "—" : formatEur(profit)}
+                                <Text as="span" alignment="end" fontWeight="bold" tone={liveProfit != null || !priceError ? "success" : "subdued"}>
+                                  {liveProfit != null ? formatEur(liveProfit) : priceError ? "—" : formatEur(profit)}
                                 </Text>
                               </IndexTable.Cell>
                               <IndexTable.Cell>

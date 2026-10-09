@@ -9,7 +9,7 @@ import {
   loadCurationQueue,
 } from "../../lib/curation/curationQueue.server.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
-import { resolveMarginPct, tryPriceProduct, productMarginPct } from "../../lib/importer/pricing/pricing.server.js";
+import { resolveMarginPct, priceRow } from "../../lib/importer/pricing/pricing.server.js";
 
 const VALID_STATUSES = new Set(["APPROVED", "REJECTED"]);
 
@@ -99,13 +99,8 @@ export const action = async ({ request }) => {
       const queueBySku = new Map((await loadCurationQueue()).items.map((i) => [i.sku, i]));
       ruleBySku = new Map(
         existingRows.map((r) => {
-          let rule = null;
-          try {
-            rule = tryPriceProduct(r.distributorPrice, r.grossPrice, productMarginPct(marginPct, queueBySku.get(r.sku))).finalPrice;
-          } catch {
-            rule = null; // margem do produto inválida — sem regra com que comparar
-          }
-          return [r.sku, rule];
+          // Margem do produto inválida → finalPrice null: sem regra com que comparar.
+          return [r.sku, priceRow(r.distributorPrice, r.grossPrice, marginPct, queueBySku.get(r.sku)).finalPrice];
         })
       );
     } catch (err) {
