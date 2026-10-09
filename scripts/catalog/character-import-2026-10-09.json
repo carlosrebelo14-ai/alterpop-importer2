@@ -1,0 +1,2004 @@
+{
+  "id": "character-import-2026-10-09",
+  "date": "2026-10-09",
+  "source": "Briefing backend 09/10/2026 — Importação por personagem (lista do Carlos)",
+  "notes": [
+    "name = nome na tabela do Carlos; aliases = acrescentos do briefing. Os aliases do vocabulário B7 (CHARACTER_ALIASES) juntam-se em tempo de execução quando o nome é igual.",
+    "Nomes novos vivem só aqui; o vocabulário fechado de Character (B7) não muda.",
+    "line: a linha exige resolvedLine igual; excludeLines: a linha tira os produtos dessas Lines (Star Wars exclui The Mandalorian).",
+    "mode: A = só produtos com o universo resolvido; A+B = também recupera órfãos (sem universo) pelo nome.",
+    "eponym: processado em último no universo e só com produtos que não batem noutro nome do universo.",
+    "sample: o dry-run traz amostra obrigatória de até 5 títulos para este nome."
+  ],
+  "universes": [
+    {
+      "universe": "Star Wars",
+      "line": null,
+      "excludeLines": [
+        "The Mandalorian"
+      ],
+      "characters": [
+        {
+          "name": "Darth Vader",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Luke Skywalker",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Yoda",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Obi-Wan Kenobi",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Han Solo",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Leia",
+          "priority": 1,
+          "aliases": [
+            "Princess Leia",
+            "Leia Organa"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Chewbacca",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Boba Fett",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Ahsoka Tano",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Stormtrooper",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "R2-D2",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "C-3PO",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Darth Maul",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Anakin",
+          "priority": 2,
+          "aliases": [
+            "Anakin Skywalker"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Kylo Ren",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Palpatine",
+          "priority": 2,
+          "aliases": [
+            "Emperor Palpatine",
+            "Darth Sidious"
+          ],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Star Wars",
+      "line": "The Mandalorian",
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Grogu",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Din Djarin",
+          "priority": 1,
+          "aliases": [
+            "The Mandalorian"
+          ],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Bo-Katan",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Moff Gideon",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "IG-11",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Ahsoka",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Boba Fett",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Harry Potter",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Harry",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "eponym": true,
+          "sample": true
+        },
+        {
+          "name": "Hermione",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Ron",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Dumbledore",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Snape",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Dobby",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Hagrid",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Voldemort",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Draco",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Luna",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Sirius Black",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Hedwig",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "McGonagall",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Bellatrix",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "The Lord of the Rings",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Gandalf",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Frodo",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Gollum",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Aragorn",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Legolas",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Sauron",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Gimli",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Samwise",
+          "priority": 2,
+          "aliases": [
+            "Sam Gamgee",
+            "Samwise Gamgee"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Nazgûl",
+          "priority": 2,
+          "aliases": [
+            "Nazgul",
+            "Witch-King",
+            "Witch King",
+            "Ringwraith"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Balrog",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Galadriel",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Saruman",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Bilbo",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Stranger Things",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Eleven",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Dustin",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Steve",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Eddie Munson",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Vecna",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Demogorgon",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Max",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Hopper",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Will",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Mike",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Lucas",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Robin",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Nancy",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Avengers",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Iron Man",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Captain America",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A+B"
+        },
+        {
+          "name": "Thor",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A+B"
+        },
+        {
+          "name": "Hulk",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A+B"
+        },
+        {
+          "name": "Thanos",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Loki",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Black Widow",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Doctor Strange",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Scarlet Witch",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Black Panther",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Hawkeye",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Doctor Doom",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Spider-Man",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Spider-Man",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "eponym": true,
+          "sample": true
+        },
+        {
+          "name": "Miles Morales",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Venom",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A+B"
+        },
+        {
+          "name": "Spider-Gwen",
+          "priority": 1,
+          "aliases": [
+            "Ghost-Spider",
+            "Gwen Stacy"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Green Goblin",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Doctor Octopus",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Carnage",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Spider-Punk",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Spider-Man 2099",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "fato simbionte",
+          "priority": 2,
+          "aliases": [
+            "Symbiote Suit",
+            "Black Suit Spider-Man",
+            "Symbiote Spider-Man"
+          ],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "X-Men",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Wolverine",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A+B"
+        },
+        {
+          "name": "Deadpool",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Magneto",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Storm",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Cyclops",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Gambit",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Rogue",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Jean Grey",
+          "priority": 2,
+          "aliases": [
+            "Phoenix",
+            "Dark Phoenix"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Professor X",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Nightcrawler",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Batman",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Batman",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "eponym": true,
+          "sample": true
+        },
+        {
+          "name": "Joker",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A+B"
+        },
+        {
+          "name": "Harley Quinn",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A+B"
+        },
+        {
+          "name": "Catwoman",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A+B"
+        },
+        {
+          "name": "Robin",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Nightwing",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Penguin",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Riddler",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Bane",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Two-Face",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Batgirl",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Poison Ivy",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Superman",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Superman",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "eponym": true,
+          "sample": true
+        },
+        {
+          "name": "Lex Luthor",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Krypto",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Supergirl",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A+B"
+        },
+        {
+          "name": "Lois Lane",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "General Zod",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Bizarro",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Brainiac",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Toy Story",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Woody",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Buzz Lightyear",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Jessie",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Alien",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Rex",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Forky",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Bo Peep",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Slinky",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Hamm",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Lotso",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Bullseye",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Stitch",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Stitch",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "eponym": true,
+          "sample": true
+        },
+        {
+          "name": "Lilo",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Angel",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Scrump",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Jumba",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Pleakley",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "TMNT",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Leonardo",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Raphael",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Donatello",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Michelangelo",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Shredder",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Splinter",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "April O'Neil",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Casey Jones",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Bebop",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Rocksteady",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Krang",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Transformers",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Optimus Prime",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Bumblebee",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Megatron",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Starscream",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Soundwave",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Grimlock",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Jazz",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Shockwave",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Masters of the Universe",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "He-Man",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Skeletor",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Battle Cat",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Teela",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Man-At-Arms",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Evil-Lyn",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Beast Man",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Orko",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Trap Jaw",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Pokémon",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Pikachu",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Charizard",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Eevee",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Mewtwo",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Gengar",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Bulbasaur",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Charmander",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Squirtle",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Snorlax",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Mew",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Lucario",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Umbreon",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Dragonite",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Dragon Ball",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Goku",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Vegeta",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Gohan",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Piccolo",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Frieza",
+          "priority": 1,
+          "aliases": [
+            "Freezer",
+            "Freeza"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Trunks",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Cell",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Majin Buu",
+          "priority": 2,
+          "aliases": [
+            "Buu"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Broly",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Beerus",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Gogeta",
+          "priority": 2,
+          "aliases": [
+            "Vegito",
+            "Vegetto"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Krillin",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Bardock",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "One Piece",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Luffy",
+          "priority": 1,
+          "aliases": [
+            "Monkey D. Luffy"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Zoro",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Chopper",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Sanji",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Nami",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Ace",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Law",
+          "priority": 2,
+          "aliases": [
+            "Trafalgar Law"
+          ],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Shanks",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Robin",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Usopp",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Sabo",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Kaido",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Mihawk",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Boa Hancock",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Yamato",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Naruto",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Naruto",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "eponym": true,
+          "sample": true
+        },
+        {
+          "name": "Sasuke",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Kakashi",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Itachi",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Gaara",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Jiraiya",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Minato",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Madara",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Hinata",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Sakura",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Pain",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Obito",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Demon Slayer",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Tanjiro",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Nezuko",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Zenitsu",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Inosuke",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Rengoku",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Giyu",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Shinobu",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Tengen",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Muichiro",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Mitsuri",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Akaza",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Muzan",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Jujutsu Kaisen",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Gojo",
+          "priority": 1,
+          "aliases": [
+            "Satoru Gojo"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Sukuna",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Yuji Itadori",
+          "priority": 1,
+          "aliases": [
+            "Itadori"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Megumi",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Nobara",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Geto",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Nanami",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Toji",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Maki",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Inumaki",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Yuta",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Attack on Titan",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Levi",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Eren",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Mikasa",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Armin",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Erwin",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Hange",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Titã Colossal",
+          "priority": 2,
+          "aliases": [
+            "Colossal Titan"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Titã Blindado",
+          "priority": 2,
+          "aliases": [
+            "Armored Titan"
+          ],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Chainsaw Man",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Denji",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Power",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Makima",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Pochita",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Aki",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Reze",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Kobeni",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Spy × Family",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Anya",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Loid",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Yor",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Bond",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Damian",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Studio Ghibli",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "Totoro",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "No-Face",
+          "priority": 1,
+          "aliases": [
+            "Kaonashi"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Chihiro",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Jiji",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Haku",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Kiki",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Catbus",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Calcifer",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Howl",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "San",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Ponyo",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Evangelion",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "EVA-01",
+          "priority": 1,
+          "aliases": [
+            "Eva-01",
+            "Unit-01",
+            "Evangelion 01"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Rei",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Asuka",
+          "priority": 1,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Shinji",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Kaworu",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Mari",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "EVA-02",
+          "priority": 2,
+          "aliases": [
+            "Eva-02",
+            "Unit-02",
+            "Evangelion 02"
+          ],
+          "mode": "A"
+        }
+      ]
+    },
+    {
+      "universe": "Gundam",
+      "line": null,
+      "excludeLines": [],
+      "characters": [
+        {
+          "name": "RX-78-2",
+          "priority": 1,
+          "aliases": [
+            "RX-78"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Zaku II de Char",
+          "priority": 1,
+          "aliases": [
+            "Char's Zaku",
+            "Zaku II Char"
+          ],
+          "mode": "A"
+        },
+        {
+          "name": "Unicorn",
+          "priority": 1,
+          "aliases": [
+            "Unicorn Gundam"
+          ],
+          "mode": "A",
+          "sample": true
+        },
+        {
+          "name": "Wing Zero",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Strike Freedom",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Barbatos",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Sazabi",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        },
+        {
+          "name": "Nu Gundam",
+          "priority": 2,
+          "aliases": [],
+          "mode": "A"
+        }
+      ]
+    }
+  ]
+}

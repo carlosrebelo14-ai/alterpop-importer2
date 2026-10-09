@@ -4,11 +4,8 @@ import { queryCatalogProducts } from "../../lib/importer/catalog/catalogProducts
 import { buildCsv } from "../../lib/importer/catalog/csvExport.server.js";
 import { loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { computeCurationSkuFilter } from "../../lib/curation/curationStatusFilter.server.js";
+import { EXPORT_LIMIT, exportLimitMessage } from "../../lib/curation/exportLimit.js";
 
-// Limite do export. ATENÇÃO: corta em silêncio — um filtro com mais de 5000 produtos exporta os
-// primeiros 5000 sem avisar (getMatchingCatalogSkus() já não tem limite, ver collectPages.js).
-// Ficheiros maiores do que isto tornam-se difíceis de editar à mão em Excel/Sheets de qualquer forma.
-const EXPORT_LIMIT = 5000;
 
 const HEADERS = ["sku", "ean", "custo", "pvpr", "preco_regra", "titulo", "categoria", "preco", "estado"];
 
@@ -56,6 +53,15 @@ export const loader = async ({ request }) => {
     skuInclude,
     skuExclude,
   });
+
+  // Recusa em vez de cortar: um filtro maior do que o limite nunca exporta um subconjunto sem o dizer.
+  const refusal = exportLimitMessage(result.totalCount);
+  if (refusal) {
+    return Response.json(
+      { ok: false, error: refusal, total: result.totalCount, limit: EXPORT_LIMIT },
+      { status: 413 }
+    );
+  }
 
   const queue = await loadCurationQueue();
   const bySku = new Map((queue.items || []).map((i) => [i.sku, i]));
