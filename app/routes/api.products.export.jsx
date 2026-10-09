@@ -5,9 +5,9 @@ import { buildCsv } from "../../lib/importer/catalog/csvExport.server.js";
 import { loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { computeCurationSkuFilter } from "../../lib/curation/curationStatusFilter.server.js";
 
-// Limite de segurança — o mesmo já usado em getMatchingCatalogSkus() para "todos os
-// resultados do filtro" (catalogProductsDb.server.js). Ficheiros maiores do que isto
-// tornam-se difíceis de editar à mão em Excel/Sheets de qualquer forma.
+// Limite do export. ATENÇÃO: corta em silêncio — um filtro com mais de 5000 produtos exporta os
+// primeiros 5000 sem avisar (getMatchingCatalogSkus() já não tem limite, ver collectPages.js).
+// Ficheiros maiores do que isto tornam-se difíceis de editar à mão em Excel/Sheets de qualquer forma.
 const EXPORT_LIMIT = 5000;
 
 const HEADERS = ["sku", "ean", "custo", "pvpr", "preco_regra", "titulo", "categoria", "preco", "estado"];
