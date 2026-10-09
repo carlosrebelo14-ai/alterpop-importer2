@@ -14,6 +14,7 @@ import {
   priceProduct,
   tryPriceProduct,
   resolveMarginPct,
+  productMarginPct,
   effectiveMarginPct,
   existingPriceNeedsWrite,
   DEFAULT_MARGIN_PCT,
@@ -244,6 +245,22 @@ await checkAsync("publisher sem precio_distribuidores: retailPrice null, erro ex
   );
   assert.equal(payload.retailPrice, null);
   assert.match(payload.priceError, /Sem precio_distribuidores/);
+});
+
+console.log("Margem por produto (barra de seleção da Curadoria)");
+check("sem margem do produto usa a global", () => {
+  assert.equal(productMarginPct(40, null), 40);
+  assert.equal(productMarginPct(40, { metadata: { overrides: { price: 20 } } }), 40);
+});
+check("margem do produto sobrepõe a global", () => {
+  assert.equal(productMarginPct(40, { metadata: { overrides: { marginPct: 25 } } }), 25);
+  // 9,99 / 17,95: 40 % → 17,50; 25 % → 15,50 (12,09 × 1,25 = 15,11 → ,50)
+  assert.equal(priceProduct(9.99, 17.95, productMarginPct(40, { metadata: { overrides: { marginPct: 25 } } })).finalPrice, 15.5);
+});
+check("margem do produto inválida lança, nunca cai para a global", () => {
+  assert.throws(() => productMarginPct(40, { metadata: { overrides: { marginPct: 150 } } }), PricingError);
+  assert.throws(() => productMarginPct(40, { metadata: { overrides: { marginPct: 12.345 } } }), PricingError);
+  assert.throws(() => productMarginPct(40, { metadata: { overrides: { marginPct: "abc" } } }), PricingError);
 });
 
 if (failures) {

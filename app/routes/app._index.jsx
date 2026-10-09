@@ -341,7 +341,7 @@ export default function CurationDashboard() {
   const [lifecycleBannerDismissed, setLifecycleBannerDismissed] = useState(false);
   const [toast, setToast] = useState(null);
   const [selectedSkus, setSelectedSkus] = useState([]);
-  const [bulkMargin, setBulkMargin] = useState("1.4");
+  const [bulkMargin, setBulkMargin] = useState("");
 
   // Margem global aplicada → lista recalcula (preço final e lucro vêm do servidor).
   useEffect(() => {
@@ -1252,36 +1252,49 @@ export default function CurationDashboard() {
     await runBulkApproveFiltered(action);
   }, [massActionConfirm, runBulkApproveFiltered]);
 
-  const runBulkMargin = useCallback(async () => {
-    if (!selectedSkus.length) return;
-    const multiplier = Number(bulkMargin);
-    if (!Number.isFinite(multiplier) || multiplier < 1) {
-      setToast({ content: "Margem inválida (mínimo 1.0)", error: true });
-      return;
-    }
-    try {
-      const res = await fetch("/api/curation/queue/bulk", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          skus: selectedSkus,
-          action: "margin",
-          marginMultiplier: multiplier,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data?.ok) {
-        setToast({ content: data?.error || "Erro ao alterar margem", error: true });
-        return;
+  // Margem por produto, em % (5–100, como a global). `reset` = volta à margem global.
+  // Só pesa na criação: um produto já publicado mantém o preço da loja.
+  const runBulkMargin = useCallback(
+    async (reset = false) => {
+      if (!selectedSkus.length) return;
+      let marginPct = null;
+      if (!reset) {
+        const raw = String(bulkMargin).trim().replace(",", ".");
+        marginPct = Number(raw);
+        if (raw === "" || !Number.isFinite(marginPct)) {
+          setToast({ content: "Margem inválida — escreve a percentagem (5 a 100)", error: true });
+          return;
+        }
       }
-      setToast({ content: `Margem ${data.marginMultiplier} aplicada a ${data.updated} produto(s)` });
-      clearSelection();
-      setListRefreshKey((k) => k + 1);
-    } catch {
-      setToast({ content: "Falha de rede ao alterar margem", error: true });
-    }
-  }, [selectedSkus, bulkMargin, clearSelection]);
+      try {
+        const res = await fetch("/api/curation/queue/bulk", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ skus: selectedSkus, action: "margin", marginPct }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.ok) {
+          setToast({ content: data?.error || "Erro ao alterar margem", error: true });
+          return;
+        }
+        const missing = data.missing?.length ? ` · ${data.missing.length} fora da fila, não alterado(s)` : "";
+        setToast({
+          content:
+            data.marginPct == null
+              ? `Margem global reposta em ${data.updated} produto(s)${missing}`
+              : `Margem ${data.marginPct} % aplicada a ${data.updated} produto(s)${missing}`,
+          error: Boolean(data.missing?.length),
+        });
+        setBulkMargin("");
+        clearSelection();
+        setListRefreshKey((k) => k + 1);
+      } catch {
+        setToast({ content: "Falha de rede ao alterar margem", error: true });
+      }
+    },
+    [selectedSkus, bulkMargin, clearSelection]
+  );
 
   const postCuration = useCallback(
     async (sku, action) => {
@@ -2155,6 +2168,7 @@ export default function CurationDashboard() {
                             profit,
                             priceStatus,
                             priceError,
+                            productMarginPct,
                             syncError,
                             salesUnits30d,
                             barcode,
@@ -2261,7 +2275,14 @@ export default function CurationDashboard() {
                                     <Badge tone="critical">Sem preço</Badge>
                                   </Tooltip>
                                 ) : (
-                                  <Text as="span" alignment="end" fontWeight="semibold">{formatEur(finalPrice)}</Text>
+                                  <BlockStack gap="050" inlineAlign="end">
+                                    <Text as="span" alignment="end" fontWeight="semibold">{formatEur(finalPrice)}</Text>
+                                    {productMarginPct != null && (
+                                      <Tooltip content="Margem deste produto (barra de seleção). Só pesa na criação: um produto já publicado mantém o preço da loja.">
+                                        <Text as="span" variant="bodySm" tone="subdued">{`margem ${productMarginPct} %`}</Text>
+                                      </Tooltip>
+                                    )}
+                                  </BlockStack>
                                 )}
                               </IndexTable.Cell>
                               <IndexTable.Cell>
@@ -2366,16 +2387,19 @@ export default function CurationDashboard() {
             <Button tone="critical" onClick={() => runBulkStatus("reject")}>
               Rejeitar Selecionados
             </Button>
-            <div style={{ width: 130 }}>
+            <div style={{ width: 110 }}>
               <TextField
                 label=""
+                labelHidden
                 value={bulkMargin}
                 onChange={setBulkMargin}
                 autoComplete="off"
-                placeholder="Margem ex: 1.50"
+                suffix="%"
+                placeholder={appliedMarginPct != null ? String(appliedMarginPct) : "40"}
               />
             </div>
-            <Button onClick={runBulkMargin}>Alterar Margem em Massa</Button>
+            <Button onClick={() => runBulkMargin(false)}>Margem destes produtos</Button>
+            <Button onClick={() => runBulkMargin(true)}>Repor margem global</Button>
             <Button onClick={clearSelection}>Fechar</Button>
           </InlineStack>
         </InlineStack>

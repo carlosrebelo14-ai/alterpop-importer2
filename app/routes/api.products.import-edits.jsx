@@ -8,7 +8,7 @@ import {
   getCurationQueueEntry,
 } from "../../lib/curation/curationQueue.server.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
-import { resolveMarginPct, tryPriceProduct } from "../../lib/importer/pricing/pricing.server.js";
+import { resolveMarginPct, tryPriceProduct, productMarginPct } from "../../lib/importer/pricing/pricing.server.js";
 
 const VALID_STATUSES = new Set(["APPROVED", "REJECTED"]);
 
@@ -94,7 +94,19 @@ export const action = async ({ request }) => {
   if (idx.precoRegra !== -1) {
     try {
       const marginPct = resolveMarginPct(await loadShopSettings(session.shop));
-      ruleBySku = new Map(existingRows.map((r) => [r.sku, tryPriceProduct(r.distributorPrice, r.grossPrice, marginPct).finalPrice]));
+      ruleBySku = new Map(
+        await Promise.all(
+          existingRows.map(async (r) => {
+            let rule = null;
+            try {
+              rule = tryPriceProduct(r.distributorPrice, r.grossPrice, productMarginPct(marginPct, await getCurationQueueEntry(r.sku))).finalPrice;
+            } catch {
+              rule = null; // margem do produto inválida — sem regra com que comparar
+            }
+            return [r.sku, rule];
+          })
+        )
+      );
     } catch (err) {
       warnings.push({ line: 1, sku: "", reason: `Não deu para comparar preco_regra com a regra atual: ${err?.message || err}` });
     }
