@@ -1,3 +1,6 @@
+import { useEffect, useState } from "react";
+import { BulkActionConfirm } from "./BulkActionConfirm.jsx";
+import { isBulkConfirmed } from "../../lib/curation/bulkConfirm.js";
 import {
   Modal,
   BlockStack,
@@ -16,7 +19,10 @@ import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
  *   confirming?: boolean,
  *   summary: object | null,
  *   liveMode?: boolean,
- * }} props
+ *   publishCount?: number,
+ *   sampleSkus?: string[],
+ * }} props publishCount/sampleSkus: nº e amostra dos SKUs que a publicação vai enviar (D1:
+ *   acima de 50 exige escrever o número; o servidor confirma o mesmo número).
  */
 export function SyncStagingModal({
   open,
@@ -26,7 +32,15 @@ export function SyncStagingModal({
   confirming,
   summary,
   liveMode = false,
+  publishCount = 0,
+  sampleSkus = [],
 }) {
+  const [typed, setTyped] = useState("");
+  useEffect(() => {
+    setTyped("");
+  }, [open, publishCount]);
+  const confirmed = !liveMode || isBulkConfirmed(publishCount, typed);
+
   const title = liveMode
     ? "Confirmar sincronização com Shopify"
     : "Resumo de importação (staging)";
@@ -41,7 +55,7 @@ export function SyncStagingModal({
         // Sem tags por lote: os produtos só levam "alterpop" (opção A, 29/09/2026).
         onAction: () => onConfirm(),
         loading: confirming,
-        disabled: loading || !summary?.approvedCount,
+        disabled: loading || !summary?.approvedCount || !confirmed,
       }}
       secondaryActions={[{ content: "Cancelar", onAction: onClose }]}
     >
@@ -51,6 +65,17 @@ export function SyncStagingModal({
             <Text as="p" tone="subdued">
               A calcular resumo dos produtos aprovados…
             </Text>
+          )}
+
+          {!loading && liveMode && (
+            <BulkActionConfirm
+              scope={publishCount}
+              scopeText="os produtos APPROVED a enviar para a Shopify"
+              sampleSkus={sampleSkus}
+              typed={typed}
+              onTyped={setTyped}
+              verb="publicar"
+            />
           )}
 
           {!loading && summary && (

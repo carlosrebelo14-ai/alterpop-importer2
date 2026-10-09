@@ -41,6 +41,8 @@ import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
 import { translateCategoryLabel } from "../../lib/importer/catalog/categoryLabel.js";
 import { CurationFiltersBar } from "../components/CurationFiltersBar.jsx";
 import { RepricePublishedButton } from "../components/RepricePublishedButton.jsx";
+import { BulkConfirmModal } from "../components/BulkConfirmModal.jsx";
+import { BULK_CONFIRM_THRESHOLD } from "../../lib/curation/bulkConfirm.js";
 import { SyncStagingModal } from "../components/SyncStagingModal.jsx";
 import { ShopifyPublishModal } from "../components/ShopifyPublishModal.jsx";
 import { CatalogProductThumbnail } from "../components/CatalogProductThumbnail.jsx";
@@ -1141,7 +1143,7 @@ export default function CurationDashboard() {
   );
 
   const runBulkStatus = useCallback(
-    async (actionName) => {
+    async (actionName, confirmCount) => {
       if (!selectedSkus.length) return;
       const skusSnapshot = [...selectedSkus];
       try {
@@ -1149,7 +1151,7 @@ export default function CurationDashboard() {
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ skus: selectedSkus, action: actionName }),
+          body: JSON.stringify({ skus: selectedSkus, action: actionName, confirmCount }),
         });
         const data = await res.json();
         if (!res.ok || !data?.ok) {
@@ -1182,8 +1184,27 @@ export default function CurationDashboard() {
     [selectedSkus, clearSelection, refreshDashboardStats]
   );
 
+  // D1: acima de 50 produtos, aprovar/rejeitar a seleção e publicar passam por uma confirmação
+  // com o número exato, o âmbito e uma amostra. O servidor verifica o mesmo número.
+  const [bulkConfirm, setBulkConfirm] = useState(null); // { kind: 'selection'|'publish', action?, scope, sample }
+  const requestBulkStatus = useCallback(
+    (actionName) => {
+      if (selectedSkus.length > BULK_CONFIRM_THRESHOLD) {
+        setBulkConfirm({
+          kind: "selection",
+          action: actionName,
+          scope: selectedSkus.length,
+          sample: selectedSkus.slice(0, 5).map((sku) => ({ sku })),
+        });
+        return;
+      }
+      runBulkStatus(actionName);
+    },
+    [selectedSkus, runBulkStatus]
+  );
+
   const runBulkApproveFiltered = useCallback(
-    async (action = "approve_filtered") => {
+    async (action = "approve_filtered", confirmCount) => {
       try {
         const res = await fetch("/api/curation/queue/bulk", {
           method: "POST",
@@ -1191,6 +1212,7 @@ export default function CurationDashboard() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action,
+            confirmCount,
             filters: {
               brand: debouncedBrand,
               search: debouncedSearch,
@@ -1246,12 +1268,77 @@ export default function CurationDashboard() {
     ]
   );
 
-  const confirmMassAction = useCallback(async () => {
-    if (!massActionConfirm) return;
-    const action = massActionConfirm.action;
-    setMassActionConfirm(null);
-    await runBulkApproveFiltered(action);
-  }, [massActionConfirm, runBulkApproveFiltered]);
+  // D1: "Aprovar/Rejeitar Toda a Pesquisa" conta no servidor os produtos do filtro atual (o
+  // número que vai ser mesmo afetado, não o da página) e mostra uma amostra de 5 SKUs.
+  const [massPreview, setMassPreview] = useState(null);
+  const [massPreviewLoading, setMassPreviewLoading] = useState(false);
+  const [massPreviewError, setMassPreviewError] = useState(null);
+  useEffect(() => {
+    if (!massActionConfirm) {
+      setMassPreview(null);
+      setMassPreviewError(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setMassPreview(null);
+    setMassPreviewError(null);
+    setMassPreviewLoading(true);
+    (async () => {
+      try {
+        const res = await fetch("/api/curation/queue/bulk", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "preview_filtered",
+            filters: {
+              brand: debouncedBrand,
+              search: debouncedSearch,
+              searchScope,
+              minPrice: debouncedMinPrice,
+              maxPrice: debouncedMaxPrice,
+              inStockOnly,
+              filterIds: debouncedFilterIds,
+              curationStatus,
+              reason: reasonFilter,
+            },
+          }),
+        });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok || !data?.ok) setMassPreviewError(data?.error || "Não foi possível contar os produtos do filtro");
+        else setMassPreview({ count: data.count, sample: data.sample });
+      } catch {
+        if (!cancelled) setMassPreviewError("Falha de rede ao contar os produtos do filtro");
+      } finally {
+        if (!cancelled) setMassPreviewLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    massActionConfirm,
+    debouncedBrand,
+    debouncedSearch,
+    searchScope,
+    debouncedMinPrice,
+    debouncedMaxPrice,
+    inStockOnly,
+    debouncedFilterIds,
+    curationStatus,
+    reasonFilter,
+  ]);
+
+  const confirmMassAction = useCallback(
+    async (confirmCount) => {
+      if (!massActionConfirm) return;
+      const action = massActionConfirm.action;
+      setMassActionConfirm(null);
+      await runBulkApproveFiltered(action, confirmCount);
+    },
+    [massActionConfirm, runBulkApproveFiltered]
+  );
 
   // Margem por produto, em % (5–100, como a global). `reset` = volta à margem global.
   // Só pesa na criação: um produto já publicado mantém o preço da loja.
@@ -1389,6 +1476,7 @@ export default function CurationDashboard() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               skus: selectedSkus.length > 0 ? selectedSkus : approvedSkus,
+              confirmCount: (selectedSkus.length > 0 ? selectedSkus : approvedSkus).length,
             }),
           });
           const data = await res.json();
@@ -1477,12 +1565,8 @@ export default function CurationDashboard() {
     openStagingModal(false);
   }, [openStagingModal]);
 
-  const handlePublishShopify = useCallback(async () => {
-    if (approvedSkus.length === 0) {
-      shopify.toast.show("Nenhum produto aprovado para publicar", { isError: true });
-      return;
-    }
-
+  const startPublish = useCallback(
+    async (confirmCount) => {
     setShopifyPublishBusy(true);
     setShopifyPublishBanner(null);
 
@@ -1490,6 +1574,8 @@ export default function CurationDashboard() {
       const res = await fetch("/api/shopify-sync", {
         method: "POST",
         credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmCount }),
       });
       const data = await res.json();
 
@@ -1514,7 +1600,26 @@ export default function CurationDashboard() {
     } finally {
       setShopifyPublishBusy(false);
     }
-  }, [approvedSkus.length, shopify]);
+    },
+    [shopify]
+  );
+
+  // D1: publicar acima de 50 produtos passa pela confirmação com o número exato.
+  const handlePublishShopify = useCallback(() => {
+    if (approvedSkus.length === 0) {
+      shopify.toast.show("Nenhum produto aprovado para publicar", { isError: true });
+      return;
+    }
+    if (approvedSkus.length > BULK_CONFIRM_THRESHOLD) {
+      setBulkConfirm({
+        kind: "publish",
+        scope: approvedSkus.length,
+        sample: approvedSkus.slice(0, 5).map((sku) => ({ sku })),
+      });
+      return;
+    }
+    startPublish(approvedSkus.length);
+  }, [approvedSkus, shopify, startPublish]);
 
   const handleShopifyPublishComplete = useCallback(
     (status) => {
@@ -1708,6 +1813,8 @@ export default function CurationDashboard() {
           confirming={syncBusy}
           summary={stagingSummary}
           liveMode={stagingLiveMode}
+          publishCount={(selectedSkus.length > 0 ? selectedSkus : approvedSkus).length}
+          sampleSkus={(selectedSkus.length > 0 ? selectedSkus : approvedSkus).slice(0, 5)}
         />
 
         {smartRuleModalOpen && (
@@ -1778,38 +1885,42 @@ export default function CurationDashboard() {
           </Modal>
         )}
 
-        {massActionConfirm && (
-          <Modal
-            open
-            onClose={() => setMassActionConfirm(null)}
-            title={
-              massActionConfirm.action === "approve_filtered"
-                ? `Aprovar ${totalCount.toLocaleString("pt-PT")} produto(s)?`
-                : `Rejeitar ${totalCount.toLocaleString("pt-PT")} produto(s)?`
-            }
-            primaryAction={{
-              content:
-                massActionConfirm.action === "approve_filtered"
-                  ? `Aprovar ${totalCount.toLocaleString("pt-PT")}`
-                  : `Rejeitar ${totalCount.toLocaleString("pt-PT")}`,
-              destructive: massActionConfirm.action === "reject_filtered",
-              onAction: confirmMassAction,
-            }}
-            secondaryActions={[{ content: "Cancelar", onAction: () => setMassActionConfirm(null) }]}
-          >
-            <Modal.Section>
-              <BlockStack gap="200">
-                <Text as="p" variant="bodyMd">
-                  Esta ação aplica-se a <strong>{totalCount.toLocaleString("pt-PT")} produto(s)</strong>,
-                  não só à página atual.
-                </Text>
-                <Text as="p" tone="subdued">
-                  Filtro activo: {activeFilterSummary}
-                </Text>
-              </BlockStack>
-            </Modal.Section>
-          </Modal>
-        )}
+        <BulkConfirmModal
+          open={Boolean(massActionConfirm)}
+          title={massActionConfirm?.action === "approve_filtered" ? "Aprovar a pesquisa" : "Rejeitar a pesquisa"}
+          confirmLabel={massActionConfirm?.action === "approve_filtered" ? "Aprovar" : "Rejeitar"}
+          destructive={massActionConfirm?.action === "reject_filtered"}
+          scope={massPreview?.count ?? 0}
+          scopeText={activeFilterSummary}
+          sample={massPreview?.sample ?? []}
+          loading={massPreviewLoading}
+          error={massPreviewError}
+          onConfirm={confirmMassAction}
+          onClose={() => setMassActionConfirm(null)}
+        />
+
+        <BulkConfirmModal
+          open={Boolean(bulkConfirm)}
+          title={
+            bulkConfirm?.kind === "publish"
+              ? "Publicar na Shopify"
+              : bulkConfirm?.action === "approve"
+                ? "Aprovar a seleção"
+                : "Rejeitar a seleção"
+          }
+          confirmLabel={bulkConfirm?.kind === "publish" ? "Publicar" : bulkConfirm?.action === "approve" ? "Aprovar" : "Rejeitar"}
+          destructive={bulkConfirm?.kind !== "publish" && bulkConfirm?.action === "reject"}
+          scope={bulkConfirm?.scope ?? 0}
+          scopeText={bulkConfirm?.kind === "publish" ? "todos os produtos APPROVED" : "os produtos selecionados"}
+          sample={bulkConfirm?.sample ?? []}
+          onConfirm={(count) => {
+            const b = bulkConfirm;
+            setBulkConfirm(null);
+            if (b?.kind === "publish") startPublish(count);
+            else runBulkStatus(b.action, count);
+          }}
+          onClose={() => setBulkConfirm(null)}
+        />
 
         <Layout>
 
@@ -2157,8 +2268,8 @@ export default function CurationDashboard() {
                         sortColumnIndex={SORT_FIELD_TO_COLUMN[sortBy]}
                         onSort={handleTableSort}
                         promotedBulkActions={[
-                          { content: "Aprovar seleção", onAction: () => runBulkStatus("approve") },
-                          { content: "Rejeitar seleção", destructive: true, onAction: () => runBulkStatus("reject") },
+                          { content: "Aprovar seleção", onAction: () => requestBulkStatus("approve") },
+                          { content: "Rejeitar seleção", destructive: true, onAction: () => requestBulkStatus("reject") },
                         ]}
                         bulkActions={[{ content: "Cancelar seleção", onAction: clearSelection }]}
                         headings={[
@@ -2444,8 +2555,8 @@ export default function CurationDashboard() {
             {selectedCount} selecionado(s)
           </span>
           <InlineStack gap="200" blockAlign="center">
-            <Button onClick={() => runBulkStatus("approve")}>Aprovar Selecionados</Button>
-            <Button tone="critical" onClick={() => runBulkStatus("reject")}>
+            <Button onClick={() => requestBulkStatus("approve")}>Aprovar Selecionados</Button>
+            <Button tone="critical" onClick={() => requestBulkStatus("reject")}>
               Rejeitar Selecionados
             </Button>
             <div style={{ width: 110 }}>
