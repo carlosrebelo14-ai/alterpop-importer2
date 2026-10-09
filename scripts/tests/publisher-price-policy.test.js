@@ -296,6 +296,15 @@ await check("50 leituras com a cache fria partilham uma só leitura do ficheiro"
   assert.ok(all.every((x) => x === all[0]), "cada leitura parseou o ficheiro à parte");
 });
 
+await check("cópia em memória não relê o ficheiro quando outro processo o regrava", async () => {
+  const a = await q.loadCurationQueue();
+  const file = path.join(tmp, "curation-queue.json");
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(file, later, later); // simula o flush do worker de indexação
+  assert.equal(await q.loadCurationQueueCached(), a);
+  assert.notEqual(await q.loadCurationQueue(), a);
+});
+
 console.log("Criação interrompida");
 await check("variante falha a seguir ao productCreate; retry no mesmo cache publica com preço", async () => {
   const shop = makeShop();
