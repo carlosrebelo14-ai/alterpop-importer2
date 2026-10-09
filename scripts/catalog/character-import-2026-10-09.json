@@ -542,7 +542,9 @@
         {
           "name": "Spider-Man",
           "priority": 1,
-          "aliases": [],
+          "aliases": [
+            "Spiderman"
+          ],
           "mode": "A",
           "eponym": true,
           "sample": true
