@@ -289,6 +289,13 @@ await check("reindex de um PENDING mantém a margem do produto", async () => {
   assert.equal((await q.getCurationQueueEntry("MG-7")).metadata.overrides.marginPct, 25);
 });
 
+console.log("Fila — leituras simultâneas (OOM 09/10/2026)");
+await check("50 leituras com a cache fria partilham uma só leitura do ficheiro", async () => {
+  q.invalidateCurationMemoryCache();
+  const all = await Promise.all(Array.from({ length: 50 }, () => q.loadCurationQueue()));
+  assert.ok(all.every((x) => x === all[0]), "cada leitura parseou o ficheiro à parte");
+});
+
 console.log("Criação interrompida");
 await check("variante falha a seguir ao productCreate; retry no mesmo cache publica com preço", async () => {
   const shop = makeShop();
