@@ -217,6 +217,78 @@ await check("produto a 0,00 cuja escrita do preço falha: passa a DRAFT, não pu
   assert.equal(shop.calls.filter((c) => c.name === "PublishablePublish").length, 0);
 });
 
+console.log("Margem por produto");
+// bulkSetMarginPct só muda SKUs já na fila (na loja estão todos lá desde o reindex).
+const setMargin = async (sku, pct) => {
+  if (!(await q.getCurationQueueEntry(sku))) await q.setManualOverride(sku, {});
+  const r = await q.bulkSetMarginPct([sku], pct);
+  assert.equal(r.updatedItems.length, 1);
+};
+await check("SKU fora da fila não é criado, volta em missing", async () => {
+  const r = await q.bulkSetMarginPct(["NOT-IN-QUEUE"], 25);
+  assert.equal(r.updatedItems.length, 0);
+  assert.deepEqual(r.missing, ["NOT-IN-QUEUE"]);
+  assert.equal(await q.getCurationQueueEntry("NOT-IN-QUEUE"), null);
+});
+await check("produto novo criado com a margem do produto (25 % → 15,50)", async () => {
+  const shop = makeShop();
+  await setMargin("MG-1", 25);
+  await publish(shop, "MG-1");
+  assert.equal(shop.price("MG-1"), "15.50");
+});
+await check("margem do produto reposta (null) volta à global (17,50)", async () => {
+  const shop = makeShop();
+  await setMargin("MG-2", 25);
+  await setMargin("MG-2", null);
+  assert.equal((await q.getCurationQueueEntry("MG-2")).metadata.overrides.marginPct, undefined);
+  await publish(shop, "MG-2");
+  assert.equal(shop.price("MG-2"), "17.50");
+});
+await check("margem do produto não reescreve um produto já publicado, e devolve o aviso", async () => {
+  const shop = makeShop();
+  shop.existing("MG-3", "17.50");
+  await setMargin("MG-3", 25);
+  const r = await publish(shop, "MG-3");
+  assert.equal(shop.price("MG-3"), "17.50");
+  assert.equal(priceWrites(shop).length, 0);
+  assert.match(r.priceNotice, /Margem deste produto \(25 % → 15\.50\) não aplicada/);
+});
+await check("produto existente a 0,00 recebe o preço à margem do produto", async () => {
+  const shop = makeShop();
+  shop.existing("MG-4", "0.00");
+  await setMargin("MG-4", 25);
+  await publish(shop, "MG-4");
+  assert.equal(shop.price("MG-4"), "15.50");
+});
+await check("margem do produto inválida na fila: não é criado", async () => {
+  const shop = makeShop();
+  await setMargin("MG-5", 25);
+  const queue = await q.loadCurationQueue();
+  queue.items.find((i) => i.sku === "MG-5").metadata.overrides.marginPct = 400;
+  await q.saveCurationQueue(queue);
+  await assert.rejects(() => publish(shop, "MG-5"), /Margem inválida/);
+  assert.equal(shop.calls.filter((c) => c.name === "ProductCreate").length, 0);
+});
+await check("margem do produto convive com o preço fixado (o fixado manda) e com outros overrides", async () => {
+  const shop = makeShop();
+  await q.setManualOverride("MG-6", { price: 22, title: "Custom" });
+  await setMargin("MG-6", 25);
+  const ov = (await q.getCurationQueueEntry("MG-6")).metadata.overrides;
+  assert.equal(ov.price, 22);
+  assert.equal(ov.title, "Custom");
+  await publish(shop, "MG-6");
+  assert.equal(shop.price("MG-6"), "22.00");
+});
+
+await check("reindex de um PENDING mantém a margem do produto", async () => {
+  await setMargin("MG-7", 25);
+  const queue = await q.loadCurationQueue();
+  queue.items.find((i) => i.sku === "MG-7").status = "PENDING";
+  await q.saveCurationQueue(queue);
+  await q.upsertCurationQueueFromRecord({ ...row("MG-7"), category: "Pop Culture", stock: 5 });
+  assert.equal((await q.getCurationQueueEntry("MG-7")).metadata.overrides.marginPct, 25);
+});
+
 console.log("Criação interrompida");
 await check("variante falha a seguir ao productCreate; retry no mesmo cache publica com preço", async () => {
   const shop = makeShop();

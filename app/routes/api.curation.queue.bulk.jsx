@@ -1,14 +1,13 @@
 import { authenticateAdmin } from "../utils/authenticate.server";
-import {
-  bulkSetMarginMultiplier,
-  bulkSetQueueStatus,
-} from "../../lib/curation/curationQueue.server.js";
+import { bulkSetMarginPct, bulkSetQueueStatus } from "../../lib/curation/curationQueue.server.js";
+import { assertMarginPct } from "../../lib/importer/pricing/pricing.server.js";
 import { invalidateCurationQueueCache } from "../../lib/importer/curation/index.js";
 import { computeCurationSkuFilter } from "../../lib/curation/curationStatusFilter.server.js";
 
 /**
  * POST /api/curation/queue/bulk
- * body: { skus: string[], action: 'approve'|'reject'|'margin', marginMultiplier?: number }
+ * body: { skus: string[], action: 'approve'|'reject'|'margin', marginPct?: number|null }
+ * (margin: margem por produto em %, 5–100; null volta à margem global)
  * ou body: { action: 'approve_filtered'|'reject_filtered', filters: {...} }
  */
 export const action = async ({ request }) => {
@@ -78,14 +77,25 @@ export const action = async ({ request }) => {
     }
 
     if (actionName === "margin") {
-      const multiplier = Number(body.marginMultiplier);
-      const result = await bulkSetMarginMultiplier(skus, multiplier);
+      // null/"" = repor a margem global. Fora de 5–100 % ou com mais de 2 casas → 400,
+      // nada gravado (assertMarginPct, a mesma validação da margem global).
+      const raw = body.marginPct;
+      let marginPct = null;
+      if (raw != null && raw !== "") {
+        try {
+          marginPct = assertMarginPct(raw);
+        } catch (err) {
+          return Response.json({ ok: false, error: err?.message || String(err) }, { status: 400 });
+        }
+      }
+      const result = await bulkSetMarginPct(skus, marginPct);
       invalidateCurationQueueCache();
       return Response.json({
         ok: true,
         action: actionName,
         updated: result.updatedItems.length,
-        marginMultiplier: result.marginMultiplier,
+        missing: result.missing,
+        marginPct,
       });
     }
 

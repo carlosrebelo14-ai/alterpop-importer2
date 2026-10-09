@@ -89,6 +89,17 @@ check("Film Red (custo baixo) → muda para o piso de 80 % do PVPR", () => {
   assert.equal(r.price.priceStatus, "PISO_PVPR");
 });
 
+check("margem do produto na fila → preço da regra a essa margem (25 % → 15,50)", () => {
+  const r = classifyPriceReconcile({ ...gandalf, item: { metadata: { costAtPublish: 14.83, overrides: { marginPct: 25 } } } });
+  assert.equal(r.category, "muda");
+  assert.equal(r.price.finalPrice, 15.5);
+});
+check("margem do produto inválida → sem dados, nunca a global", () => {
+  const r = classifyPriceReconcile({ ...gandalf, item: { metadata: { costAtPublish: 14.83, overrides: { marginPct: 400 } } } });
+  assert.equal(r.category, "sem dados");
+  assert.match(r.reason, /Margem inválida/);
+});
+
 check("linha de relatório: delta e CSV", () => {
   const row = toReconcileRow({ sku: "889698135504", title: "POP Gandalf", live: gandalf.live, result: classifyPriceReconcile(gandalf) });
   assert.equal(row.delta, -3.26);
