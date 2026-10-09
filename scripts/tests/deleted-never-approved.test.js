@@ -57,6 +57,34 @@ await check("SKU fora da fila devolve null, não cria nada", async () => {
   assert.equal(await q.getCurationQueueEntry("NAO-EXISTE"), null);
 });
 
+console.log("Reindexação do feed (o relógio de 45 min recalcula os PENDING)");
+const record = (sku) => ({ sku, title: sku, vendor: "FUNKO", categoryMain: "Toys", netPrice: 10, grossPrice: 12 });
+await check("um item apagado no admin (PENDING) não é reavaliado pelo reindex: nota, data e selo ficam, e nunca vira APPROVED", async () => {
+  await q.saveCurationQueue({ version: 1, items: [mk("RX-1", "PUBLISHED", { shopifyProductId: "gid://shopify/Product/5", smartRule: true, smartAction: "AUTO_APPROVE" })] });
+  await q.markQueueItemDeletedInAdmin("RX-1", { at: "2026-10-09T12:00:00.000Z" });
+  await q.upsertCurationQueueFromRecord(record("RX-1"));
+  const item = await q.getCurationQueueEntry("RX-1");
+  assert.equal(item.status, "PENDING");
+  assert.equal(item.metadata.deletedInAdmin?.at, "2026-10-09T12:00:00.000Z", "a nota e a data sobrevivem ao reindex");
+  assert.equal(item.metadata.wasPublished, true, "o selo «Já esteve publicado» sobrevive");
+});
+await check("o mesmo no caminho em lote (indexação de 26 mil linhas)", async () => {
+  await q.saveCurationQueue({ version: 1, items: [mk("RX-2", "REJECTED", { shopifyProductId: "gid://shopify/Product/6" })] });
+  await q.markQueueItemDeletedInAdmin("RX-2", { at: "2026-10-09T12:00:00.000Z" });
+  await q.upsertCurationQueueBatchFromRecords([record("RX-2")]);
+  const item = await q.getCurationQueueEntry("RX-2");
+  assert.equal(item.status, "PENDING");
+  assert.equal(item.metadata.deletedInAdmin?.at, "2026-10-09T12:00:00.000Z");
+  assert.equal(item.metadata.wasPublished, true);
+});
+await check("a aprovação manual continua a funcionar: PENDING apagado → APPROVED só por decisão humana", async () => {
+  const r = await q.bulkSetQueueStatus(["RX-2"], "APPROVED");
+  assert.equal(r.updatedItems.length, 1);
+  assert.equal((await q.getCurationQueueEntry("RX-2")).status, "APPROVED");
+  await q.upsertCurationQueueBatchFromRecords([record("RX-2")]);
+  assert.equal((await q.getCurationQueueEntry("RX-2")).status, "APPROVED", "e o reindex não a desfaz");
+});
+
 console.log("planDeletedMigration");
 const items = new Map([
   ["REJ", mk("REJ", "REJECTED", { shopifyProductId: "gid://shopify/Product/1" })],
