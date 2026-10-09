@@ -3,12 +3,16 @@ import { bulkSetMarginPct, bulkSetQueueStatus } from "../../lib/curation/curatio
 import { assertMarginPct } from "../../lib/importer/pricing/pricing.server.js";
 import { invalidateCurationQueueCache } from "../../lib/importer/curation/index.js";
 import { resolveFilteredSkus } from "../../lib/curation/resolveFilteredSkus.server.js";
+import { assertBulkConfirm, BulkConfirmError, BULK_SAMPLE_SIZE } from "../../lib/curation/bulkConfirm.js";
 
 /**
  * POST /api/curation/queue/bulk
  * body: { skus: string[], action: 'approve'|'reject'|'margin', marginPct?: number|null }
  * (margin: margem por produto em %, 5–100; null volta à margem global)
  * ou body: { action: 'approve_filtered'|'reject_filtered', filters: {...} }
+ * Acima de 50 produtos, approve/reject (e as variantes _filtered) exigem confirmCount igual ao
+ * número real (D1): sem ele, ou diferente, o servidor recusa e não grava nada.
+ * body: { action: 'preview_filtered', filters } → { count, sample: [{ sku, title }] } (5 SKUs)
  */
 export const action = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
@@ -32,8 +36,26 @@ export const action = async ({ request }) => {
       skus = await resolveFilteredSkus(session.shop, body.filters || {});
     }
 
-    if (!skus.length) {
+    if (!skus.length && actionName !== "preview_filtered") {
       return Response.json({ ok: false, error: "Nenhum produto encontrado para esta ação." }, { status: 400 });
+    }
+
+    // Pré-visualização do âmbito de uma ação sobre o filtro atual: contagem e amostra de 5.
+    if (actionName === "preview_filtered") {
+      const matching = await resolveFilteredSkus(session.shop, body.filters || {});
+      const { loadCurationQueueCached } = await import("../../lib/curation/curationQueue.server.js");
+      const byTitle = new Map((await loadCurationQueueCached()).items.map((i) => [i.sku, i.title_en]));
+      return Response.json({
+        ok: true,
+        count: matching.length,
+        sample: matching.slice(0, BULK_SAMPLE_SIZE).map((sku) => ({ sku, title: byTitle.get(sku) || null })),
+      });
+    }
+
+    if (["approve", "reject", "approve_filtered", "reject_filtered"].includes(actionName)) {
+      assertBulkConfirm(skus.length, body.confirmCount, {
+        what: actionName.startsWith("approve") ? "Aprovar" : "Rejeitar",
+      });
     }
 
     if (actionName === "approve" || actionName === "reject" || actionName === "approve_filtered" || actionName === "reject_filtered") {
@@ -78,6 +100,12 @@ export const action = async ({ request }) => {
 
     return Response.json({ ok: false, error: "Ação inválida." }, { status: 400 });
   } catch (err) {
+    if (err instanceof BulkConfirmError) {
+      return Response.json(
+        { ok: false, code: err.code, error: err.message, count: err.count, confirmed: err.confirmed },
+        { status: 409 }
+      );
+    }
     return Response.json({ ok: false, error: err?.message || String(err) }, { status: 500 });
   }
 };

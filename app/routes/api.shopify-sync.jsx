@@ -14,6 +14,7 @@ import {
 } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { isShopifyResetRunning } from "../../lib/importer/shopify/shopifyResetJob.server.js";
 import { rejectCustomTags } from "../../lib/importer/shopify/tagAllowlist.js";
+import { assertBulkConfirm, BulkConfirmError } from "../../lib/curation/bulkConfirm.js";
 
 /**
  * GET /api/shopify-sync — estado do job em curso (polling UI).
@@ -44,6 +45,7 @@ export const action = async ({ request }) => {
   let customTagsError = null;
   let requestedSkus = null;
   let force = false;
+  let confirmCount = null;
   let clearLock = false;
   let isCancel = request.method === "DELETE";
 
@@ -56,6 +58,7 @@ export const action = async ({ request }) => {
     const json = await request.clone().json();
     if (json.force) force = true;
     if (json.clearLock) clearLock = true;
+    if (Number.isInteger(json.confirmCount)) confirmCount = json.confirmCount;
     if (json.cancel || json.intent === "cancel") isCancel = true;
     customTagsError = rejectCustomTags(json.customTags);
     if (Array.isArray(json.skus) && json.skus.length > 0) {
@@ -121,6 +124,20 @@ export const action = async ({ request }) => {
       { ok: false, error: "Nenhum produto com status APPROVED para publicar." },
       { status: 400 }
     );
+  }
+
+  // D1: publicar acima de 50 produtos exige o número exato confirmado. Antes de qualquer
+  // escrita na Shopify e antes de o job arrancar.
+  try {
+    assertBulkConfirm(approvedSkus.length, confirmCount, { what: "Publicar" });
+  } catch (err) {
+    if (err instanceof BulkConfirmError) {
+      return Response.json(
+        { ok: false, code: err.code, error: err.message, count: err.count, confirmed: err.confirmed },
+        { status: 409 }
+      );
+    }
+    throw err;
   }
 
   try {
