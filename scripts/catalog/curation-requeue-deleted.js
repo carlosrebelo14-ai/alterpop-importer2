@@ -15,19 +15,21 @@
  * Os que continuam na loja (ex.: os 4 Gandalf) e os que não se conseguem confirmar
  * ficam como estão, listados com o motivo.
  *
- * Alvo explícito, sem omissão: `--to approved` (o ciclo seguinte cria-os de novo, já com
- * o preço da regra) ou `--to pending` (voltam à curadoria para nova decisão).
+ * Destino ÚNICO: PENDING (decisão do Carlos, 09/10/2026). O produto apagado volta à
+ * curadoria com a nota "apagado no admin" e a data, e só é republicado com aprovação
+ * nova dele. A app nunca recria nada sozinha: `--to approved` é recusado. A escrita é a
+ * de markQueueItemDeletedInAdmin (a mesma da ação "aplicar aos publicados").
  * Recusa escrever com uma indexação a correr — o worker trabalha sobre uma cópia da fila
  * e repunha PUBLISHED no flush.
  *
  * DRY-RUN por omissão. Escreve só com --execute. Erros → results/errors.json.
  * Correr na Fly:
  *   node scripts/catalog/curation-requeue-deleted.js
- *   node scripts/catalog/curation-requeue-deleted.js --execute --to approved
+ *   node scripts/catalog/curation-requeue-deleted.js --execute
  */
 import fs from "node:fs";
 import path from "node:path";
-import { loadCurationQueue, saveCurationQueue } from "../../lib/curation/curationQueue.server.js";
+import { loadCurationQueue, markQueueItemDeletedInAdmin } from "../../lib/curation/curationQueue.server.js";
 import { readCatalogRebuildStatus } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
@@ -36,7 +38,6 @@ import { fetchLiveVariantsBySku } from "../../lib/importer/shopify/liveVariantsB
 const args = process.argv.slice(2);
 const EXECUTE = args.includes("--execute");
 const toArg = args.indexOf("--to") >= 0 ? String(args[args.indexOf("--to") + 1] || "").toUpperCase() : null;
-const TARGET = toArg === "APPROVED" || toArg === "PENDING" ? toArg : null;
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
 const ERRORS_PATH = path.join(process.cwd(), "results", "errors.json");
 
@@ -75,8 +76,8 @@ async function indexingRunning() {
 
 async function main() {
   console.log(`=== curation-requeue-deleted (${SHOP})${EXECUTE ? "" : " · DRY-RUN"} ===\n`);
-  if (EXECUTE && !TARGET) {
-    console.error("PARADO: --execute precisa de --to approved ou --to pending.");
+  if (toArg && toArg !== "PENDING") {
+    console.error("PARADO: o único destino é PENDING — um produto apagado no admin só volta com aprovação nova do Carlos (--to approved já não existe).");
     process.exit(1);
   }
 
@@ -123,8 +124,7 @@ async function main() {
   if (!EXECUTE) {
     appendErrors(errors);
     console.log(`\nDRY-RUN — nada escrito. Para escrever:`);
-    console.log(`  node scripts/catalog/curation-requeue-deleted.js --execute --to approved   # o ciclo cria-os de novo`);
-    console.log(`  node scripts/catalog/curation-requeue-deleted.js --execute --to pending    # voltam à curadoria`);
+    console.log(`  node scripts/catalog/curation-requeue-deleted.js --execute   # voltam a PENDING, com a nota "apagado no admin"`);
     return;
   }
 
@@ -135,29 +135,15 @@ async function main() {
     process.exit(1);
   }
 
-  // Carrega a fila de novo imediatamente antes de gravar; só muda os confirmados que
-  // continuam PUBLISHED com o mesmo shopifyProductId.
+  // Só muda os confirmados que continuam PUBLISHED com o mesmo shopifyProductId (relido
+  // imediatamente antes de gravar); a escrita é markQueueItemDeletedInAdmin → PENDING.
   const queue = await loadCurationQueue();
   const bySku = new Map(deleted.map((d) => [d.sku, d.pid]));
-  const now = new Date().toISOString();
   let changed = 0;
   for (const item of queue.items) {
     const pid = bySku.get(item.sku);
     if (!pid || item.status !== "PUBLISHED" || item.metadata?.shopifyProductId !== pid) continue;
-    item.status = TARGET;
-    item.shopifyStatus = "ACTIVE";
-    item.metadata = {
-      ...item.metadata,
-      shopifyProductId: null,
-      publishedAt: null,
-      previousShopifyProductId: pid,
-      // Sem approvedAt o V3 não conta a idade e um APPROVED parado nunca fica vermelho.
-      approvedAt: TARGET === "APPROVED" ? now : item.metadata?.approvedAt ?? null,
-      shopifyResetAt: now,
-      shopifyResetReason: "deleted_in_shopify_admin",
-      syncError: null,
-      syncErrorAt: null,
-    };
+    await markQueueItemDeletedInAdmin(item.sku);
     changed += 1;
   }
   if (changed !== deleted.length) {
@@ -165,12 +151,11 @@ async function main() {
       errorEntry("queue_changed_since_read", null, `${deleted.length - changed} item(s) mudaram na fila entre a leitura e a escrita — não tocados`)
     );
   }
-  if (changed > 0) await saveCurationQueue(queue);
   appendErrors(errors);
 
   const after = (await loadCurationQueue()).items;
-  const ok = after.filter((i) => bySku.has(i.sku) && i.status === TARGET && i.metadata?.shopifyProductId == null).length;
-  console.log(`\nescritos: ${changed} → ${TARGET} · verificados na fila: ${ok}`);
+  const ok = after.filter((i) => bySku.has(i.sku) && i.status === "PENDING" && i.metadata?.shopifyProductId == null).length;
+  console.log(`\nescritos: ${changed} → PENDING · verificados na fila: ${ok}`);
   if (ok !== changed) {
     appendErrors([errorEntry("verify_failed", null, `verificados ${ok} de ${changed}`)]);
     console.error("VERIFICAÇÃO FALHOU — ver results/errors.json");

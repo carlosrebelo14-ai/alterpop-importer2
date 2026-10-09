@@ -2,7 +2,7 @@ import { authenticateAdmin } from "../utils/authenticate.server";
 import { bulkSetMarginPct, bulkSetQueueStatus } from "../../lib/curation/curationQueue.server.js";
 import { assertMarginPct } from "../../lib/importer/pricing/pricing.server.js";
 import { invalidateCurationQueueCache } from "../../lib/importer/curation/index.js";
-import { computeCurationSkuFilter } from "../../lib/curation/curationStatusFilter.server.js";
+import { resolveFilteredSkus } from "../../lib/curation/resolveFilteredSkus.server.js";
 
 /**
  * POST /api/curation/queue/bulk
@@ -29,30 +29,7 @@ export const action = async ({ request }) => {
     let skus = Array.isArray(body.skus) ? body.skus.map(String).filter(Boolean) : [];
 
     if (actionName === "approve_filtered" || actionName === "reject_filtered") {
-      const { getMatchingCatalogSkus } = await import("../../lib/importer/catalog/catalogProductsDb.server.js");
-      const filters = body.filters || {};
-
-      // Tem de usar EXATAMENTE os mesmos filtros que /api/products usa para mostrar a
-      // contagem no botão "Aprovar/Rejeitar Toda a Pesquisa" — searchScope/
-      // curationStatus/reason faltavam aqui antes, fazendo o botão aprovar um conjunto
-      // diferente (mais pequeno) do que estava a mostrar (bug reportado 2026-08-13:
-      // "selecionei 135, só aprovou 100").
-      const { skuInclude, skuExclude } = await computeCurationSkuFilter(
-        filters.curationStatus || null,
-        filters.reason || null
-      );
-
-      skus = await getMatchingCatalogSkus(session.shop, {
-        brand: filters.brand || null,
-        search: filters.search || "",
-        searchScope: filters.searchScope || "all",
-        minPrice: filters.minPrice || "",
-        maxPrice: filters.maxPrice || "",
-        inStockOnly: filters.inStockOnly,
-        filterIds: Array.isArray(filters.filterIds) ? filters.filterIds : [],
-        skuInclude,
-        skuExclude,
-      });
+      skus = await resolveFilteredSkus(session.shop, body.filters || {});
     }
 
     if (!skus.length) {
