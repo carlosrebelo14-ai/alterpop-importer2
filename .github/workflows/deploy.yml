@@ -6,19 +6,29 @@
 #   2. catalog:health na Fly    sai com erro se algum check estiver vermelho
 #   3. db:push na Fly           só corre com a saúde verde (passo 2)
 #
+# Input skip_deploy (boolean, default false): com true salta o passo 1 (e a instalação de
+# dependências que só ele usa) e corre só catalog:health e db:push, sem refazer o deploy.
+#
+# setup-flyctl instala o binário `flyctl` (sem o alias `fly`): os passos de SSH usam `flyctl`.
+#
 # PRICE_MODE e THEME_GUARD NÃO são tocados aqui: as flags continuam como estão na Fly.
 # Só se corre a partir de main (a guarda 1 do deploy.sh exige o branch main).
 #
-# Decisão 28: nenhuma sessão `fly ssh console` com Prisma pode correr em paralelo com uma
+# Decisão 28: nenhuma sessão `flyctl ssh console` com Prisma pode correr em paralelo com uma
 # publicação ou outra escrita em massa no SQLite do volume. Não disparar este workflow com
 # um sync a decorrer.
 #
 # Precisa do secret de repositório FLY_API_TOKEN (Settings → Secrets and variables → Actions).
-# O token tem de poder fazer `fly ssh console` na app, além de `flyctl deploy`.
+# O token tem de poder fazer `flyctl ssh console` na app, além de `flyctl deploy`.
 name: deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_deploy:
+        description: "Saltar o deploy e correr só catalog:health e db:push"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -41,23 +51,27 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
+        if: ${{ inputs.skip_deploy != true && inputs.skip_deploy != 'true' }}
         with:
           node-version: 20
           cache: npm
 
       - name: Instalar dependências
+        if: ${{ inputs.skip_deploy != true && inputs.skip_deploy != 'true' }}
         run: npm ci
 
       - name: Gerar cliente Prisma
+        if: ${{ inputs.skip_deploy != true && inputs.skip_deploy != 'true' }}
         run: npx prisma generate
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Deploy (scripts/deploy.sh)
+        if: ${{ inputs.skip_deploy != true && inputs.skip_deploy != 'true' }}
         run: bash scripts/deploy.sh
 
       - name: Saúde do catálogo na Fly (catalog:health)
-        run: fly ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run catalog:health'"
+        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run catalog:health'"
 
       - name: Esquema na Fly (db:push)
-        run: fly ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run db:push'"
+        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run db:push'"
