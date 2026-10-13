@@ -2,7 +2,7 @@
 /**
  * Briefing de integridade (09/10/2026), A2 — uma só fonte da margem e do preço da linha.
  *
- * 1. Comportamento: priceRow (o ponto único de painel, export, staging, import de edições
+ * 1. Comportamento: evaluatePrice (o ponto único de painel, export, staging, import de edições
  *    e reconciliação) dá ao Gandalf (889698135504) 14,50 a 10 % e 14,90 a 20 %, com a
  *    margem do produto a ganhar à global e a margem inválida a dar erro à vista.
  * 2. Estrutura: quem resolve a margem global ou lê o override do produto é uma lista
@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { priceRow, resolveMarginPct } from "../../lib/importer/pricing/pricing.server.js";
+import { evaluatePrice, resolveMarginPct } from "../../lib/importer/pricing/pricing.server.js";
 
 let failures = 0;
 function check(name, fn) {
@@ -29,27 +29,27 @@ function check(name, fn) {
 
 // Gandalf: custo 9,99 s/IVA → 12,09 c/IVA; PVPR 17,95.
 check("Gandalf a 10 % = 14,50 (PISO_PVPR), a 20 % = 14,90 (MARGEM)", () => {
-  const a = priceRow(9.99, 17.95, 10, null);
+  const a = evaluatePrice(9.99, 17.95, 10, null);
   assert.equal(a.finalPrice, 14.5);
   assert.equal(a.priceStatus, "PISO_PVPR");
   assert.equal(a.marginPct, 10);
-  const b = priceRow(9.99, 17.95, 20, null);
+  const b = evaluatePrice(9.99, 17.95, 20, null);
   assert.equal(b.finalPrice, 14.9);
   assert.equal(b.priceStatus, "MARGEM");
 });
 check("margem do produto ganha à global", () => {
-  const r = priceRow(9.99, 17.95, 10, { metadata: { overrides: { marginPct: 20 } } });
+  const r = evaluatePrice(9.99, 17.95, 10, { metadata: { overrides: { marginPct: 20 } } });
   assert.equal(r.finalPrice, 14.9);
   assert.equal(r.marginPct, 20);
 });
 check("margem do produto inválida → priceError e marginError, nunca a global", () => {
-  const r = priceRow(9.99, 17.95, 10, { metadata: { overrides: { marginPct: 150 } } });
+  const r = evaluatePrice(9.99, 17.95, 10, { metadata: { overrides: { marginPct: 150 } } });
   assert.equal(r.finalPrice, null);
   assert.ok(r.marginError && r.priceError === r.marginError);
   assert.equal(r.marginPct, null);
 });
 check("sem custo → priceError, sem lançar", () => {
-  const r = priceRow(null, 17.95, 10, null);
+  const r = evaluatePrice(null, 17.95, 10, null);
   assert.equal(r.finalPrice, null);
   assert.ok(r.priceError);
 });
@@ -108,7 +108,7 @@ function assertClosed(label, found, allowed) {
   assert.deepEqual(
     extra,
     [],
-    `${label}: ficheiro(s) novo(s) a ler a margem por conta própria — usar priceRow (pricing.server.js) ou, se for mesmo preciso, acrescentar à lista ALLOWED: ${extra.join(", ")}`
+    `${label}: ficheiro(s) novo(s) a ler a margem por conta própria — usar evaluatePrice (pricing.server.js) ou, se for mesmo preciso, acrescentar à lista ALLOWED: ${extra.join(", ")}`
   );
 }
 
@@ -118,7 +118,7 @@ check("só a lista fechada lê overrides.marginPct", () =>
   assertClosed("override", filesMatching(/overrides\??\.marginPct/), ALLOWED.override));
 check("só a lista fechada lê priceMarginPct", () =>
   assertClosed("setting", filesMatching(/priceMarginPct/), ALLOWED.setting));
-check("painel, export, staging, import de edições e reconciliação usam priceRow", () => {
+check("painel, export, staging, import de edições e reconciliação usam evaluatePrice", () => {
   for (const f of [
     "lib/importer/catalog/catalogProductsDb.server.js",
     "lib/importer/sync/syncStagingSummary.server.js",
@@ -126,7 +126,7 @@ check("painel, export, staging, import de edições e reconciliação usam price
     "lib/importer/pricing/priceReconcile.server.js",
   ]) {
     const src = fs.readFileSync(path.join(ROOT, f), "utf8");
-    assert.ok(/\bpriceRow\(/.test(src), `${f} não usa priceRow`);
+    assert.ok(/\bevaluatePrice\(/.test(src), `${f} não usa evaluatePrice`);
     assert.ok(!/\bproductMarginPct\(/.test(src.replace(/productMarginPct:/g, "")), `${f} chama productMarginPct à parte`);
   }
 });

@@ -34,7 +34,7 @@ import { listCurationQueueItems } from "../../lib/curation/curationQueue.server.
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
-import { resolveMarginPct, effectiveMarginPct, PRICE_STATUS, priceRow } from "../../lib/importer/pricing/pricing.server.js";
+import { resolveMarginPct, effectiveMarginPct, PRICE_STATUS, evaluatePrice } from "../../lib/importer/pricing/pricing.server.js";
 import { recordPriceWrite } from "../../lib/importer/pricing/recordPriceWrite.server.js";
 import {
   classifyPriceReconcile,
@@ -252,7 +252,7 @@ async function main() {
     if (!now || cents(now.price) !== cents(r.after)) continue;
     const cat = catalogBySku.get(r.sku);
     try {
-      const { marginPct: rowMargin } = priceRow(cat?.distributorPrice, cat?.grossPrice, marginPct, itemBySku.get(r.sku));
+      const { marginPct: rowMargin } = evaluatePrice(cat?.distributorPrice, cat?.grossPrice, marginPct, itemBySku.get(r.sku));
       const rec = await recordPriceWrite({
         sku: r.sku,
         price: r.after,
