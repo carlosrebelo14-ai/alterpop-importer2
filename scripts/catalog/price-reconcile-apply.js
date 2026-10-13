@@ -260,7 +260,9 @@ async function main() {
         grossPrice: cat?.grossPrice,
         marginPct: rowMargin,
         source: "reconcile",
+        shop: SHOP,
       });
+      if (rec.historyError) errors.push(errorEntry("PRICE_HISTORY_NOT_RECORDED", r.sku, rec.historyError));
       if (rec.recorded) recordedWrites += 1;
       else errors.push(errorEntry("LAST_WRITE_NOT_RECORDED", r.sku, "SKU fora da fila — última escrita não gravada"));
     } catch (err) {
