@@ -65,6 +65,10 @@ alterações ou ficheiros por seguir fora do `.gitignore`; `main` não for igual
 `flyctl deploy -a alterpop-importer-app`. Nunca correr `flyctl deploy` à mão: o flyctl
 empacota o diretório local, não o GitHub (incidente de 28/09/2026).
 
+Flags de ambiente da Decisão 31/32 (ambas desligadas por omissão; ver `.env.example`):
+`PRICE_MODE=NET` (preço sem IVA) e `THEME_GUARD=ON` (recusa o lote se o contrato do tema, lido com `read_themes`, estiver inválido).
+Depois de `scripts/deploy.sh`, aplicar as tabelas novas com `fly ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run db:push'"`.
+
 Relatórios gerados por scripts vão para `reports/` (no `.gitignore`), nunca para a raiz.
 
 Para correr um script no Fly sem deploy: [docs/FLY-STAGING.md](./docs/FLY-STAGING.md).
@@ -100,7 +104,7 @@ Spanish columns are mapped to English (`referencia` → `sku`, `stock_disponible
 
 **Translation:** Enable **Translate to English** in Settings (DeepL + API key). Titles, descriptions, and categories sync to Shopify in EN. Filter labels in the Import page are also translated.
 
-**Images & prices:** Live import attaches `url_imagen_principal` via Shopify media API. Gross price (`precio_bruto`) sets variant price; net price (`precio_neto`) is stored in metafield `ociostock.net_price`.
+**Images & prices:** Live import attaches `url_imagen_principal` via Shopify media API. Variant price comes from the cost (`precio_distribuidores`) plus the global margin — see [Variant price](./docs/OCIOSTOCK-CSV-MAPPING.md#variant-price) (flag `PRICE_MODE`); `precio_bruto` is the PVPR and net price (`precio_neto`) is stored in metafield `ociostock.net_price`.
 
 **Filters:** Refresh catalog index on Import, then select product types, subcategories, brands, franchises, and in-stock only before running.
 
