@@ -1,0 +1,22 @@
+{
+  "_comment": "Versão ativa alterpop-importer-12 no Dev Dashboard (transcrita pelo Carlos em 13/10/2026). É a linha de base do check-app-config: o shopify.app.toml tem de a reproduzir toda, mais os acrescentos de expectedAdditions.",
+  "version": "alterpop-importer-12",
+  "scopes": [
+    "read_customers", "read_inventory", "read_locations", "read_metaobject_definitions",
+    "read_metaobjects", "read_orders", "read_products", "read_publications",
+    "write_customers", "write_inventory", "write_metaobject_definitions", "write_metaobjects",
+    "write_products", "write_publications"
+  ],
+  "webhooks": {
+    "api_version": "2025-10",
+    "topics": ["app/scopes_update", "app/uninstalled", "orders/create"]
+  },
+  "extensions": ["order-invoice", "wishlist"],
+  "redirect_urls": [
+    "https://alterpop-importer-app.fly.dev/auth/callback",
+    "https://alterpop-importer-app.fly.dev/auth/shopify/callback"
+  ],
+  "expectedAdditions": {
+    "scopes": ["read_themes"]
+  }
+}

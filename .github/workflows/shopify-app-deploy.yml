@@ -1,0 +1,74 @@
+# Publica a configuração da app Shopify (scopes, webhooks, extensões, redirect URLs) com
+# `shopify app deploy`. Disparo manual: Actions → shopify-app-deploy → Run workflow.
+#
+# Isto NÃO faz deploy do código na Fly (para isso há o workflow `deploy`). Cria/lança uma versão
+# da app no Dev Dashboard.
+#
+# Input action (default diff):
+#   diff            só corre o check-app-config: mostra a diferença entre a versão 12 (linha de base em
+#                   config/shopify-app-version-12.json) e o que o deploy enviaria. Não usa o token.
+#   create_version  diff + `shopify app deploy --no-release`: cria a versão mas NÃO a lança. Revê-la no
+#                   Dev Dashboard (Versions) antes de a lançar.
+#   release         diff + `shopify app deploy`: cria e lança a versão.
+#
+# O check falha (e nada é enviado) se o shopify.app.toml ou extensions/ deixarem de reproduzir a versão
+# 12: faltar um dos 3 webhooks (app/uninstalled, app/scopes_update, orders/create), um scope, uma
+# extensão, um redirect URL, ou aparecer um acrescento que não seja read_themes.
+# Usa --allow-updates e NUNCA --allow-deletes: se o deploy removesse extensões ou configuração, pararia
+# à espera de confirmação e falharia em vez de apagar.
+#
+# Secret de repositório SHOPIFY_APP_AUTOMATION_TOKEN: Dev Dashboard → a app → Settings → App automation
+# token (token por app, expira em 1, 3 ou 6 meses). Copia-o ao criar, só aparece nessa altura.
+name: shopify-app-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "diff = só mostrar a diferença; create_version = criar sem lançar; release = criar e lançar"
+        type: choice
+        default: diff
+        options:
+          - diff
+          - create_version
+          - release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shopify-app-deploy
+  cancel-in-progress: false
+
+jobs:
+  shopify-app-deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ACTION: ${{ inputs.action }}
+      SHOPIFY_APP_AUTOMATION_TOKEN: ${{ secrets.SHOPIFY_APP_AUTOMATION_TOKEN }}
+      SHOPIFY_CLI_NO_ANALYTICS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Diferença entre a versão 12 e o que vai sair
+        run: node scripts/maintenance/check-app-config.mjs
+
+      - name: Criar versão sem lançar (shopify app deploy --no-release)
+        if: env.ACTION == 'create_version'
+        run: npx shopify app deploy --allow-updates --no-release --message "alterpop-importer ${GITHUB_SHA::7} (sem lançar)"
+
+      - name: Lançar versão (shopify app deploy)
+        if: env.ACTION == 'release'
+        run: npx shopify app deploy --allow-updates --message "alterpop-importer ${GITHUB_SHA::7}"
