@@ -6,6 +6,20 @@ Legenda: `[x]` feito · `[ ]` pendente · `[~]` parcial
 
 ---
 
+## Segurança do repositório (13/10/2026)
+
+O repositório é público até a loja faturar. Decisões do Carlos:
+
+| # | Tarefa | Estado |
+|---|--------|--------|
+| S1 | URL do feed OcioStock só em `OCIOSTOCK_FEED_URL` (segredo da Fly); fora do código, Dockerfile, README e `.env.example` | `[x]` no código; falta criar o secret na Fly antes do deploy |
+| S2 | O hash do URL antigo continua no histórico do git: pedir ao fornecedor para regenerar o feed e deixar de usar o URL antigo | `[ ]` |
+| S3 | `prisma/dev.sqlite-wal` e `prisma/dev.sqlite-shm` (dados de catálogo de ~1/8/2026) continuam no histórico de todos os ramos. Decisão: não reescrever o histórico agora | `[ ]` registado para quando o repositório passar a privado (ou se decidir reescrever com `git filter-repo` e força-push de todos os ramos) |
+| S4 | Logs e resumos dos workflows só com contagens e estados (`scripts/ci/maintenance.sh`) | `[x]` |
+| S5 | Apagar `docs/v18_dryrun_list.txt` e `docs/v18-tags-cleanup-manifesto.md` (SKUs e handles) depois de o Carlos confirmar a cópia | `[ ]` |
+
+---
+
 ## P6 — Curadoria activa e visibilidade (ACTIVE / DRAFT)
 
 > Config: [`config/curation.json`](../config/curation.json). Gatekeeper: [`lib/importer/curation/`](../lib/importer/curation/). Relatório: `results/{jobId}/curated-drafts.json`.
