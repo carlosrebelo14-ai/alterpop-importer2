@@ -78,6 +78,9 @@ const ALLOWED = {
   // chamadas a productMarginPct(...) / resolveMarginPct(...)
   resolve: [
     "app/routes/api.products.import-edits.jsx",
+    // Fila de decisão (Decisão 31): resolve a margem global uma vez e passa-a a evaluatePrice,
+    // como o painel (catalogProductsDb) — mesma regra, nenhum cálculo próprio.
+    "lib/curation/decisionQueue.server.js",
     "lib/importer/catalog/catalogProductsDb.server.js",
     "lib/importer/importers/ProductImporter.js",
     "lib/importer/pricing/pricing.server.js",

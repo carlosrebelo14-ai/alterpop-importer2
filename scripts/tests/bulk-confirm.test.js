@@ -111,7 +111,7 @@ check("nenhum botão chama a ação em massa diretamente: seleção passa por re
   assert.ok(!/onClick=\{\(\) => runBulkStatus\(/.test(page), "botão chama runBulkStatus");
   assert.match(page, /requestBulkStatus\("approve"\)/);
   assert.match(page, /requestBulkStatus\("reject"\)/);
-  assert.match(page, /selectedSkus\.length > BULK_CONFIRM_THRESHOLD/);
+  assert.match(page, /eligibleSkus\.length > BULK_CONFIRM_THRESHOLD/); // Decisão 31: o número é o dos elegíveis (PENDING)
 });
 check("«Aprovar/Rejeitar Toda a Pesquisa» conta no servidor e confirma com o número exato", () => {
   assert.match(page, /action: "preview_filtered"/);
