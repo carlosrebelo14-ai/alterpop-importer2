@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-env node */
 /**
  * Decisão 31 — fila de decisão: Prontos a aprovar · Preço manual · Regra desatualizada ·
  * Erros de sincronização. Classificação pura + cálculo sobre fila, catálogo e preços live
@@ -152,7 +153,7 @@ await check("regra desatualizada segue a regra em vigor: com LEGACY o preço liv
   assert.equal(r.groups.stale_rule.includes("PUB-OK"), true, "agora é o 11,00 € que difere");
 });
 await check("falha de leitura da loja: o grupo fica vazio e liveError diz porquê", async () => {
-  const r = await computeDecisionGroups("t.myshopify.com", deps({ loadLive: async (skus) => ({ bySku: new Map(), error: "Preço live não lido: timeout" }) }));
+  const r = await computeDecisionGroups("t.myshopify.com", deps({ loadLive: async () => ({ bySku: new Map(), error: "Preço live não lido: timeout" }) }));
   assert.deepEqual(r.groups.stale_rule, []);
   assert.match(r.liveError, /timeout/);
   assert.ok(r.groups.manual_price.includes("PUB-MANUAL"), "o resto não depende da loja");

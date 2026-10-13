@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-env node */
 /**
  * Decisão 31 — histórico de preços e mínimo Omnibus dos 30 dias:
  *   - omnibusMinCents: janela, preço vigente no início da janela, histórico vazio, e só

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-env node */
 /**
  * Decisão 31 — aprovar/rejeitar em massa SÓ tocam produtos PENDING:
  *   - PUBLISHED, REJECTED, SYNC_ERROR e APPROVED ficam exatamente como estavam;

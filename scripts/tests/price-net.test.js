@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-env node */
 /**
  * Briefing "Preço sem IVA e guarda do tema" — regra NET (Decisão 31), pricing.server.js +
  * priceMode.js: tabela do briefing, arredondamento à dezena, flag PRICE_MODE desligada por

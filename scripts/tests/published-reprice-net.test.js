@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-env node */
 /**
  * "Aplicar aos publicados" com a regra NET (Decisão 31) — classificação e execução contra
  * uma loja Shopify falsa (sem rede) e uma fila temporária:

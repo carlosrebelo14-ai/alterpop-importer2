@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import { useEffect, useState } from "react";
 import { BulkActionConfirm } from "./BulkActionConfirm.jsx";
 import { isBulkConfirmed } from "../../lib/curation/bulkConfirm.js";

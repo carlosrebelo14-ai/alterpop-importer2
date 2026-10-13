@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-env node */
 /**
  * Decisão 31 — observação manual de preço de mercado (Worten, Fnac):
  *   - validação do corpo (preço, loja, data, SKU);

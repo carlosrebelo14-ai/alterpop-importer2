@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-env node */
 /**
  * Decisão 32 — guarda do tema (read_themes), contra uma loja Shopify falsa (sem rede):
  *   - template em falta bloqueia o lote; definição sem acesso storefront bloqueia;
