@@ -123,6 +123,26 @@ export function SyncStagingModal({
                 </Banner>
               )}
 
+              {summary.themeContract && summary.themeContract.status !== "ok" && (
+                <Banner tone={summary.themeContract.blocking?.length ? (summary.themeContract.enforced ? "critical" : "warning") : "info"}>
+                  <BlockStack gap="100">
+                    <Text as="p" fontWeight="semibold">
+                      {summary.themeContract.status === "scope_missing"
+                        ? "Tema: falta o scope read_themes (Definições → Permissões)."
+                        : summary.themeContract.status === "unknown"
+                          ? "Tema: contrato ainda não lido."
+                          : summary.themeContract.blocking?.length
+                            ? `Tema: contrato inválido${summary.themeContract.enforced ? " — a publicação vai ser recusada" : " (a guarda ainda não recusa: THEME_GUARD desligada)"}.`
+                            : "Tema: avisos (não bloqueiam a publicação)."}
+                    </Text>
+                    {summary.themeContract.readError && <Text as="p" variant="bodySm">{`Leitura do tema falhou: ${summary.themeContract.readError}`}</Text>}
+                    {[...(summary.themeContract.blocking || []), ...(summary.themeContract.warnings || [])].slice(0, 6).map((w, i) => (
+                      <Text as="p" variant="bodySm" key={`${w.code}-${i}`}>{w.message}</Text>
+                    ))}
+                  </BlockStack>
+                </Banner>
+              )}
+
               {(summary.missingCount ?? summary.missingSkus?.length) > 0 && (
                 <Banner tone="warning">
                   {`${summary.missingCount ?? summary.missingSkus.length} SKU(s) aprovados não estão no índice do catálogo — serão ignorados até reindexar.`}

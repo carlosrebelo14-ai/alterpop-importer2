@@ -4,7 +4,7 @@
  * Uso: node scripts/tests/access-scopes-guard.test.js
  */
 import assert from "node:assert/strict";
-import { checkAccessScopes, REQUIRED_PUBLISH_SCOPES } from "../../lib/importer/shopify/accessScopesGuard.js";
+import { checkAccessScopes, REQUIRED_PUBLISH_SCOPES, REQUIRED_THEME_SCOPES } from "../../lib/importer/shopify/accessScopesGuard.js";
 
 let failures = 0;
 function check(name, fn) {
@@ -16,6 +16,14 @@ function check(name, fn) {
     console.error(`FAIL  ${name}\n      ${err.message}`);
   }
 }
+
+check("guarda do tema (Decisão 32): exige só read_themes, nunca write_themes", () => {
+  assert.deepEqual(REQUIRED_THEME_SCOPES, ["read_themes"]);
+  assert.equal(checkAccessScopes(["read_products", "read_themes"], REQUIRED_THEME_SCOPES).ok, true);
+  const missing = checkAccessScopes(["read_products", "write_products"], REQUIRED_THEME_SCOPES);
+  assert.equal(missing.ok, false);
+  assert.deepEqual(missing.missing, ["read_themes"]);
+});
 
 check("checkAccessScopes — ok com a lista completa", () => {
   const granted = [

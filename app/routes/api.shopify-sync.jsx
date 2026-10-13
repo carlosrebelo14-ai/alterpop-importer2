@@ -15,6 +15,8 @@ import {
 import { isShopifyResetRunning } from "../../lib/importer/shopify/shopifyResetJob.server.js";
 import { rejectCustomTags } from "../../lib/importer/shopify/tagAllowlist.js";
 import { assertBulkConfirm, BulkConfirmError } from "../../lib/curation/bulkConfirm.js";
+import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
+import { assertThemeContractValid, ThemeContractError } from "../../lib/importer/shopify/themeContract.server.js";
 
 /**
  * GET /api/shopify-sync — estado do job em curso (polling UI).
@@ -140,14 +142,30 @@ export const action = async ({ request }) => {
     throw err;
   }
 
+  let offlineSession;
   try {
-    await loadOfflineSessionForShop(session.shop);
+    offlineSession = await loadOfflineSessionForShop(session.shop);
   } catch (err) {
     const message =
       err instanceof ShopifyAuthSessionError
         ? err.message
         : "Sessão Shopify inválida. Abre a app no Admin.";
     return Response.json({ ok: false, error: message, authError: true }, { status: 401 });
+  }
+
+  // Guarda do tema (Decisão 32, só com THEME_GUARD=ON): lê o tema MAIN (só leitura) e recusa o
+  // lote se o contrato estiver inválido ou a leitura falhar. Avisos nunca recusam. Antes de
+  // iniciar o job, para o operador ver a causa já no toast; o motor repete a verificação.
+  try {
+    await assertThemeContractValid(createShopifyClientFromSession(offlineSession), session.shop, { includeFranchise: true });
+  } catch (err) {
+    if (err instanceof ThemeContractError) {
+      return Response.json(
+        { ok: false, code: err.code, error: err.message, themeContract: err.themeContract ?? null },
+        { status: err.status }
+      );
+    }
+    throw err;
   }
 
   await initShopifySyncJob(session.shop, approvedSkus.length);

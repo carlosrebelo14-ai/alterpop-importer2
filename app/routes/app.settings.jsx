@@ -499,6 +499,21 @@ export default function SettingsPage() {
         </BlockStack>
       </s-section>
 
+      <s-section heading="Guarda do tema (só leitura)">
+        <BlockStack gap="300">
+          <Text as="p" variant="bodyMd">
+            A guarda do tema lê o tema publicado antes de cada lote de publicação e confirma que os templates e as
+            definições que a app usa existem. Nunca escreve no tema. Precisa do scope <code>read_themes</code>: autoriza-o
+            aqui e liga <code>THEME_GUARD=ON</code> depois.
+          </Text>
+          <div>
+            <Button onClick={() => window.open("/api/shopify/grant-themes-scope", "_top")}>
+              Autorizar leitura do tema
+            </Button>
+          </div>
+        </BlockStack>
+      </s-section>
+
       <s-section heading="Emergência — Reset Shopify">
         <BlockStack gap="300">
           <Text as="p" variant="bodyMd">
