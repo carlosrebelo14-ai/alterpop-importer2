@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /* eslint-env node */
 /**
- * .github/workflows/deploy.yml (input db_push_only) e scripts/maintenance/check-no-indexing.mjs.
+ * .github/workflows/deploy.yml e scripts/maintenance/check-no-indexing.mjs.
  *
- * Parte 1, texto do workflow: sem --accept-data-loss, sem PRICE_MODE/THEME_GUARD, token só
- * por secrets.FLY_API_TOKEN, db_push_only salta deploy e catalog:health e corre a verificação
- * antes do db:push.
- * Parte 2, o script de verificação com ficheiros de estado falsos, um deles escrito pelo
+ * Parte 1, texto do workflow: sem --accept-data-loss, sem PRICE_MODE/THEME_GUARD fora de comentários,
+ * token só por secrets.FLY_API_TOKEN, environment production, catalog:health e db:push pelo script
+ * de manutenção (que espera pela indexação).
+ * Parte 2, o script de verificação de indexação com ficheiros de estado falsos, um deles escrito pelo
  * flushCatalogRebuildStatus real (o mesmo que o V16 lê).
+ * O workflow maintenance e o scripts/ci/maintenance.sh têm o seu teste em maintenance.test.js.
  * Uso: node scripts/tests/deploy-workflow.test.js
  */
 import assert from "node:assert/strict";
@@ -51,8 +52,10 @@ check("só workflow_dispatch, a partir de main", () => {
   assert.doesNotMatch(code, /^\s+(push|pull_request|schedule):/m);
   assert.match(code, /if: github\.ref == 'refs\/heads\/main'/);
 });
-check("db_push_only: boolean, default false", () => {
-  assert.match(code, /db_push_only:\n\s+description: .*\n\s+type: boolean\n\s+default: false/);
+check("o job usa o environment production", () => assert.match(code, /runs-on: ubuntu-latest\n {4}environment: production/));
+check("só o input skip_deploy; os modos de manutenção vivem no workflow maintenance", () => {
+  assert.match(code, /skip_deploy:\n\s+description: .*\n\s+type: boolean\n\s+default: false/);
+  for (const gone of ["db_push_only", "diagnose_", "tags_cleanup"]) assert.doesNotMatch(code, new RegExp(gone));
 });
 check("nunca --accept-data-loss", () => assert.doesNotMatch(code, /accept-data-loss/));
 check("nem PRICE_MODE nem THEME_GUARD fora de comentários", () => {
@@ -61,83 +64,25 @@ check("nem PRICE_MODE nem THEME_GUARD fora de comentários", () => {
 });
 check("token só por secrets.FLY_API_TOKEN", () => {
   assert.equal([...code.matchAll(/secrets\./g)].length, 1);
-  assert.equal([...code.matchAll(/FLY_API_TOKEN/g)].length, 2); // variável + secret, nada mais
   assert.match(code, /FLY_API_TOKEN: \$\{\{ secrets\.FLY_API_TOKEN \}\}/);
 });
-check("db_push_only salta deploy, npm ci e prisma generate (SKIP_DEPLOY inclui db_push_only)", () => {
-  assert.match(code, /SKIP_DEPLOY: .*inputs\.db_push_only == true/);
+check("skip_deploy salta deploy, npm ci e prisma generate", () => {
   for (const marker of ["actions/setup-node", "npm ci", "prisma generate", "scripts/deploy.sh"]) {
     assert.match(step(marker), /if: env\.SKIP_DEPLOY != 'true'/, marker);
   }
 });
-check("db_push_only e diagnose_characters saltam o catalog:health", () => {
-  const s = step("npm run catalog:health");
-  assert.match(s, /env\.DB_PUSH_ONLY != 'true'/);
-  assert.match(s, /env\.DIAGNOSE_CHARACTERS != 'true'/);
-});
-check("setup-flyctl corre sempre; db:push só não corre no diagnóstico", () => {
+check("catalog:health (com espera por indexação) antes do db:push (que recusa com indexação)", () => {
+  const health = step("catalog_health dry-run");
+  const push = step("db_push execute");
+  assert.match(health, /bash scripts\/ci\/maintenance\.sh catalog_health dry-run/);
+  assert.match(push, /bash scripts\/ci\/maintenance\.sh db_push execute/);
+  assert.ok(code.indexOf("catalog_health") < code.indexOf("db_push execute"));
   assert.doesNotMatch(step("setup-flyctl"), /\bif:/);
-  assert.match(step("npm run db:push"), /if: env\.DIAGNOSE_CHARACTERS != 'true'/);
-});
-check("diagnose_characters: boolean, default false, e não se combina com db_push_only", () => {
-  assert.match(code, /diagnose_characters:\n\s+description: .*\n\s+type: boolean\n\s+default: false/);
-  assert.match(step("Recusar mais do que um modo"), /DIAGNOSE_CHARACTERS/);
-  assert.match(code, /SKIP_DEPLOY: .*inputs\.diagnose_characters == true/);
-});
-check("diagnose_characters: dois comandos fixos, só leitura, sem texto livre", () => {
-  const cycle = step("character-pages-cycle-state.json");
-  const sync = step("character-pages-sync.js");
-  for (const s of [cycle, sync]) assert.match(s, /if: env\.DIAGNOSE_CHARACTERS == 'true'/);
-  assert.match(cycle, /cat \/app\/data\/character-pages-cycle-state\.json/);
-  assert.match(sync, /node scripts\/catalog\/character-pages-sync\.js'"/); // sem argumentos: dry-run
-  assert.doesNotMatch(code, /character-pages-sync\.js[^\n]*--execute/);
-  assert.doesNotMatch(code, /\$\{\{\s*(inputs\.(?!skip_deploy|db_push_only|diagnose_characters|diagnose_theme|tags_cleanup)|github\.event)/); // nenhum texto livre entra em comandos
-  assert.doesNotMatch(cycle, /\$[A-Za-z{]/); // nada que o shell do runner expanda
-});
-check("diagnose_theme: boolean, default false, dois comandos fixos só de leitura, sem db:push", () => {
-  assert.match(code, /diagnose_theme:\n\s+description: .*\n\s+type: boolean\n\s+default: false/);
-  assert.match(code, /SKIP_DEPLOY: .*inputs\.diagnose_theme == true/);
-  const scopes = step("print-access-scopes.js");
-  const status = step("theme-contract-status.js");
-  for (const s of [scopes, status]) assert.match(s, /if: env\.DIAGNOSE_THEME == 'true'/);
-  assert.match(scopes, /node scripts\/maintenance\/print-access-scopes\.js'"/);
-  assert.match(status, /node scripts\/maintenance\/theme-contract-status\.js'"/);
-  assert.match(step("npm run catalog:health"), /env\.DIAGNOSE_THEME != 'true'/);
-  assert.match(step("npm run db:push"), /env\.DIAGNOSE_THEME != 'true'/);
-  assert.match(step("Recusar mais do que um modo"), /DIAGNOSE_THEME/);
-});
-check("tags_cleanup: choice off|dry-run|execute, default off, comandos fixos, exclusivo", () => {
-  assert.match(code, /tags_cleanup:\n\s+description: .*\n\s+type: choice\n\s+default: "off"\n\s+options:\n\s+- "off"\n\s+- dry-run\n\s+- execute/);
-  assert.match(code, /TAGS_CLEANUP: \$\{\{ inputs\.tags_cleanup \|\| 'off' \}\}/);
-  assert.match(code, /SKIP_DEPLOY: \$\{\{ inputs\.tags_cleanup == 'dry-run' \|\| inputs\.tags_cleanup == 'execute'/);
-  const dry = step("dry-run do tags-cleanup");
-  const exec = step("EXECUTE do tags-cleanup");
-  assert.match(dry, /if: env\.TAGS_CLEANUP == 'dry-run'/);
-  assert.match(exec, /if: env\.TAGS_CLEANUP == 'execute'/);
-  assert.match(dry, /cd \/app && node scripts\/catalog\/tags-cleanup\.js'"/); // sem flags: dry-run
-  assert.match(exec, /cd \/app && node scripts\/catalog\/tags-cleanup\.js --execute'"/);
-  assert.doesNotMatch(code, /tags-cleanup\.js[^\n]*(--include-locked|--all-statuses)/);
-  assert.match(step("npm run catalog:health"), /env\.TAGS_CLEANUP == 'off'/);
-  assert.match(step("npm run db:push"), /env\.TAGS_CLEANUP == 'off'/);
-  const guard = step("Recusar mais do que um modo");
-  assert.match(guard, /TAGS_CLEANUP" != "off"/);
-  assert.doesNotMatch(guard, /\bif: /); // corre sempre
-  assert.doesNotMatch(code, /\$\{\{\s*inputs\.tags_cleanup\s*\}\}.*run:/);
-});
-check("a verificação só corre com db_push_only e vem antes do db:push", () => {
-  const s = step("check-no-indexing.mjs");
-  assert.match(s, /if: env\.DB_PUSH_ONLY == 'true'/);
-  assert.match(s, /base64 -w0 scripts\/maintenance\/check-no-indexing\.mjs/);
-  assert.match(s, /flyctl ssh console -a alterpop-importer-app/);
-  assert.ok(code.indexOf("check-no-indexing.mjs") < code.indexOf("npm run db:push"));
 });
 check("a verificação não importa Prisma nem código da app", () => {
   const src = fs.readFileSync(CHECK, "utf8");
   assert.doesNotMatch(src, /from\s+["'](?!node:)/);
   assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\//, ""), /@prisma|PrismaClient|lib\/importer/);
-});
-check("uso de `fly` sem o prefixo flyctl não existe", () => {
-  assert.doesNotMatch(code, /(^|[^\w])fly ssh/m);
 });
 
 console.log("check-no-indexing.mjs — ficheiros de estado");

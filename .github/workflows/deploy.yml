@@ -3,45 +3,22 @@
 # Ordem, parando no primeiro passo que falhar:
 #   1. bash scripts/deploy.sh   guardas (main limpo e igual a origin/main), test:franchise,
 #                               test:sync-safety, test:health-gate, depois `flyctl deploy`
-#   2. catalog:health na Fly    sai com erro se algum check estiver vermelho
-#   3. db:push na Fly           só corre com a saúde verde (passo 2)
+#   2. catalog:health na Fly    sai com erro se algum check estiver vermelho; se houver uma indexação a
+#                               decorrer, espera até 15 min antes de avaliar (scripts/ci/maintenance.sh)
+#   3. db:push na Fly           só corre com a saúde verde (passo 2) e sem indexação a decorrer
 #
-# Input skip_deploy (boolean, default false): com true salta o passo 1 (e a instalação de
-# dependências que só ele usa) e corre só catalog:health e db:push, sem refazer o deploy.
+# O job usa o environment "production": se o environment tiver revisores obrigatórios, o GitHub pede
+# aprovação antes de o job arrancar. Os diagnósticos e a limpeza de tags passaram para o workflow
+# `maintenance`.
 #
-# Input db_push_only (boolean, default false): com true corre só checkout, setup-flyctl, a
-# verificação de que não há indexação a decorrer e db:push. Salta o deploy e o catalog:health
-# (o db:push avança separado do portão de saúde). A verificação lê o mesmo ficheiro de estado
-# que o V16 (scripts/maintenance/check-no-indexing.mjs, só leitura, enviado para a Fly em
-# base64): com indexação a decorrer, ou com o estado ilegível, falha sem correr o db:push.
-# db:push nunca leva --accept-data-loss.
-#
-# Input diagnose_characters (boolean, default false): diagnóstico das páginas de Character, só
-# leitura. Com true corre só checkout, setup-flyctl e dois comandos fixos neste ficheiro (sem
-# texto livre): cat de /app/data/character-pages-cycle-state.json e o dry-run de
-# scripts/catalog/character-pages-sync.js (sem --execute: não escreve na loja). Salta deploy,
-# catalog:health, verificação de indexação e db:push. Não se combina com db_push_only.
-#
-# Input diagnose_theme (boolean, default false): só leitura. Com true corre só checkout, setup-flyctl e dois
-# comandos fixos: scripts/maintenance/print-access-scopes.js (scopes concedidos, incl. read_themes) e
-# scripts/maintenance/theme-contract-status.js (o mesmo JSON de GET /api/theme-contract/status). Não liga
-# THEME_GUARD. Não se combina com db_push_only nem diagnose_characters.
-#
-# Input tags_cleanup (choice: off, dry-run, execute; default off): limpeza de tags V18, comandos fixos.
-#   dry-run  node scripts/catalog/tags-cleanup.js            só lista o que mudaria (docs/v18-tags-cleanup-manifesto.md)
-#   execute  node scripts/catalog/tags-cleanup.js --execute  remove as tags fora da allowlist (tagsRemove)
-# Corre dry-run primeiro. O script recusa executar se o código em produção ainda gerar tags fora da
-# allowlist e deixa de fora os produtos com sync_locked. Salta deploy, catalog:health e db:push. Não se
-# combina com mais nenhum modo (o passo de guarda falha logo).
-#
-# setup-flyctl instala o binário `flyctl` (sem o alias `fly`): os passos de SSH usam `flyctl`.
+# Input skip_deploy (boolean, default false): com true salta o passo 1 (e a instalação de dependências que
+# só ele usa) e corre só catalog:health e db:push, sem refazer o deploy.
 #
 # PRICE_MODE e THEME_GUARD NÃO são tocados aqui: as flags continuam como estão na Fly.
 # Só se corre a partir de main (a guarda 1 do deploy.sh exige o branch main).
 #
 # Decisão 28: nenhuma sessão `flyctl ssh console` com Prisma pode correr em paralelo com uma
-# publicação ou outra escrita em massa no SQLite do volume. Não disparar este workflow com
-# um sync a decorrer.
+# publicação ou outra escrita em massa no SQLite do volume.
 #
 # Precisa do secret de repositório FLY_API_TOKEN (Settings → Secrets and variables → Actions).
 # O token tem de poder fazer `flyctl ssh console` na app, além de `flyctl deploy`.
@@ -54,26 +31,6 @@ on:
         description: "Saltar o deploy e correr só catalog:health e db:push"
         type: boolean
         default: false
-      db_push_only:
-        description: "Correr só a verificação de indexação e o db:push (sem deploy nem catalog:health)"
-        type: boolean
-        default: false
-      diagnose_characters:
-        description: "Só leitura: estado do ciclo de Characters e dry-run do character-pages-sync (sem deploy nem db:push)"
-        type: boolean
-        default: false
-      diagnose_theme:
-        description: "Só leitura: scopes concedidos (read_themes) e estado do contrato do tema (sem deploy nem db:push)"
-        type: boolean
-        default: false
-      tags_cleanup:
-        description: "Limpeza de tags V18: off (nada), dry-run (só lista) ou execute (remove). Não se combina com os outros modos"
-        type: choice
-        default: "off"
-        options:
-          - "off"
-          - dry-run
-          - execute
 
 permissions:
   contents: read
@@ -86,27 +43,12 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    environment: production
+    timeout-minutes: 60
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-      DB_PUSH_ONLY: ${{ inputs.db_push_only == true || inputs.db_push_only == 'true' }}
-      DIAGNOSE_CHARACTERS: ${{ inputs.diagnose_characters == true || inputs.diagnose_characters == 'true' }}
-      DIAGNOSE_THEME: ${{ inputs.diagnose_theme == true || inputs.diagnose_theme == 'true' }}
-      TAGS_CLEANUP: ${{ inputs.tags_cleanup || 'off' }}
-      SKIP_DEPLOY: ${{ inputs.tags_cleanup == 'dry-run' || inputs.tags_cleanup == 'execute' || inputs.skip_deploy == true || inputs.skip_deploy == 'true' || inputs.db_push_only == true || inputs.db_push_only == 'true' || inputs.diagnose_characters == true || inputs.diagnose_characters == 'true' || inputs.diagnose_theme == true || inputs.diagnose_theme == 'true' }}
+      SKIP_DEPLOY: ${{ inputs.skip_deploy == true || inputs.skip_deploy == 'true' }}
     steps:
-      - name: Recusar mais do que um modo em simultâneo
-        run: |
-          N=0
-          for v in "$DB_PUSH_ONLY" "$DIAGNOSE_CHARACTERS" "$DIAGNOSE_THEME"; do
-            if [ "$v" = "true" ]; then N=$((N + 1)); fi
-          done
-          if [ "$TAGS_CLEANUP" != "off" ]; then N=$((N + 1)); fi
-          if [ "$N" -gt 1 ]; then
-            echo "db_push_only, diagnose_characters, diagnose_theme e tags_cleanup não se combinam: escolhe um."
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
         with:
           ref: main
@@ -132,40 +74,8 @@ jobs:
         if: env.SKIP_DEPLOY != 'true'
         run: bash scripts/deploy.sh
 
-      - name: Saúde do catálogo na Fly (catalog:health)
-        if: env.DB_PUSH_ONLY != 'true' && env.DIAGNOSE_CHARACTERS != 'true' && env.DIAGNOSE_THEME != 'true' && env.TAGS_CLEANUP == 'off'
-        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run catalog:health'"
+      - name: Saúde do catálogo na Fly (catalog:health, espera por indexação)
+        run: bash scripts/ci/maintenance.sh catalog_health dry-run
 
-      - name: Verificar que não há indexação a decorrer (só db_push_only)
-        if: env.DB_PUSH_ONLY == 'true'
-        run: |
-          B64=$(base64 -w0 scripts/maintenance/check-no-indexing.mjs)
-          flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && echo $B64 | base64 -d | node --input-type=module -'"
-
-      - name: Characters, estado do ciclo (só diagnose_characters, só leitura)
-        if: env.DIAGNOSE_CHARACTERS == 'true'
-        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'if [ -f /app/data/character-pages-cycle-state.json ]; then cat /app/data/character-pages-cycle-state.json; else echo sem-ficheiro-de-estado-do-ciclo; fi'"
-
-      - name: Characters, dry-run do character-pages-sync (só diagnose_characters, não escreve)
-        if: env.DIAGNOSE_CHARACTERS == 'true'
-        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && node scripts/catalog/character-pages-sync.js'"
-
-      - name: Tema, scopes concedidos (só diagnose_theme, só leitura)
-        if: env.DIAGNOSE_THEME == 'true'
-        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && node scripts/maintenance/print-access-scopes.js'"
-
-      - name: Tema, estado do contrato (só diagnose_theme, só leitura)
-        if: env.DIAGNOSE_THEME == 'true'
-        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && node scripts/maintenance/theme-contract-status.js'"
-
-      - name: Tags V18, dry-run do tags-cleanup (só tags_cleanup=dry-run, não escreve)
-        if: env.TAGS_CLEANUP == 'dry-run'
-        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && node scripts/catalog/tags-cleanup.js'"
-
-      - name: Tags V18, EXECUTE do tags-cleanup (só tags_cleanup=execute, remove tags)
-        if: env.TAGS_CLEANUP == 'execute'
-        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && node scripts/catalog/tags-cleanup.js --execute'"
-
-      - name: Esquema na Fly (db:push)
-        if: env.DIAGNOSE_CHARACTERS != 'true' && env.DIAGNOSE_THEME != 'true' && env.TAGS_CLEANUP == 'off'
-        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run db:push'"
+      - name: Esquema na Fly (db:push, sem indexação a decorrer)
+        run: bash scripts/ci/maintenance.sh db_push execute

@@ -1,0 +1,100 @@
+# Manutenção da app na Fly, disparada à mão: Actions → maintenance → Run workflow.
+#
+# task  lista fechada: catalog_health, diagnose_theme, diagnose_characters, tags_cleanup,
+#       character_pages_sync, db_push
+# mode  dry-run (por omissão) ou execute
+#
+# Os comandos estão fixos em scripts/ci/maintenance.sh; nenhum texto livre chega à Fly.
+#
+# Fluxo:
+#   1. Job `dry-run` (sem environment): corre sempre. Nas tarefas que escrevem faz o dry-run (lista o que
+#      mudaria, ou o SQL do db:push); nas outras faz a tarefa, que é só leitura. O resumo em português fica
+#      no job summary da corrida.
+#   2. Job `execute` (environment "production"): só com mode=execute e só nas tarefas que escrevem
+#      (tags_cleanup, character_pages_sync, db_push). Depende do job 1, por isso o dry-run corre antes e está
+#      visível no summary enquanto o environment pede aprovação. Nas tarefas só de leitura, mode=execute não
+#      faz nada de diferente.
+#
+# catalog_health e db_push esperam por uma indexação a decorrer, até 15 min.
+#
+# PRICE_MODE e THEME_GUARD NÃO são tocados aqui. Só corre a partir de main.
+# Precisa do secret FLY_API_TOKEN e do environment "production" (ver o resumo de configuração no repositório).
+name: maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Tarefa"
+        type: choice
+        required: true
+        options:
+          - catalog_health
+          - diagnose_theme
+          - diagnose_characters
+          - tags_cleanup
+          - character_pages_sync
+          - db_push
+      mode:
+        description: "dry-run (por omissão) ou execute; execute só tem efeito em tags_cleanup, character_pages_sync e db_push"
+        type: choice
+        default: dry-run
+        options:
+          - dry-run
+          - execute
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-production
+  cancel-in-progress: false
+
+jobs:
+  dry-run:
+    name: "1 · dry-run / leitura"
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      TASK: ${{ inputs.task }}
+      MODE: ${{ inputs.mode }}
+    outputs:
+      key: ${{ steps.run.outputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Dry-run / leitura
+        id: run
+        run: bash scripts/ci/maintenance.sh "$TASK" dry-run
+
+  execute:
+    name: "2 · execute (environment production)"
+    needs: dry-run
+    if: github.ref == 'refs/heads/main' && inputs.mode == 'execute' && contains(fromJSON('["tags_cleanup","character_pages_sync","db_push"]'), inputs.task)
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 40
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      TASK: ${{ inputs.task }}
+      DRY_RUN_KEY: ${{ needs.dry-run.outputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Resumo do dry-run aprovado
+        run: |
+          {
+            echo "## Execute · \`$TASK\`"
+            echo
+            echo "Aprovado depois do dry-run do job anterior (resumo completo acima, no job 1)."
+            echo
+            echo "**Resultado do dry-run:** ${DRY_RUN_KEY:-sem linha de resumo}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Execute
+        run: bash scripts/ci/maintenance.sh "$TASK" execute
