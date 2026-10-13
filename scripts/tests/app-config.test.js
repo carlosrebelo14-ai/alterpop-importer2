@@ -119,10 +119,12 @@ check("ação por omissão é diff; create_version usa --no-release; release só
   assert.match(code, /type: choice\n\s+default: diff\n\s+options:\n\s+- diff\n\s+- create_version\n\s+- release/);
   const create = code.slice(code.indexOf("Criar versão"), code.indexOf("Lançar versão"));
   assert.match(create, /if: env\.ACTION == 'create_version'/);
-  assert.match(create, /--no-release/);
+  assert.match(create, /npx shopify app deploy --no-release /);
+  assert.doesNotMatch(create, /--allow-updates|--allow-deletes|--force/); // a CLI recusa --no-release com --allow-*
   const rel = code.slice(code.indexOf("Lançar versão"));
   assert.match(rel, /if: env\.ACTION == 'release'/);
   assert.doesNotMatch(rel, /--no-release/);
+  assert.match(rel, /npx shopify app deploy --allow-updates /);
   assert.doesNotMatch(code, /\$\{\{\s*inputs\.(?!action)/);
 });
 

@@ -8,13 +8,14 @@
 #   diff            só corre o check-app-config: mostra a diferença entre a versão 12 (linha de base em
 #                   config/shopify-app-version-12.json) e o que o deploy enviaria. Não usa o token.
 #   create_version  diff + `shopify app deploy --no-release`: cria a versão mas NÃO a lança. Revê-la no
-#                   Dev Dashboard (Versions) antes de a lançar.
+#                   Dev Dashboard (Versions) antes de a lançar. A CLI 3.94.3 dá --no-release como
+#                   exclusivo de --allow-updates/--allow-deletes e diz que com ele não pede confirmação.
 #   release         diff + `shopify app deploy`: cria e lança a versão.
 #
 # O check falha (e nada é enviado) se o shopify.app.toml ou extensions/ deixarem de reproduzir a versão
 # 12: faltar um dos 3 webhooks (app/uninstalled, app/scopes_update, orders/create), um scope, uma
 # extensão, um redirect URL, ou aparecer um acrescento que não seja read_themes.
-# Usa --allow-updates e NUNCA --allow-deletes: se o deploy removesse extensões ou configuração, pararia
+# O passo release usa --allow-updates e NUNCA --allow-deletes: se o deploy removesse extensões ou configuração, pararia
 # à espera de confirmação e falharia em vez de apagar.
 #
 # Secret de repositório SHOPIFY_APP_AUTOMATION_TOKEN: Dev Dashboard → a app → Settings → App automation
@@ -67,7 +68,7 @@ jobs:
 
       - name: Criar versão sem lançar (shopify app deploy --no-release)
         if: env.ACTION == 'create_version'
-        run: npx shopify app deploy --allow-updates --no-release --message "alterpop-importer ${GITHUB_SHA::7} (sem lançar)"
+        run: npx shopify app deploy --no-release --message "alterpop-importer ${GITHUB_SHA::7} (sem lançar)"
 
       - name: Lançar versão (shopify app deploy)
         if: env.ACTION == 'release'
