@@ -12,7 +12,7 @@
  * - `--dry-run` não escreve nada, só imprime o plano.
  * - `--universe "Harry Potter"` restringe a um universo (revisão faseada).
  *
- * Fonte da resolução: stream do feed OcioStock (OCIOSTOCK_CSV_URL / OCIOSTOCK_CSV_PATH)
+ * Fonte da resolução: stream do feed OcioStock (OCIOSTOCK_FEED_URL / OCIOSTOCK_CSV_PATH)
  * → mapa SKU → universo. Cruzado com os produtos da loja pelo SKU da variante
  * (= `referencia` do feed).
  *

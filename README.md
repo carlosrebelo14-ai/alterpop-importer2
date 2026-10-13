@@ -18,7 +18,7 @@ cp .env.example .env   # if present; otherwise create .env
 |----------|---------|
 | `SHOPIFY_API_KEY` | Client ID from Dev Dashboard (`b8beed55…`) |
 | `SHOPIFY_API_SECRET` | Client secret |
-| `OCIOSTOCK_CSV_URL` | OcioStock plain CSV export URL |
+| `OCIOSTOCK_FEED_URL` | URL do feed OcioStock (segredo: só vem do ambiente; na Fly, `fly secrets set`) |
 | `TRANSLATION_PROVIDER` | `deepl` (recommended), `libretranslate`, or `passthrough` |
 | `TRANSLATION_API_KEY` | DeepL key — required for English product text |
 | `DRY_RUN` | `true` blocks live imports (keep on until ready) |
@@ -94,11 +94,7 @@ docs/                 OcioStock CSV mapping documentation
 
 ## OcioStock CSV
 
-Default URL (set in `.env` or Settings):
-
-```
-https://ociostock.gesio.be/dyndata/exportaciones/csvzip/catalog_1_50_54_2_40836fd3ce5ea622a4d34a8aa6c8cda3_csv_plain.csv
-```
+O URL do feed é um segredo: define `OCIOSTOCK_FEED_URL` no ambiente (`.env` em desenvolvimento, `fly secrets set OCIOSTOCK_FEED_URL=…` na Fly). Não há URL por omissão: sem a variável (nem `OCIOSTOCK_CSV_PATH`) a app falha com um erro claro.
 
 Spanish columns are mapped to English (`referencia` → `sku`, `stock_disponible` → `availableQuantity`, etc.).
 

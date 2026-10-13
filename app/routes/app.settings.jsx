@@ -108,7 +108,6 @@ export const action = async ({ request }) => {
   }
   const settings = {
     priceMarginPct: current.priceMarginPct,
-    ociostockCsvUrl: String(form.get("ociostockCsvUrl") || ""),
     translationProvider: String(form.get("translationProvider") || "passthrough"),
     translationApiKey: String(form.get("translationApiKey") || ""),
     translateToEnglish: form.get("translateToEnglish") === "on",
@@ -286,13 +285,11 @@ export default function SettingsPage() {
         </Banner>
       )}
       <fetcher.Form method="post">
-        <s-section heading="CSV URL (OcioStock)">
-          <s-text-field
-            name="ociostockCsvUrl"
-            label="CSV URL"
-            value={s.ociostockCsvUrl}
-            details="Plain CSV export from OcioStock (semicolon-delimited)"
-          />
+        <s-section heading="Feed OcioStock">
+          <Text as="p" variant="bodyMd">
+            O URL do feed é um segredo e vem só da variável de ambiente <code>OCIOSTOCK_FEED_URL</code> (na Fly:
+            <code> fly secrets set OCIOSTOCK_FEED_URL=…</code>). Já não se guarda nem se mostra aqui.
+          </Text>
         </s-section>
 
         <s-section heading="Avançado">

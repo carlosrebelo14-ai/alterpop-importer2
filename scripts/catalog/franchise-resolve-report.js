@@ -7,7 +7,7 @@
  * (Portão A do plano). É o passo 4 de docs/PLANO-normalizacao-franquias.md.
  *
  * Fonte dos dados:
- *   default (--from-csv)  faz stream do CSV OcioStock (OCIOSTOCK_CSV_URL / OCIOSTOCK_CSV_PATH
+ *   default (--from-csv)  faz stream do CSV OcioStock (OCIOSTOCK_FEED_URL / OCIOSTOCK_CSV_PATH
  *                         no .env) e resolve em memória. Não precisa da BD nem de sessão.
  *   --from-db             lê CatalogProduct.franchiseRefs + title da BD. SÓ funciona
  *                         depois da migração da Fase 4 (a coluna não existe antes disso).

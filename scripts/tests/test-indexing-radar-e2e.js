@@ -16,9 +16,6 @@ const MIN_PRODUCTS = Number(process.env.MIN_PRODUCTS || 3);
 const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 120_000);
 
 const settings = await loadShopSettings(shop);
-if (settings.ociostockCsvUrl) {
-  process.env.OCIOSTOCK_CSV_URL = settings.ociostockCsvUrl;
-}
 
 let products = 0;
 let indexed = 0;

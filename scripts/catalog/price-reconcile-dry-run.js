@@ -76,11 +76,6 @@ async function main() {
     : resolveMarginPct(settings);
   console.log(`Margem global: ${marginPct}%${process.env.PRICE_MARGIN_PCT ? " (simulada via PRICE_MARGIN_PCT)" : ""}${effectiveMarginPct(marginPct) !== marginPct ? ` — abaixo do mínimo, aplica-se ${effectiveMarginPct(marginPct)}%` : ""}`);
 
-  // O feed lê-se pelo mesmo caminho do indexador: OCIOSTOCK_CSV_URL, ou o URL das definições.
-  if (settings.ociostockCsvUrl && !process.env.OCIOSTOCK_CSV_PATH) {
-    process.env.OCIOSTOCK_CSV_URL = settings.ociostockCsvUrl;
-  }
-
   const published = (await listCurationQueueItems("PUBLISHED")).filter((i) => i.sku);
   const skus = published.map((i) => i.sku);
   console.log(`PUBLISHED na fila: ${skus.length}`);

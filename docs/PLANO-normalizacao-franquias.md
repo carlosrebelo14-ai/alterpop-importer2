@@ -222,7 +222,7 @@ Decisões novas desde a versão que o briefing tem:
 ### Como correr o report (PORTÃO A)
 
 ```bash
-# na máquina/host com .env (OCIOSTOCK_CSV_URL ou OCIOSTOCK_CSV_PATH):
+# na máquina/host com .env (OCIOSTOCK_FEED_URL ou OCIOSTOCK_CSV_PATH):
 npm run franchise:report                 # catálogo todo, via stream do CSV
 npm run franchise:report -- --limit 3000 # amostra rápida
 npm run franchise:report -- --supplier-only --json   # camada 2 só p/ títulos do fornecedor + dump JSON

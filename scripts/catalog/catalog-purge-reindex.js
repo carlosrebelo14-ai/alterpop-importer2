@@ -35,9 +35,6 @@ if (process.env.CONFIRM !== CONFIRM_WORD) {
 }
 
 const settings = await loadShopSettings(shop);
-if (settings.ociostockCsvUrl) {
-  process.env.OCIOSTOCK_CSV_URL = settings.ociostockCsvUrl;
-}
 
 console.log(`[catalog-purge] Loja: ${shop}`);
 const result = await startCatalogCleanupInBackground(shop, settings);
