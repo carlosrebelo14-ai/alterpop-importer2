@@ -1,0 +1,63 @@
+# Deploy de produção (alterpop-importer-app), disparado à mão: Actions → deploy → Run workflow.
+#
+# Ordem, parando no primeiro passo que falhar:
+#   1. bash scripts/deploy.sh   guardas (main limpo e igual a origin/main), test:franchise,
+#                               test:sync-safety, test:health-gate, depois `flyctl deploy`
+#   2. catalog:health na Fly    sai com erro se algum check estiver vermelho
+#   3. db:push na Fly           só corre com a saúde verde (passo 2)
+#
+# PRICE_MODE e THEME_GUARD NÃO são tocados aqui: as flags continuam como estão na Fly.
+# Só se corre a partir de main (a guarda 1 do deploy.sh exige o branch main).
+#
+# Decisão 28: nenhuma sessão `fly ssh console` com Prisma pode correr em paralelo com uma
+# publicação ou outra escrita em massa no SQLite do volume. Não disparar este workflow com
+# um sync a decorrer.
+#
+# Precisa do secret de repositório FLY_API_TOKEN (Settings → Secrets and variables → Actions).
+# O token tem de poder fazer `fly ssh console` na app, além de `flyctl deploy`.
+name: deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Gerar cliente Prisma
+        run: npx prisma generate
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy (scripts/deploy.sh)
+        run: bash scripts/deploy.sh
+
+      - name: Saúde do catálogo na Fly (catalog:health)
+        run: fly ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run catalog:health'"
+
+      - name: Esquema na Fly (db:push)
+        run: fly ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run db:push'"
