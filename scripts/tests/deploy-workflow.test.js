@@ -39,7 +39,7 @@ const code = yml
   .join("\n");
 /** Bloco `- name: <title>`/`- uses: ...` do passo, até ao próximo passo. */
 function step(marker) {
-  const parts = code.split(/\n(?=      - )/);
+  const parts = code.split(/\n(?= {6}- )/);
   const found = parts.find((p) => p.includes(marker));
   assert.ok(found, `passo "${marker}" não encontrado`);
   return found;
@@ -47,7 +47,7 @@ function step(marker) {
 
 console.log("deploy.yml — texto");
 check("só workflow_dispatch, a partir de main", () => {
-  assert.match(code, /^on:\n  workflow_dispatch:/m);
+  assert.match(code, /^on:\n {2}workflow_dispatch:/m);
   assert.doesNotMatch(code, /^\s+(push|pull_request|schedule):/m);
   assert.match(code, /if: github\.ref == 'refs\/heads\/main'/);
 });
