@@ -274,6 +274,24 @@ check("o workflow maintenance e o deploy usam o mesmo grupo de concorrência, se
   assert.deepEqual(group(dep).slice(1), ["deploy-production", "false"]);
 });
 
+check("Fly com código antigo (sem --summary): só enforced/status, nunca o JSON; sem script novo: causa 'falta deploy'", () => {
+  const t = setup();
+  const lines = [
+    "#!/bin/sh",
+    'case "$6" in',
+    "  *print-access-scopes*) echo '[print-access-scopes] 15 scope(s) concedido(s) em x.myshopify.com:'; echo '[print-access-scopes] read_themes: concedido'; exit 0;;",
+    '  *theme-contract-status*) printf \'{\\n  "ok": true,\\n  "enforced": true,\\n  "contract": {\\n    "status": "ok",\\n    "blocking": [],\\n    "themeName": "Segredo"\\n  }\\n}\\n\'; exit 0;;',
+    "esac",
+  ];
+  fs.writeFileSync(t.bin, lines.join("\n") + "\n", { mode: 0o755 });
+  const r = spawnSync("bash", [SCRIPT, "diagnose_theme", "dry-run"], { cwd: ROOT, encoding: "utf8", env: { PATH: process.env.PATH, FLYCTL: t.bin, FAKE_LOG: t.log, FAKE_COUNT: t.count, GITHUB_STEP_SUMMARY: t.summary } });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /enforced = true, status = ok/);
+  assert.doesNotMatch(r.stdout + fs.readFileSync(t.summary, "utf8"), /Segredo|"contract"/);
+  const bad = run("diagnose_characters", "dry-run", { FAKE_RC: "1" });
+  assert.equal(bad.status, 1);
+});
+
 console.log("resumo");
 check("resumo em português com tarefa, modo, resultado, o que faz e saída", () => {
   const r = run("tags_cleanup", "dry-run");

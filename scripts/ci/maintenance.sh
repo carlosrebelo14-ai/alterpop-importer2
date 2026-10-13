@@ -166,6 +166,12 @@ case "$TASK" in
     tl="$(echo "$CLEAN" | grep -E '^\[print-access-scopes\] read_themes:' | head -1 | sed -E 's/.*read_themes: *//')"
     json="$(echo "$CLEAN" | grep -E '^\{.*"enforced"' | tail -1)"
     bullets="- Scopes concedidos: **${total:-?}**; read_themes: **${tl:-sem leitura}**."
+    if [ -z "$json" ]; then
+      # Código antigo na Fly (sem --summary): só estados simples, nunca o JSON.
+      en="$(echo "$CLEAN" | grep -oE '"enforced": *(true|false)' | head -1 | sed -E 's/"enforced": */enforced = /')"
+      st="$(echo "$CLEAN" | grep -oE '"status": *"[a-z_]+"' | head -1 | sed -E 's/"status": *"([a-z_]+)"/status = \1/')"
+      if [ -n "$en$st" ]; then bullets="$bullets"$'\n'"- Contrato do tema: ${en:-?}, ${st:-?} (a Fly ainda não tem --summary: contagens de bloqueios e avisos só depois do próximo deploy)."; fi
+    fi
     if [ -n "$json" ]; then
       bullets="$bullets"$'\n'"- Contrato do tema: $(echo "$json" | grep -oE '"(enforced|status|blocking|warnings|erro|ok)":("[^"]*"|[0-9a-z]+)' | sed 's/"//g; s/:/ = /' | paste -sd, - | sed 's/,/, /g')"
     fi
@@ -212,7 +218,8 @@ esac
 # Em falha, só uma causa classificada (a saída bruta não é publicada).
 CAUSE=""
 if [ "$RC" -ne 0 ] && [ "$RC" -ne 75 ]; then
-  if echo "$CLEAN" | grep -qiE 'unauthorized|not authorized|token|forbidden|401|403'; then CAUSE="autorização da Fly ou da Shopify recusada."
+  if echo "$CLEAN" | grep -qiE 'cannot find module|MODULE_NOT_FOUND'; then CAUSE="o código na Fly ainda não tem este script: falta fazer deploy."
+  elif echo "$CLEAN" | grep -qiE 'unauthorized|not authorized|token|forbidden|401|403'; then CAUSE="autorização da Fly ou da Shopify recusada."
   elif echo "$CLEAN" | grep -qiE 'connect|timeout|timed out|no such host|dial|ssh'; then CAUSE="não consegui ligar à Fly."
   elif echo "$CLEAN" | grep -qiE 'access scope|required access|read_themes|permission'; then CAUSE="falta uma permissão (scope) na Shopify."
   elif echo "$CLEAN" | grep -qiE 'recus|fatal'; then CAUSE="o próprio script recusou correr (guarda de segurança)."
