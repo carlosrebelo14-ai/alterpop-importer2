@@ -91,7 +91,7 @@ export function SyncStagingModal({
                     : ""}
                 </List.Item>
                 <List.Item>
-                  {`Custo total (precio_distribuidores + IVA): ${formatEur(summary.totalCostEur)}`}
+                  {`Custo total (precio_distribuidores${summary.rule === "NET" ? ", sem IVA" : " + IVA"}): ${formatEur(summary.totalCostEur)}`}
                 </List.Item>
                 <List.Item>
                   {`Receita alvo (margem ${summary.marginPct ?? "—"}%): ${formatEur(summary.totalTargetRetailEur)}`}

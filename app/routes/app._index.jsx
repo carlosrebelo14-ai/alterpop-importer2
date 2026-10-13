@@ -25,6 +25,7 @@ import { reasonLabel } from "../utils/curationReasonLabels.js";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateAdmin } from "../utils/authenticate.server";
 import { loadShopSettings, getDefaultSettings } from "../../lib/importer/settings.server.js";
+import { currentPriceRule } from "../../lib/importer/pricing/priceMode.js";
 import { getCurationLiteStats } from "../../lib/importer/dashboard/getDashboardStats.server.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
 import {
@@ -61,7 +62,7 @@ const SORT_FIELD_TO_COLUMN = { title: 0, grossPrice: 3, stock: 7 };
 
 // Selos do estado do preço (pricing.server.js) — avisam, nunca bloqueiam a aprovação.
 const PRICE_STATUS_BADGE = {
-  MARGEM: { label: "Margem", tone: "success", help: "Margem global cabe entre 80 % do PVPR e o PVPR." },
+  MARGEM: { label: "Margem", tone: "success", help: "Margem global cabe entre 80 % do PVPR e o PVPR (regra NET: preço = custo sem IVA × (1 + margem), sem limites do PVPR)." },
   PISO_PVPR: { label: "Piso PVPR", tone: "warning", help: "Custo anormalmente baixo (provável oferta do fornecedor) — a margem global ficava abaixo de 80 % do PVPR, preço subido para 80 % do PVPR." },
   TETO: { label: "Teto", tone: "warning", help: "A margem global passava o PVPR — preço = PVPR arredondado para baixo." },
   SEM_PVPR: { label: "Sem PVPR", tone: "warning", help: "Feed sem precio_bruto — margem global, sem teto." },
@@ -127,6 +128,8 @@ export const loader = async ({ request }) => {
     smartStats,
     settings,
     settingsLoadError,
+    // Regra de preço em vigor (PRICE_MODE, Decisão 31): os textos e cabeçalhos seguem-na.
+    priceRule: currentPriceRule(),
   };
 };
 
@@ -246,6 +249,7 @@ export default function CurationDashboard() {
   const shopify = useAppBridge();
 
   const settings = loaderData.settings;
+  const netRule = loaderData.priceRule === "NET";
 
   const [facetLicences, setFacetLicences] = useState([]);
   const [facetBrands, setFacetBrands] = useState([]);
@@ -2162,7 +2166,11 @@ export default function CurationDashboard() {
                       }}
                     />
                     <Text as="span" tone="subdued" variant="bodySm">
-                      {`Preço = custo c/ IVA × (1 + ${effectivePct ?? appliedMarginPct ?? "—"}%), arredondado, entre 80 % do PVPR e o PVPR${
+                      {`${
+                        netRule
+                          ? `Preço sem IVA = custo bruto × (1 + ${effectivePct ?? appliedMarginPct ?? "—"}%), arredondado para cima à dezena de cêntimos (PVPR só informativo)`
+                          : `Preço = custo c/ IVA × (1 + ${effectivePct ?? appliedMarginPct ?? "—"}%), arredondado, entre 80 % do PVPR e o PVPR`
+                      }${
                         effectivePct != null && appliedMarginPct != null && Number(effectivePct) !== Number(appliedMarginPct)
                           ? ` — margem gravada ${appliedMarginPct}% fica abaixo do mínimo, aplica-se ${effectivePct}%`
                           : ""
@@ -2275,9 +2283,9 @@ export default function CurationDashboard() {
                         headings={[
                           { title: "Produto" },
                           { title: "Franquia / Categoria" },
-                          { title: "Custo c/ IVA", alignment: "end" },
+                          { title: netRule ? "Custo bruto" : "Custo c/ IVA", alignment: "end" },
                           { title: "PVPR", alignment: "end" },
-                          { title: "Preço final", alignment: "end" },
+                          { title: netRule ? "Preço final sem IVA" : "Preço final", alignment: "end" },
                           { title: "Lucro antes de portes", alignment: "end" },
                           { title: "Preço" },
                           { title: "Stock" },
