@@ -70,12 +70,29 @@ check("db_push_only salta deploy, npm ci e prisma generate (SKIP_DEPLOY inclui d
     assert.match(step(marker), /if: env\.SKIP_DEPLOY != 'true'/, marker);
   }
 });
-check("db_push_only salta o catalog:health", () => {
-  assert.match(step("npm run catalog:health"), /if: env\.DB_PUSH_ONLY != 'true'/);
+check("db_push_only e diagnose_characters saltam o catalog:health", () => {
+  const s = step("npm run catalog:health");
+  assert.match(s, /env\.DB_PUSH_ONLY != 'true'/);
+  assert.match(s, /env\.DIAGNOSE_CHARACTERS != 'true'/);
 });
-check("setup-flyctl e db:push sem condição (correm sempre)", () => {
+check("setup-flyctl corre sempre; db:push só não corre no diagnóstico", () => {
   assert.doesNotMatch(step("setup-flyctl"), /\bif:/);
-  assert.doesNotMatch(step("npm run db:push"), /\bif:/);
+  assert.match(step("npm run db:push"), /if: env\.DIAGNOSE_CHARACTERS != 'true'/);
+});
+check("diagnose_characters: boolean, default false, e não se combina com db_push_only", () => {
+  assert.match(code, /diagnose_characters:\n\s+description: .*\n\s+type: boolean\n\s+default: false/);
+  assert.match(step("Recusar db_push_only"), /DB_PUSH_ONLY == 'true' && env\.DIAGNOSE_CHARACTERS == 'true'/);
+  assert.match(code, /SKIP_DEPLOY: .*inputs\.diagnose_characters == true/);
+});
+check("diagnose_characters: dois comandos fixos, só leitura, sem texto livre", () => {
+  const cycle = step("character-pages-cycle-state.json");
+  const sync = step("character-pages-sync.js");
+  for (const s of [cycle, sync]) assert.match(s, /if: env\.DIAGNOSE_CHARACTERS == 'true'/);
+  assert.match(cycle, /cat \/app\/data\/character-pages-cycle-state\.json/);
+  assert.match(sync, /node scripts\/catalog\/character-pages-sync\.js'"/); // sem argumentos: dry-run
+  assert.doesNotMatch(code, /character-pages-sync\.js[^\n]*--execute/);
+  assert.doesNotMatch(code, /\$\{\{\s*(inputs\.(?!skip_deploy|db_push_only|diagnose_characters)|github\.event)/); // nenhum texto livre entra em comandos
+  assert.doesNotMatch(cycle, /\$[A-Za-z{]/); // nada que o shell do runner expanda
 });
 check("a verificação só corre com db_push_only e vem antes do db:push", () => {
   const s = step("check-no-indexing.mjs");

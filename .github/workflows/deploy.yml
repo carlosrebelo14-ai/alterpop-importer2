@@ -16,6 +16,12 @@
 # base64): com indexação a decorrer, ou com o estado ilegível, falha sem correr o db:push.
 # db:push nunca leva --accept-data-loss.
 #
+# Input diagnose_characters (boolean, default false): diagnóstico das páginas de Character, só
+# leitura. Com true corre só checkout, setup-flyctl e dois comandos fixos neste ficheiro (sem
+# texto livre): cat de /app/data/character-pages-cycle-state.json e o dry-run de
+# scripts/catalog/character-pages-sync.js (sem --execute: não escreve na loja). Salta deploy,
+# catalog:health, verificação de indexação e db:push. Não se combina com db_push_only.
+#
 # setup-flyctl instala o binário `flyctl` (sem o alias `fly`): os passos de SSH usam `flyctl`.
 #
 # PRICE_MODE e THEME_GUARD NÃO são tocados aqui: as flags continuam como estão na Fly.
@@ -40,6 +46,10 @@ on:
         description: "Correr só a verificação de indexação e o db:push (sem deploy nem catalog:health)"
         type: boolean
         default: false
+      diagnose_characters:
+        description: "Só leitura: estado do ciclo de Characters e dry-run do character-pages-sync (sem deploy nem db:push)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -56,8 +66,15 @@ jobs:
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       DB_PUSH_ONLY: ${{ inputs.db_push_only == true || inputs.db_push_only == 'true' }}
-      SKIP_DEPLOY: ${{ inputs.skip_deploy == true || inputs.skip_deploy == 'true' || inputs.db_push_only == true || inputs.db_push_only == 'true' }}
+      DIAGNOSE_CHARACTERS: ${{ inputs.diagnose_characters == true || inputs.diagnose_characters == 'true' }}
+      SKIP_DEPLOY: ${{ inputs.skip_deploy == true || inputs.skip_deploy == 'true' || inputs.db_push_only == true || inputs.db_push_only == 'true' || inputs.diagnose_characters == true || inputs.diagnose_characters == 'true' }}
     steps:
+      - name: Recusar db_push_only e diagnose_characters em conjunto
+        if: env.DB_PUSH_ONLY == 'true' && env.DIAGNOSE_CHARACTERS == 'true'
+        run: |
+          echo "db_push_only e diagnose_characters não se combinam: escolhe um."
+          exit 1
+
       - uses: actions/checkout@v4
         with:
           ref: main
@@ -84,7 +101,7 @@ jobs:
         run: bash scripts/deploy.sh
 
       - name: Saúde do catálogo na Fly (catalog:health)
-        if: env.DB_PUSH_ONLY != 'true'
+        if: env.DB_PUSH_ONLY != 'true' && env.DIAGNOSE_CHARACTERS != 'true'
         run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run catalog:health'"
 
       - name: Verificar que não há indexação a decorrer (só db_push_only)
@@ -93,5 +110,14 @@ jobs:
           B64=$(base64 -w0 scripts/maintenance/check-no-indexing.mjs)
           flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && echo $B64 | base64 -d | node --input-type=module -'"
 
+      - name: Characters, estado do ciclo (só diagnose_characters, só leitura)
+        if: env.DIAGNOSE_CHARACTERS == 'true'
+        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'if [ -f /app/data/character-pages-cycle-state.json ]; then cat /app/data/character-pages-cycle-state.json; else echo sem-ficheiro-de-estado-do-ciclo; fi'"
+
+      - name: Characters, dry-run do character-pages-sync (só diagnose_characters, não escreve)
+        if: env.DIAGNOSE_CHARACTERS == 'true'
+        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && node scripts/catalog/character-pages-sync.js'"
+
       - name: Esquema na Fly (db:push)
+        if: env.DIAGNOSE_CHARACTERS != 'true'
         run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run db:push'"
