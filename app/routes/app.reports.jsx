@@ -309,7 +309,7 @@ export default function ReportsPage() {
                     {`Erosão de margem (${marginErosion?.red?.length ?? "—"})`}
                   </Text>
                   <Text as="p" tone="subdued">
-                    {`Em cada ciclo, compara o preço live de cada produto publicado com o custo atual do feed (precio_distribuidores + IVA). Vermelho abaixo de ${marginErosion?.thresholdPct ?? 10}% de margem efetiva sobre o custo. Só sinaliza — o preço nunca é alterado automaticamente.`}
+                    {`Em cada ciclo, compara o preço live de cada produto publicado com o custo atual do feed (precio_distribuidores${marginErosion?.rule === "NET" ? ", sem IVA" : " + IVA"}). Vermelho abaixo de ${marginErosion?.thresholdPct ?? 10}% de margem efetiva sobre o custo. Só sinaliza — o preço nunca é alterado automaticamente.`}
                   </Text>
                   {marginErosionError && (
                     <Banner tone="critical">

@@ -9,7 +9,7 @@ import {
   loadCurationQueue,
 } from "../../lib/curation/curationQueue.server.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
-import { resolveMarginPct, priceRow } from "../../lib/importer/pricing/pricing.server.js";
+import { resolveMarginPct, evaluatePrice } from "../../lib/importer/pricing/pricing.server.js";
 
 const VALID_STATUSES = new Set(["APPROVED", "REJECTED"]);
 
@@ -48,7 +48,11 @@ export const action = async ({ request }) => {
     preco: header.indexOf("preco"),
     precoRegra: header.indexOf("preco_regra"),
     estado: header.indexOf("estado"),
+    // Opcional: motivo do preço manual (fica em overrides.priceMeta, com autor e data).
+    motivoPreco: header.indexOf("motivo_preco"),
   };
+  // Autor do preço manual: quem tem a sessão (e-mail do utilizador Shopify) ou, sem ele, a loja.
+  const author = session.email || (session.userId != null ? `user:${session.userId}` : session.shop);
 
   // Revisão do PR #87 — CSVs exportados antes da regra de preço não têm preco_regra e
   // trazem em `preco` o netPrice × 1,4 calculado, não um override. Aplicá-lo congelava
@@ -100,7 +104,7 @@ export const action = async ({ request }) => {
       ruleBySku = new Map(
         existingRows.map((r) => {
           // Margem do produto inválida → finalPrice null: sem regra com que comparar.
-          return [r.sku, priceRow(r.distributorPrice, r.grossPrice, marginPct, queueBySku.get(r.sku)).finalPrice];
+          return [r.sku, evaluatePrice(r.distributorPrice, r.grossPrice, marginPct, queueBySku.get(r.sku)).finalPrice];
         })
       );
     } catch (err) {
@@ -202,7 +206,8 @@ export const action = async ({ request }) => {
       if (categoria) overrides.category = categoria;
       if (preco != null) overrides.price = preco;
       if (Object.keys(overrides).length) {
-        await setManualOverride(sku, overrides);
+        const motivoCell = idx.motivoPreco !== -1 ? (row[idx.motivoPreco] || "").trim() : "";
+        await setManualOverride(sku, overrides, { by: author, reason: motivoCell || "import CSV" });
       }
 
       if (estadoRaw === "APPROVED") {

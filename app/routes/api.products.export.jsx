@@ -38,7 +38,7 @@ export const loader = async ({ request }) => {
     filtersRaw.split(",").map((s) => s.trim()).filter(Boolean)
   );
 
-  const { skuInclude, skuExclude } = await computeCurationSkuFilter(curationStatus, reasonFilter);
+  const { skuInclude, skuExclude } = await computeCurationSkuFilter(curationStatus, reasonFilter, session.shop);
 
   const result = await queryCatalogProducts(session.shop, {
     page: 1,

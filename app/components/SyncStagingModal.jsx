@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import { useEffect, useState } from "react";
 import { BulkActionConfirm } from "./BulkActionConfirm.jsx";
 import { isBulkConfirmed } from "../../lib/curation/bulkConfirm.js";
@@ -91,7 +92,7 @@ export function SyncStagingModal({
                     : ""}
                 </List.Item>
                 <List.Item>
-                  {`Custo total (precio_distribuidores + IVA): ${formatEur(summary.totalCostEur)}`}
+                  {`Custo total (precio_distribuidores${summary.rule === "NET" ? ", sem IVA" : " + IVA"}): ${formatEur(summary.totalCostEur)}`}
                 </List.Item>
                 <List.Item>
                   {`Receita alvo (margem ${summary.marginPct ?? "—"}%): ${formatEur(summary.totalTargetRetailEur)}`}
@@ -120,6 +121,26 @@ export function SyncStagingModal({
                   ]
                     .filter(Boolean)
                     .join(" · ")}
+                </Banner>
+              )}
+
+              {summary.themeContract && summary.themeContract.status !== "ok" && (
+                <Banner tone={summary.themeContract.blocking?.length ? (summary.themeContract.enforced ? "critical" : "warning") : "info"}>
+                  <BlockStack gap="100">
+                    <Text as="p" fontWeight="semibold">
+                      {summary.themeContract.status === "scope_missing"
+                        ? "Tema: falta o scope read_themes (Definições → Permissões)."
+                        : summary.themeContract.status === "unknown"
+                          ? "Tema: contrato ainda não lido."
+                          : summary.themeContract.blocking?.length
+                            ? `Tema: contrato inválido${summary.themeContract.enforced ? " — a publicação vai ser recusada" : " (a guarda ainda não recusa: THEME_GUARD desligada)"}.`
+                            : "Tema: avisos (não bloqueiam a publicação)."}
+                    </Text>
+                    {summary.themeContract.readError && <Text as="p" variant="bodySm">{`Leitura do tema falhou: ${summary.themeContract.readError}`}</Text>}
+                    {[...(summary.themeContract.blocking || []), ...(summary.themeContract.warnings || [])].slice(0, 6).map((w, i) => (
+                      <Text as="p" variant="bodySm" key={`${w.code}-${i}`}>{w.message}</Text>
+                    ))}
+                  </BlockStack>
                 </Banner>
               )}
 

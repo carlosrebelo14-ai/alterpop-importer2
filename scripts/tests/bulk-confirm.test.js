@@ -72,11 +72,13 @@ check("isBulkConfirmed: abaixo do limiar nada a escrever; acima, o número exato
 console.log("Rotas");
 check("a ação em massa (aprovar/rejeitar, seleção e filtro) confirma ANTES de gravar", () => {
   const src = read("app/routes/api.curation.queue.bulk.jsx");
-  const confirmAt = src.indexOf("assertBulkConfirm(skus.length");
-  const writeAt = src.indexOf("bulkSetQueueStatus(skus, targetStatus)");
+  // Decisão 31: o número a confirmar é o dos elegíveis (PENDING e sem entrada), não o dos pedidos.
+  const confirmAt = src.indexOf("assertBulkConfirm(eligible.length");
+  const writeAt = src.indexOf("bulkTransitionPending(eligible, targetStatus)");
   assert.ok(confirmAt > 0, "não chama assertBulkConfirm");
   assert.ok(writeAt > confirmAt, "grava antes de confirmar");
-  assert.match(src, /\["approve", "reject", "approve_filtered", "reject_filtered"\]\.includes\(actionName\)/);
+  assert.ok(!/bulkSetQueueStatus\(/.test(src), "a ação em massa não pode usar o setter sem guarda de estado");
+  assert.match(src, /actionName === "approve" \|\| actionName === "reject" \|\| actionName === "approve_filtered" \|\| actionName === "reject_filtered"/);
   assert.match(src, /instanceof BulkConfirmError/);
 });
 check("a ação em massa tem pré-visualização do âmbito (contagem e amostra) sem gravar", () => {
@@ -84,7 +86,7 @@ check("a ação em massa tem pré-visualização do âmbito (contagem e amostra)
   const a = src.indexOf('actionName === "preview_filtered"');
   assert.ok(a > 0);
   const block = src.slice(a, a + 700);
-  assert.ok(!/bulkSetQueueStatus|bulkSetMarginPct/.test(block), "a pré-visualização escreve");
+  assert.ok(!/bulkSetQueueStatus|bulkTransitionPending|bulkSetMarginPct/.test(block), "a pré-visualização escreve");
   assert.match(block, /BULK_SAMPLE_SIZE/);
 });
 check("a publicação confirma ANTES de iniciar o job e de qualquer escrita na Shopify", () => {
@@ -109,7 +111,7 @@ check("nenhum botão chama a ação em massa diretamente: seleção passa por re
   assert.ok(!/onClick=\{\(\) => runBulkStatus\(/.test(page), "botão chama runBulkStatus");
   assert.match(page, /requestBulkStatus\("approve"\)/);
   assert.match(page, /requestBulkStatus\("reject"\)/);
-  assert.match(page, /selectedSkus\.length > BULK_CONFIRM_THRESHOLD/);
+  assert.match(page, /eligibleSkus\.length > BULK_CONFIRM_THRESHOLD/); // Decisão 31: o número é o dos elegíveis (PENDING)
 });
 check("«Aprovar/Rejeitar Toda a Pesquisa» conta no servidor e confirma com o número exato", () => {
   assert.match(page, /action: "preview_filtered"/);

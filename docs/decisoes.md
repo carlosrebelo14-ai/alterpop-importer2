@@ -137,3 +137,48 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 
 **Referência cruzada:** Decisão 28, Tarefa 51, Tarefa 58, Tarefa 59, `docs/safe-prisma-fallback-census.md`
 **Sem migração.**
+
+---
+
+## Decisão 31 — preço sem IVA (`PRICE_MODE=NET`), histórico, mercado e ações em massa só sobre PENDING
+
+**Data:** 2026-10-13
+**Estado:** fechada (código entregue; ativação depende de passos do Carlos, ver abaixo)
+
+**Achado:** a regra de preço de 07/10/2026 inclui o IVA espanhol no custo (`precio_distribuidores × 1,21`), arredonda a ,50/,90 e prende o preço entre 80 % do PVPR e o PVPR. O IVA de venda é da Shopify (impostos e OSS), não da app. A loja tem hoje `taxesIncluded = true`: um preço de 11,00 € enviado pela app aparece ao cliente como 11,00 € com IVA incluído.
+
+**Risco à escala:** mudar a configuração de impostos da Shopify antes de reprecificar os publicados faz as páginas mostrarem IVA a dobrar; ligar a regra nova sem mudar os impostos publica preços sem IVA numa loja que os trata como preços com IVA. O histórico para o preço riscado Omnibus misturaria preços com e sem IVA, e a comparação com os preços da Worten/Fnac (com IVA) com o nosso (sem IVA) daria diferenças falsas.
+
+**Decisão:**
+> 1. **Regra NET** atrás da flag `PRICE_MODE=NET`, desligada por omissão. Custo = `round(precio_distribuidores × 100)` em cêntimos; preço = `ceil(custo × (1 + margem) / 10) × 10` (aritmética inteira); sem IVA, sem piso de 10 %, sem piso nem teto do PVPR; PVPR só informativo; estado único `MARGEM`. Com a flag desligada, publisher e "Aplicar aos publicados" usam a regra anterior, sem alteração.
+> 2. **`evaluatePrice`** (`lib/importer/pricing/pricing.server.js`, antes `priceRow`) é a função única para painel, fila, staging, publisher, export, import de edições, reconciliação e "Aplicar aos publicados". Aceita `{ rule }` para calcular numa regra pedida sem mudar a global. `PRICE_MODE` com valor desconhecido lança.
+> 3. **Troca numa só janela.** A pré-visualização de "Aplicar aos publicados" aceita `rule=NET` com a flag desligada (só leitura; `execute` recusa uma regra diferente da do servidor, 409 `RULE_MISMATCH`). Ordem: pré-visualizar com `rule=NET` → mudar os impostos na Shopify, ligar `PRICE_MODE=NET` e aplicar a todos os publicados na mesma sessão → antes do lançamento público.
+> 4. **Preço manual** (`overrides.price`) é preservado, com autor, data e motivo (`overrides.priceMeta`), e fica fora de "Aplicar aos publicados" por omissão (`includeManual`).
+> 5. **Histórico** (`PriceHistory`): cada preço enviado à Shopify fica com data e a regra com que foi calculado (`NET`/`LEGACY`). O mínimo Omnibus dos 30 dias (`omnibusMinCents`) só considera entradas da regra em vigor. É só calculado e exposto: a app não escreve `compareAtPrice`.
+> 6. **Mercado** (`MarketPriceObservation`, `POST /api/market-prices/manual`): observação manual opcional (Worten, Fnac). O preço observado tem IVA e o nosso não, por isso a app não calcula diferença entre os dois: mostra o observado com a etiqueta «com IVA».
+> 7. **Ações em massa** (aprovar/rejeitar, seleção e filtro) só tocam produtos `PENDING`. SKU sem entrada na fila conta como `PENDING`: a ação cria a entrada e aplica a transição, numa só operação idempotente, e reporta `createdCount` à parte. `PUBLISHED`, `REJECTED`, `SYNC_ERROR` e `APPROVED` ficam intocados. O número a confirmar é o dos elegíveis.
+> 8. **Fila de decisão** (Prontos a aprovar, Preço manual, Regra desatualizada, Erros de sincronização) como filtro de estado (`group:<id>`). Avisos nunca bloqueiam a aprovação; stock não conta.
+
+**Aplica-se** a todo o preço enviado à Shopify. Responsabilidade do Carlos: configurar impostos na Shopify, testar um produto em rascunho com morada PT e DE, fechar com o contabilista o enquadramento VIES e OSS, e ligar `PRICE_MODE=NET` depois do teste.
+
+**Referência cruzada:** `lib/importer/pricing/priceMode.js`, `omnibus.js`, `priceHistory.server.js`, `marketPrice*.js`, `lib/curation/bulkEligibility.js`, `decisionQueue*.js`, `prisma/migrations/20261013120000_price_history_market`
+**Migração:** tabelas novas e aditivas (`PriceHistory`, `MarketPriceObservation`); sem colunas novas em `CatalogProduct`. Aplicar com `npm run db:push` na Fly, depois de `fly deploy`.
+
+---
+
+## Decisão 32 — guarda do tema publicado, só de leitura (`read_themes`)
+
+**Data:** 2026-10-13
+**Estado:** fechada (ativação com `THEME_GUARD=ON` depois de reautorizar a app)
+
+**Achado:** o tema Universe/Line depende de templates (`collection.universe-room.json`, `collection.line.json`), do template de produto e de definições `alterpop.*` com acesso storefront. Nada na app verificava que o tema publicado ainda os tem antes de um lote de publicação.
+
+**Decisão:**
+> 1. A app lê o tema `MAIN` (scope `read_themes`; nunca `write_themes`) e valida um contrato declarado no repositório (`lib/importer/shopify/themeContract.js`). **Nenhuma operação escreve em assets, templates ou settings do tema** (só queries; teste estrutural).
+> 2. **Bloqueia** o lote: template de coleção Universe/Line ou de produto em falta; definição `alterpop.*` declarada `PUBLIC_READ` em falta ou sem esse acesso (as declaradas `NONE` — `franchise`, `line`, `manufacturer_line` — ficam de fora de propósito); handles e regras de Universe/Line divergentes (guarda existente `franchiseConditionsGuard`). **Avisa** no staging, sem bloquear: `settings_data.json`, secções referenciadas em falta, filtros.
+> 3. Mudança de `updatedAt` do tema reconstrói o snapshot (`data/theme-contract/<loja>.json`) e reavalia; sozinha não bloqueia. Scope em falta é um estado próprio (`scope_missing`), não «tema inválido».
+> 4. O portão corre uma vez por lote (`runApprovedShopifySync`, depois da guarda de franquias) e na rota `/api/shopify-sync` antes de iniciar o job, e só recusa por contrato inválido ou erro técnico de leitura. Fica desligado até `THEME_GUARD=ON`, para o deploy anterior à reautorização não bloquear as publicações.
+> 5. `GET /api/theme-contract/status`, `POST /api/theme-contract/refresh`, `themeCompatibility` em `GET /api/products`. O script `theme-template-audit.js` passa a usar o serviço.
+
+**Referência cruzada:** Decisão 31, `lib/importer/shopify/themeContract.server.js`, `scripts/tests/theme-contract.test.js`
+**Sem migração.** Reautorizar a app antes de ativar a guarda.

@@ -328,3 +328,40 @@ model SkuLifecycleCycleReport {
 
   @@index([shop, ranAt])
 }
+
+/// Decisão 31 (briefing "Preço sem IVA e guarda do tema") — histórico de cada preço enviado à
+/// Shopify, com data. Fica em tabela própria porque CatalogProduct é apagada e reconstruída em
+/// cada reindexação. `rule` é a regra com que o preço foi calculado ("LEGACY" = preço com IVA,
+/// "NET" = sem IVA, igual em todos os países): com PRICE_MODE desligada o histórico regista
+/// preços com IVA e o mínimo Omnibus dos 30 dias nunca pode misturar as duas regras. Gravado
+/// por recordLastPriceWrites (curationQueue.server.js). Tabela nova, aditiva — aplicar com
+/// `npm run db:push` (passo de deploy manual, sem DROP nem perda de dados).
+model PriceHistory {
+  id         String   @id @default(cuid())
+  shop       String
+  sku        String
+  priceCents Int
+  /// "NET" | "LEGACY"
+  rule       String
+  /// publisher | reprice | import | reconcile (o backfill não entra: não é uma escrita datada)
+  source     String
+  at         DateTime
+
+  @@index([shop, sku, at])
+}
+
+/// Decisão 31 — observação MANUAL de preço de mercado (Worten, Fnac…), uma linha por registo.
+/// Preço COM IVA tal como se vê na loja do concorrente; o preço Alterpop é sem IVA, por isso a
+/// app não calcula diferença entre os dois. Sem recolha automática, sem validade, sem bloqueios.
+model MarketPriceObservation {
+  id         String   @id @default(cuid())
+  shop       String
+  sku        String
+  priceCents Int
+  store      String
+  observedAt DateTime
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  @@index([shop, sku, observedAt])
+}

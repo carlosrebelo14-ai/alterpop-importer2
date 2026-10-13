@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { Filters, TextField, ChoiceList, InlineStack, Select, Checkbox } from "@shopify/polaris";
 import { REASON_OPTIONS, reasonLabel } from "../utils/curationReasonLabels.js";
+import { DECISION_GROUP_LABELS, DECISION_GROUP_PREFIX } from "../../lib/curation/decisionQueue.js";
 
 /**
  * Redesign da Curadoria (2026-08-13) — barra de filtros horizontal (Polaris `Filters`,
@@ -16,6 +17,8 @@ const CURATION_STATUS_CHOICES = [
   { label: "Pendentes", value: "PENDING" },
   { label: "Publicados Shopify", value: "PUBLISHED" },
   { label: "Erro de sync", value: "SYNC_ERROR" },
+  // Fila de decisão (Decisão 31): os quatro grupos como filtro de estado.
+  ...Object.entries(DECISION_GROUP_LABELS).map(([id, label]) => ({ label: `Fila: ${label}`, value: `${DECISION_GROUP_PREFIX}${id}` })),
 ];
 
 const SEARCH_SCOPE_OPTIONS = [

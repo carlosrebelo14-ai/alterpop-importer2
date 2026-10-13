@@ -34,7 +34,7 @@ import { listCurationQueueItems } from "../../lib/curation/curationQueue.server.
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
-import { resolveMarginPct, effectiveMarginPct, PRICE_STATUS, priceRow } from "../../lib/importer/pricing/pricing.server.js";
+import { resolveMarginPct, effectiveMarginPct, PRICE_STATUS, evaluatePrice } from "../../lib/importer/pricing/pricing.server.js";
 import { recordPriceWrite } from "../../lib/importer/pricing/recordPriceWrite.server.js";
 import {
   classifyPriceReconcile,
@@ -252,7 +252,7 @@ async function main() {
     if (!now || cents(now.price) !== cents(r.after)) continue;
     const cat = catalogBySku.get(r.sku);
     try {
-      const { marginPct: rowMargin } = priceRow(cat?.distributorPrice, cat?.grossPrice, marginPct, itemBySku.get(r.sku));
+      const { marginPct: rowMargin } = evaluatePrice(cat?.distributorPrice, cat?.grossPrice, marginPct, itemBySku.get(r.sku));
       const rec = await recordPriceWrite({
         sku: r.sku,
         price: r.after,
@@ -260,7 +260,9 @@ async function main() {
         grossPrice: cat?.grossPrice,
         marginPct: rowMargin,
         source: "reconcile",
+        shop: SHOP,
       });
+      if (rec.historyError) errors.push(errorEntry("PRICE_HISTORY_NOT_RECORDED", r.sku, rec.historyError));
       if (rec.recorded) recordedWrites += 1;
       else errors.push(errorEntry("LAST_WRITE_NOT_RECORDED", r.sku, "SKU fora da fila — última escrita não gravada"));
     } catch (err) {

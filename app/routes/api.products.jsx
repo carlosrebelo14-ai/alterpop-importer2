@@ -50,7 +50,7 @@ export const loader = async ({ request }) => {
     curationStatus,
   });
 
-  const { skuInclude, skuExclude } = await computeCurationSkuFilter(curationStatus, reasonFilter);
+  const { skuInclude, skuExclude } = await computeCurationSkuFilter(curationStatus, reasonFilter, session.shop);
 
   // Falha da lista (margem por definir, definições ilegíveis, leitura) volta como JSON
   // com a causa — o painel mostra data.error em vez de "Erro ao carregar produtos".

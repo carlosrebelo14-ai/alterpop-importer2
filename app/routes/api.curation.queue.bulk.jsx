@@ -1,5 +1,6 @@
 import { authenticateAdmin } from "../utils/authenticate.server";
-import { bulkSetMarginPct, bulkSetQueueStatus } from "../../lib/curation/curationQueue.server.js";
+import { bulkSetMarginPct, bulkTransitionPending, loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
+import { partitionBulkEligible } from "../../lib/curation/bulkEligibility.js";
 import { assertMarginPct } from "../../lib/importer/pricing/pricing.server.js";
 import { invalidateCurationQueueCache } from "../../lib/importer/curation/index.js";
 import { resolveFilteredSkus } from "../../lib/curation/resolveFilteredSkus.server.js";
@@ -12,7 +13,14 @@ import { assertBulkConfirm, BulkConfirmError, BULK_SAMPLE_SIZE } from "../../lib
  * ou body: { action: 'approve_filtered'|'reject_filtered', filters: {...} }
  * Acima de 50 produtos, approve/reject (e as variantes _filtered) exigem confirmCount igual ao
  * número real (D1): sem ele, ou diferente, o servidor recusa e não grava nada.
- * body: { action: 'preview_filtered', filters } → { count, sample: [{ sku, title }] } (5 SKUs)
+ * body: { action: 'preview_filtered', filters } → { count, eligible, toCreate, skippedCount, sample: [{ sku, title }] } (5 SKUs)
+ *
+ * Aprovar/rejeitar em massa SÓ tocam produtos PENDING (Decisão 31): PUBLISHED, REJECTED,
+ * SYNC_ERROR e APPROVED ficam como estão e vêm em `skipped`. SKU sem entrada na fila conta
+ * como PENDING: a ação cria a entrada como PENDING e aplica a transição (idempotente), e
+ * `createdCount` diz à parte quantas foram criadas. O número a confirmar (confirmCount) é o
+ * dos elegíveis, não o dos pedidos. Resposta: { updated, skus (só os alterados), created,
+ * createdCount, skipped, skippedCount, skippedByStatus, requested, previousSnapshots }.
  */
 export const action = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
@@ -43,24 +51,35 @@ export const action = async ({ request }) => {
     // Pré-visualização do âmbito de uma ação sobre o filtro atual: contagem e amostra de 5.
     if (actionName === "preview_filtered") {
       const matching = await resolveFilteredSkus(session.shop, body.filters || {});
-      const { loadCurationQueueCached } = await import("../../lib/curation/curationQueue.server.js");
-      const byTitle = new Map((await loadCurationQueueCached()).items.map((i) => [i.sku, i.title_en]));
+      const queue = await loadCurationQueue();
+      const { eligible, toCreate, skipped } = partitionBulkEligible(queue.items, matching);
+      const byTitle = new Map(queue.items.map((i) => [i.sku, i.title_en]));
       return Response.json({
         ok: true,
         count: matching.length,
-        sample: matching.slice(0, BULK_SAMPLE_SIZE).map((sku) => ({ sku, title: byTitle.get(sku) || null })),
-      });
-    }
-
-    if (["approve", "reject", "approve_filtered", "reject_filtered"].includes(actionName)) {
-      assertBulkConfirm(skus.length, body.confirmCount, {
-        what: actionName.startsWith("approve") ? "Aprovar" : "Rejeitar",
+        // O que a ação vai mesmo tocar: só PENDING (e os sem entrada, que contam como PENDING).
+        eligible: eligible.length,
+        toCreate: toCreate.length,
+        skippedCount: skipped.length,
+        sample: eligible.slice(0, BULK_SAMPLE_SIZE).map((sku) => ({ sku, title: byTitle.get(sku) || null })),
       });
     }
 
     if (actionName === "approve" || actionName === "reject" || actionName === "approve_filtered" || actionName === "reject_filtered") {
       const targetStatus = actionName.startsWith("approve") ? "APPROVED" : "REJECTED";
-      const result = await bulkSetQueueStatus(skus, targetStatus);
+      // Só PENDING (e sem entrada): o número a confirmar é o dos elegíveis, calculado ANTES de
+      // gravar nada — nunca o dos pedidos, que incluiria publicados, rejeitados e com erro.
+      const { eligible, skipped } = partitionBulkEligible((await loadCurationQueue()).items, skus);
+      const skippedByStatus = {};
+      for (const k of skipped) skippedByStatus[k.status] = (skippedByStatus[k.status] || 0) + 1;
+      const summary = { requested: skus.length, skippedCount: skipped.length, skippedByStatus, skipped: skipped.slice(0, 50) };
+      if (!eligible.length) {
+        return Response.json({ ok: true, action: actionName, updated: 0, skus: [], created: [], createdCount: 0, previousSnapshots: [], ...summary });
+      }
+      assertBulkConfirm(eligible.length, body.confirmCount, {
+        what: actionName.startsWith("approve") ? "Aprovar" : "Rejeitar",
+      });
+      const result = await bulkTransitionPending(eligible, targetStatus);
       invalidateCurationQueueCache();
       return Response.json({
         ok: true,
@@ -68,10 +87,13 @@ export const action = async ({ request }) => {
         updated: result.updatedItems.length,
         previousSnapshots: result.previousSnapshots,
         // O frontend precisa disto para actualizar o estado local `decisions` depois de
-        // approve_filtered/reject_filtered — sem a lista de SKUs de volta, o botão
-        // "Publicar na Shopify" ficava cinzento até um reload completo da página (o
-        // segundo bug do mesmo report: approve_filtered nunca actualizava `decisions`).
-        skus,
+        // aprovar/rejeitar — só os SKUs realmente alterados (os ignorados mantêm o estado).
+        skus: result.skus,
+        created: result.created,
+        createdCount: result.createdCount,
+        ...summary,
+        // Ignorados entre a leitura e a gravação (outra pessoa decidiu entretanto).
+        skippedCount: skipped.length + result.skipped.length,
       });
     }
 

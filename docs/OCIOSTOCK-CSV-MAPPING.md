@@ -28,7 +28,18 @@ Semicolon-delimited (`;`) CSV from OcioStock. Spanish column headers mapped to i
 
 ## Variant price
 
-Single path: [`lib/importer/pricing/pricing.server.js`](../lib/importer/pricing/pricing.server.js), used by the curation panel, staging, CSV export, the publisher and the Import page.
+Single path: [`lib/importer/pricing/pricing.server.js`](../lib/importer/pricing/pricing.server.js) (`evaluatePrice`), used by the curation panel, queue, staging, CSV export, the publisher, the Import page and "Aplicar aos publicados". Two rules, chosen by the `PRICE_MODE` flag (Decisão 31 in [`decisoes.md`](./decisoes.md)).
+
+### Rule NET (`PRICE_MODE=NET`, off by default) — price without VAT
+
+```
+cost  = round(precio_distribuidores × 100)          cents, no VAT
+price = ceil(cost × (1 + margin) / 10 cents) × 10   always up to the next 10 cents, all values
+```
+
+No VAT, no 10 % floor, no `precio_bruto` floor or ceiling (PVPR is informational only), no .50/.90 endings. All VAT is configured in Shopify. Example: 9.99 € at 10 % → 11.00 €. Do not turn it on before the Shopify tax settings are changed (the store has `taxesIncluded = true`).
+
+### Rule LEGACY (flag off) — price with VAT
 
 ```
 cost  = round(precio_distribuidores × 1.21)        (Spanish VAT charged by OcioStock)
