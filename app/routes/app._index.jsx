@@ -26,6 +26,8 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticateAdmin } from "../utils/authenticate.server";
 import { loadShopSettings, getDefaultSettings } from "../../lib/importer/settings.server.js";
 import { currentPriceRule } from "../../lib/importer/pricing/priceMode.js";
+import { DECISION_GROUP_PREFIX } from "../../lib/curation/decisionQueue.js";
+import { MARKET_STORE_SUGGESTIONS } from "../../lib/importer/pricing/marketPrice.js";
 import { getCurationLiteStats } from "../../lib/importer/dashboard/getDashboardStats.server.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
 import {
@@ -57,8 +59,10 @@ const LOW_STOCK_THRESHOLD = 10;
 /** Redesign da Curadoria — margem abaixo disto é sempre crítica, independente do limiar configurável. */
 /** IndexTable: índice de coluna sortável → mesmo campo já usado pelo <select> de ordenação. */
 // PVPR (coluna 3) ordena pelo próprio PVPR (grossPrice).
-const SORT_COLUMN_TO_FIELD = { 0: "title", 3: "grossPrice", 7: "stock" };
-const SORT_FIELD_TO_COLUMN = { title: 0, grossPrice: 3, stock: 7 };
+// Colunas: 0 Produto, 1 Franquia, 2 Custo bruto, 3 Margem %, 4 PVPR, 5 Preço final, 6 Margem €,
+// 7 Selo, 8 Mercado, 9 Stock, 10 Estado, 11 Ações.
+const SORT_COLUMN_TO_FIELD = { 0: "title", 4: "grossPrice", 9: "stock" };
+const SORT_FIELD_TO_COLUMN = { title: 0, grossPrice: 4, stock: 9 };
 
 // Selos do estado do preço (pricing.server.js) — avisam, nunca bloqueiam a aprovação.
 const PRICE_STATUS_BADGE = {
@@ -68,6 +72,25 @@ const PRICE_STATUS_BADGE = {
   SEM_PVPR: { label: "Sem PVPR", tone: "warning", help: "Feed sem precio_bruto — margem global, sem teto." },
   ACIMA_PVPR: { label: "Acima PVPR", tone: "critical", help: "Nem a margem mínima (10 %) cabe abaixo do PVPR — preço = custo + 10 %, acima do PVPR." },
 };
+
+/**
+ * Mensagem do resultado de uma ação em massa (Decisão 31): quantos foram alterados, quantos
+ * criados (SKU sem entrada na fila) e quantos ignorados por não estarem PENDING.
+ * @param {string} verb "aprovados" | "rejeitados" | ...
+ * @param {{ updated?: number, createdCount?: number, skippedCount?: number, skippedByStatus?: Record<string, number> }} data
+ * @param {string} suffix
+ */
+function bulkResultMessage(verb, data, suffix = "") {
+  const parts = [`${data.updated ?? 0} produto(s) ${verb}`];
+  if (data.createdCount) parts.push(`${data.createdCount} criados na fila`);
+  if (data.skippedCount) {
+    const by = Object.entries(data.skippedByStatus || {})
+      .map(([status, n]) => `${n} ${status}`)
+      .join(", ");
+    parts.push(`${data.skippedCount} ignorados${by ? ` (${by})` : ""}`);
+  }
+  return `${parts.join(" · ")}.${suffix}`;
+}
 
 export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
@@ -367,6 +390,15 @@ export default function CurationDashboard() {
     }
   }, [marginFetcher.data]);
   const [undoSnapshots, setUndoSnapshots] = useState([]);
+
+  // Fila de decisão (Decisão 31): contagens por grupo, calculadas no servidor.
+  const [decisionGroups, setDecisionGroups] = useState(null); // { groups: [{id,label,count}], liveError } | { error }
+  // Preço de mercado observado (manual, com IVA): modal de registo.
+  const [marketEdit, setMarketEdit] = useState(null); // { sku, title, store, price }
+  const [marketSaving, setMarketSaving] = useState(false);
+  const [marketFormError, setMarketFormError] = useState(null);
+  // Mercado/Omnibus lidos de tabelas novas: se a leitura falhar a lista abre sem essas colunas e o erro fica à vista.
+  const [priceExtrasError, setPriceExtrasError] = useState(null);
   const [massActionConfirm, setMassActionConfirm] = useState(null);
   const [importingCsv, setImportingCsv] = useState(false);
   const importFileInputRef = useRef(null);
@@ -774,6 +806,7 @@ export default function CurationDashboard() {
         setProducts(data.products || []);
         setAppliedMarginPct(data.marginPct ?? null);
         setEffectivePct(data.effectiveMarginPct ?? null);
+        setPriceExtrasError([data.marketError && `Preço de mercado: ${data.marketError}`, data.omnibusError && `Omnibus: ${data.omnibusError}`].filter(Boolean).join(" · ") || null);
         setTotalCount(data.totalCount ?? 0);
         setTotalPages(data.totalPages ?? 1);
       } catch (err) {
@@ -1098,6 +1131,51 @@ export default function CurationDashboard() {
 
   const clearSelection = useCallback(() => setSelectedSkus([]), []);
 
+  // Fila de decisão: contagens por grupo (Prontos a aprovar, Preço manual, Regra desatualizada,
+  // Erros de sincronização). Recarrega com a lista.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/curation/decision-queue", { credentials: "same-origin" });
+        const data = await res.json();
+        if (cancelled) return;
+        setDecisionGroups(data.ok ? { groups: data.groups, liveError: data.liveError } : { error: data.error || "Erro" });
+      } catch (err) {
+        if (!cancelled) setDecisionGroups({ error: err?.message || "Falha de rede" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [listRefreshKey]);
+
+  const saveMarketObservation = useCallback(async () => {
+    if (!marketEdit) return;
+    setMarketSaving(true);
+    setMarketFormError(null);
+    try {
+      const res = await fetch("/api/market-prices/manual", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sku: marketEdit.sku, price: marketEdit.price, store: marketEdit.store }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        setMarketFormError(data?.error || "Erro ao gravar a observação");
+        return;
+      }
+      setMarketEdit(null);
+      setToast({ content: `Preço observado gravado (${data.observation.store}, com IVA).` });
+      setListRefreshKey((k) => k + 1);
+    } catch {
+      setMarketFormError("Falha de rede ao gravar a observação");
+    } finally {
+      setMarketSaving(false);
+    }
+  }, [marketEdit]);
+
   // Redesign da Curadoria (2026-08-12) — IndexTable dispara isto em vez do onChange
   // por checkbox; "single" continua a usar toggleSelectSku, "page"/"all" replicam o
   // que a Curadoria já suportava (seleção acumulada entre páginas), só que agora dá
@@ -1149,7 +1227,6 @@ export default function CurationDashboard() {
   const runBulkStatus = useCallback(
     async (actionName, confirmCount) => {
       if (!selectedSkus.length) return;
-      const skusSnapshot = [...selectedSkus];
       try {
         const res = await fetch("/api/curation/queue/bulk", {
           method: "POST",
@@ -1165,19 +1242,16 @@ export default function CurationDashboard() {
         if (Array.isArray(data.previousSnapshots) && data.previousSnapshots.length) {
           setUndoSnapshots(data.previousSnapshots);
         }
+        // Só os produtos realmente alterados (PENDING e sem entrada): publicados, rejeitados,
+        // aprovados e com erro mantêm o estado que já tinham.
         setDecisions((prev) => {
           const next = { ...prev };
-          for (const sku of skusSnapshot) {
+          for (const sku of Array.isArray(data.skus) ? data.skus : []) {
             next[sku] = actionName === "approve" ? "APPROVED" : "REJECTED";
           }
           return next;
         });
-        setToast({
-          content:
-            actionName === "approve"
-              ? `${data.updated} produto(s) aprovados. Undo disponível.`
-              : `${data.updated} produto(s) rejeitados. Undo disponível.`,
-        });
+        setToast({ content: bulkResultMessage(actionName === "approve" ? "aprovados" : "rejeitados", data, data.updated > 0 ? " Undo disponível." : "") });
         clearSelection();
         setListRefreshKey((k) => k + 1);
         refreshDashboardStats();
@@ -1193,18 +1267,22 @@ export default function CurationDashboard() {
   const [bulkConfirm, setBulkConfirm] = useState(null); // { kind: 'selection'|'publish', action?, scope, sample }
   const requestBulkStatus = useCallback(
     (actionName) => {
-      if (selectedSkus.length > BULK_CONFIRM_THRESHOLD) {
+      // Só PENDING (e sem entrada na fila): o que já tem decisão, está publicado ou com erro
+      // fica de fora, e o número a confirmar é o dos elegíveis. O servidor recalcula-o.
+      const eligibleSkus = selectedSkus.filter((sku) => !decisions[sku]);
+      if (eligibleSkus.length > BULK_CONFIRM_THRESHOLD) {
         setBulkConfirm({
           kind: "selection",
           action: actionName,
-          scope: selectedSkus.length,
-          sample: selectedSkus.slice(0, 5).map((sku) => ({ sku })),
+          scope: eligibleSkus.length,
+          note: `${selectedSkus.length - eligibleSkus.length} da seleção ficam de fora (já decididos, publicados ou com erro).`,
+          sample: eligibleSkus.slice(0, 5).map((sku) => ({ sku })),
         });
         return;
       }
-      runBulkStatus(actionName);
+      runBulkStatus(actionName, eligibleSkus.length > 0 ? eligibleSkus.length : undefined);
     },
-    [selectedSkus, runBulkStatus]
+    [selectedSkus, decisions, runBulkStatus]
   );
 
   const runBulkApproveFiltered = useCallback(
@@ -1235,13 +1313,14 @@ export default function CurationDashboard() {
           setToast({ content: data?.error || "Erro na ação em massa", error: true });
           return;
         }
-        setToast({
-          content: `${data.updated} produtos da pesquisa ${action.startsWith("approve") ? "aprovados" : "rejeitados"}!`,
-        });
+        setToast({ content: bulkResultMessage(`da pesquisa ${action.startsWith("approve") ? "aprovados" : "rejeitados"}`, data, "") });
         // Sem isto, `decisions` (e por consequência approvedSkus/o botão "Publicar na
         // Shopify") só actualizava depois de um reload completo — approve_filtered
         // nunca tinha os SKUs no cliente para os marcar localmente (2.º bug do mesmo
         // report do 1.º fix acima).
+        if (Array.isArray(data.previousSnapshots) && data.previousSnapshots.length) {
+          setUndoSnapshots(data.previousSnapshots);
+        }
         if (Array.isArray(data.skus) && data.skus.length) {
           const targetStatus = action.startsWith("approve") ? "APPROVED" : "REJECTED";
           setDecisions((prev) => {
@@ -1311,7 +1390,8 @@ export default function CurationDashboard() {
         const data = await res.json();
         if (cancelled) return;
         if (!res.ok || !data?.ok) setMassPreviewError(data?.error || "Não foi possível contar os produtos do filtro");
-        else setMassPreview({ count: data.count, sample: data.sample });
+        // O âmbito é o dos elegíveis (PENDING e sem entrada), não o de todos os que o filtro mostra.
+        else setMassPreview({ count: data.eligible ?? data.count, sample: data.sample, skipped: data.skippedCount ?? 0, toCreate: data.toCreate ?? 0 });
       } catch {
         if (!cancelled) setMassPreviewError("Falha de rede ao contar os produtos do filtro");
       } finally {
@@ -1897,6 +1977,13 @@ export default function CurationDashboard() {
           scope={massPreview?.count ?? 0}
           scopeText={activeFilterSummary}
           sample={massPreview?.sample ?? []}
+          note={
+            massPreview
+              ? `Só produtos PENDING: ${massPreview.skipped.toLocaleString("pt-PT")} do filtro ficam de fora (já decididos, publicados ou com erro)${
+                  massPreview.toCreate ? `; ${massPreview.toCreate.toLocaleString("pt-PT")} sem entrada na fila serão criados como PENDING e decididos` : ""
+                }.`
+              : null
+          }
           loading={massPreviewLoading}
           error={massPreviewError}
           onConfirm={confirmMassAction}
@@ -1917,6 +2004,7 @@ export default function CurationDashboard() {
           scope={bulkConfirm?.scope ?? 0}
           scopeText={bulkConfirm?.kind === "publish" ? "todos os produtos APPROVED" : "os produtos selecionados"}
           sample={bulkConfirm?.sample ?? []}
+          note={bulkConfirm?.note ?? null}
           onConfirm={(count) => {
             const b = bulkConfirm;
             setBulkConfirm(null);
@@ -1926,11 +2014,89 @@ export default function CurationDashboard() {
           onClose={() => setBulkConfirm(null)}
         />
 
+        <Modal
+          open={Boolean(marketEdit)}
+          onClose={() => {
+            setMarketEdit(null);
+            setMarketFormError(null);
+          }}
+          title="Preço observado no mercado"
+          primaryAction={{ content: "Gravar", onAction: saveMarketObservation, loading: marketSaving, disabled: !marketEdit?.price || !marketEdit?.store }}
+          secondaryActions={[
+            {
+              content: "Cancelar",
+              onAction: () => {
+                setMarketEdit(null);
+                setMarketFormError(null);
+              },
+            },
+          ]}
+        >
+          <Modal.Section>
+            <BlockStack gap="300">
+              {marketFormError && <Banner tone="critical">{marketFormError}</Banner>}
+              <Text as="p" variant="bodySm" tone="subdued">{`${marketEdit?.sku ?? ""} — ${marketEdit?.title ?? ""}`}</Text>
+              <TextField
+                label="Preço observado (€, com IVA)"
+                value={marketEdit?.price ?? ""}
+                onChange={(v) => setMarketEdit((p) => ({ ...p, price: v }))}
+                autoComplete="off"
+                inputMode="decimal"
+              />
+              <TextField
+                label="Loja"
+                value={marketEdit?.store ?? ""}
+                onChange={(v) => setMarketEdit((p) => ({ ...p, store: v }))}
+                autoComplete="off"
+              />
+              <InlineStack gap="200">
+                {MARKET_STORE_SUGGESTIONS.map((s) => (
+                  <Button key={s} size="slim" onClick={() => setMarketEdit((p) => ({ ...p, store: s }))}>
+                    {s}
+                  </Button>
+                ))}
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">
+                O preço da loja concorrente tem IVA e o preço Alterpop não: a app mostra os dois lado a lado e não calcula diferença entre eles. Referência manual, sem validade e sem bloquear nada.
+              </Text>
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
+
         <Layout>
 
           <Layout.Section>
             <Card>
               <BlockStack gap="300">
+                {priceExtrasError && <Banner tone="warning">{priceExtrasError} — corre `npm run db:push` se as tabelas novas ainda não existem.</Banner>}
+                <InlineStack gap="200" blockAlign="center" wrap>
+                  <Text as="span" variant="bodySm" tone="subdued">Fila de decisão</Text>
+                  {decisionGroups?.groups?.map((g) => {
+                    const value = `${DECISION_GROUP_PREFIX}${g.id}`;
+                    const active = curationStatus === value;
+                    return (
+                      <Button
+                        key={g.id}
+                        size="slim"
+                        pressed={active}
+                        onClick={() => {
+                          setCurationStatus(active ? "" : value);
+                          setPage(1);
+                        }}
+                      >
+                        {`${g.label} (${g.count.toLocaleString("pt-PT")})`}
+                      </Button>
+                    );
+                  })}
+                  {decisionGroups?.error && (
+                    <Text as="span" variant="bodySm" tone="critical">{`Fila de decisão: ${decisionGroups.error}`}</Text>
+                  )}
+                  {decisionGroups?.liveError && (
+                    <Tooltip content={decisionGroups.liveError}>
+                      <Badge tone="warning">Loja não lida: «Regra desatualizada» incompleto</Badge>
+                    </Tooltip>
+                  )}
+                </InlineStack>
                 <InlineStack align="space-between" blockAlign="center">
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Tabs
@@ -2271,7 +2437,7 @@ export default function CurationDashboard() {
                             : products.filter((p) => selectedSkus.includes(p.sku)).length
                         }
                         onSelectionChange={handleTableSelectionChange}
-                        sortable={[true, false, false, true, false, false, false, true, false, false]}
+                        sortable={[true, false, false, false, true, false, false, false, false, true, false, false]}
                         sortDirection={sortDir === "asc" ? "ascending" : "descending"}
                         sortColumnIndex={SORT_FIELD_TO_COLUMN[sortBy]}
                         onSort={handleTableSort}
@@ -2284,10 +2450,12 @@ export default function CurationDashboard() {
                           { title: "Produto" },
                           { title: "Franquia / Categoria" },
                           { title: netRule ? "Custo bruto" : "Custo c/ IVA", alignment: "end" },
-                          { title: "PVPR", alignment: "end" },
+                          { title: "Margem %", alignment: "end" },
+                          { title: "PVPR do feed", alignment: "end" },
                           { title: netRule ? "Preço final sem IVA" : "Preço final", alignment: "end" },
-                          { title: "Lucro antes de portes", alignment: "end" },
+                          { title: "Margem €", alignment: "end" },
                           { title: "Preço" },
+                          { title: "Mercado (com IVA)", alignment: "end" },
                           { title: "Stock" },
                           { title: "Estado" },
                           { title: "Ações", alignment: "center" },
@@ -2307,6 +2475,10 @@ export default function CurationDashboard() {
                             profit,
                             priceStatus,
                             priceError,
+                            marginPct: rowMarginPct,
+                            market,
+                            omnibusMinCents,
+                            manualPrice,
                             productMarginPct,
                             liveState,
                             livePrice,
@@ -2333,6 +2505,13 @@ export default function CurationDashboard() {
                           const primaryFranchise = franchiseList[0] || null;
                           const photoCount = (imageUrl || "").split(/[,;|\n\r]+/).filter((u) => /^https?:\/\//i.test(u.trim())).length;
                           const selected = selectedSkus.includes(sku);
+                          // Omnibus: só calculado e mostrado (mínimo dos 30 dias da regra em vigor); nada vai para a loja.
+                          const omnibusNote =
+                            omnibusMinCents != null ? (
+                              <Tooltip content="Preço mais baixo praticado nos últimos 30 dias (regra de preço em vigor). Só informativo: a app não escreve preço riscado na loja.">
+                                <Text as="span" variant="bodySm" tone="subdued">{`Omnibus mín. 30d ${formatEur(omnibusMinCents / 100)}`}</Text>
+                              </Tooltip>
+                            ) : null;
 
                           let curationLabel = "Pendente";
                           let curationTone = "warning";
@@ -2412,6 +2591,9 @@ export default function CurationDashboard() {
                                 <Text as="span" alignment="end" tone="subdued">{cost != null ? formatEur(cost) : "—"}</Text>
                               </IndexTable.Cell>
                               <IndexTable.Cell>
+                                <Text as="span" alignment="end" tone="subdued">{rowMarginPct != null ? `${rowMarginPct} %` : "—"}</Text>
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
                                 <Text as="span" alignment="end" tone="subdued">{pvpr != null ? formatEur(pvpr) : "—"}</Text>
                               </IndexTable.Cell>
                               <IndexTable.Cell>
@@ -2420,6 +2602,7 @@ export default function CurationDashboard() {
                                   <BlockStack gap="050" inlineAlign="end">
                                     <Text as="span" alignment="end" fontWeight="semibold">{formatEur(livePrice)}</Text>
                                     <Text as="span" variant="bodySm" tone="subdued">na loja</Text>
+                                    {omnibusNote}
                                     {liveState === "differs" && (
                                       <Tooltip content={`A loja tem ${formatEur(livePrice)}, a regra dá ${formatEur(finalPrice)} com a margem atual. O preço de um produto já publicado muda-se no admin.`}>
                                         <Badge tone="warning">{`Regra: ${formatEur(finalPrice)}`}</Badge>
@@ -2452,6 +2635,7 @@ export default function CurationDashboard() {
                                 ) : (
                                   <BlockStack gap="050" inlineAlign="end">
                                     <Text as="span" alignment="end" fontWeight="semibold">{formatEur(finalPrice)}</Text>
+                                    {omnibusNote}
                                     {productMarginPct != null && (
                                       <Tooltip content="Margem deste produto (barra de seleção). Só pesa na criação: um produto já publicado mantém o preço da loja.">
                                         <Text as="span" variant="bodySm" tone="subdued">{`margem ${productMarginPct} %`}</Text>
@@ -2475,11 +2659,41 @@ export default function CurationDashboard() {
                                 )}
                               </IndexTable.Cell>
                               <IndexTable.Cell>
+                                <BlockStack gap="050" inlineAlign="end">
+                                  {market ? (
+                                    <>
+                                      <Text as="span" alignment="end" fontWeight="semibold">{formatEur(market.price)}</Text>
+                                      <Text as="span" variant="bodySm" tone="subdued">
+                                        {`${market.store} · com IVA · ${new Date(market.observedAt).toLocaleDateString("pt-PT")}`}
+                                      </Text>
+                                    </>
+                                  ) : (
+                                    <Text as="span" tone="subdued">—</Text>
+                                  )}
+                                  <Button
+                                    size="micro"
+                                    variant="plain"
+                                    onClick={() => setMarketEdit({ sku, title, store: market?.store || "Worten", price: "" })}
+                                  >
+                                    {market ? "Atualizar" : "Registar"}
+                                  </Button>
+                                </BlockStack>
+                              </IndexTable.Cell>
+                              <IndexTable.Cell>
                                 <Badge tone={stockTone}>{stockLabel}</Badge>
                               </IndexTable.Cell>
                               <IndexTable.Cell>
                                 <BlockStack gap="050">
                                   <Badge tone={curationTone}>{curationLabel}</Badge>
+                                  {manualPrice && (
+                                    <Tooltip
+                                      content={`Preço manual ${formatEur(manualPrice.price)}${manualPrice.by ? ` · ${manualPrice.by}` : ""}${
+                                        manualPrice.at ? ` · ${new Date(manualPrice.at).toLocaleDateString("pt-PT")}` : ""
+                                      }${manualPrice.reason ? ` · ${manualPrice.reason}` : ""}`}
+                                    >
+                                      <Badge tone="attention">Preço manual</Badge>
+                                    </Tooltip>
+                                  )}
                                   {wasPublished && status !== "PUBLISHED" && (
                                     <Tooltip content={deletedInAdminAt ? `Apagado no admin em ${new Date(deletedInAdminAt).toLocaleDateString("pt-PT")}. Só volta à loja com aprovação nova.` : "Já esteve publicado e foi apagado no admin. Só volta à loja com aprovação nova."}>
                                       <Badge tone="info">Já esteve publicado</Badge>

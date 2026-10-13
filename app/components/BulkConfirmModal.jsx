@@ -11,11 +11,11 @@ import { BULK_CONFIRM_THRESHOLD, BULK_SAMPLE_SIZE, isBulkConfirmed } from "../..
  * @param {{
  *   open: boolean, title: string, confirmLabel: string, destructive?: boolean,
  *   scope: number, scopeText: string, sample: Array<{ sku: string, title?: string|null }>,
- *   loading?: boolean, busy?: boolean, error?: string|null,
+ *   loading?: boolean, busy?: boolean, error?: string|null, note?: string|null,
  *   onConfirm: (confirmCount: number) => void, onClose: () => void,
  * }} props
  */
-export function BulkConfirmModal({ open, title, confirmLabel, destructive = false, scope, scopeText, sample, loading = false, busy = false, error = null, onConfirm, onClose }) {
+export function BulkConfirmModal({ open, title, confirmLabel, destructive = false, scope, scopeText, sample, loading = false, busy = false, error = null, note = null, onConfirm, onClose }) {
   const [typed, setTyped] = useState("");
   useEffect(() => {
     setTyped("");
@@ -48,6 +48,7 @@ export function BulkConfirmModal({ open, title, confirmLabel, destructive = fals
               <Text as="p" variant="bodyMd">
                 Esta ação aplica-se a <strong>{scope.toLocaleString("pt-PT")} produto(s)</strong>, não só à página atual.
               </Text>
+              {note && <Text as="p" variant="bodySm" tone="subdued">{note}</Text>}
               {scope <= BULK_CONFIRM_THRESHOLD && <Text as="p" tone="subdued">Âmbito: {scopeText}</Text>}
               {shown.length > 0 && scope <= BULK_CONFIRM_THRESHOLD && (
                 <Text as="p" variant="bodySm" tone="subdued">
