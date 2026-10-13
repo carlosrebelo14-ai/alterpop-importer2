@@ -1,13 +1,12 @@
-import { redirect } from "react-router";
 import { authenticateAdmin } from "../utils/authenticate.server";
+import { requestScopesOutOfFrame } from "../utils/requestScopes.server";
 
 /**
  * GET /api/shopify/grant-themes-scope
- * Redireciona o comerciante para aprovar read_themes (guarda do tema, Decisão 32). Só leitura:
- * a app nunca pede write_themes.
+ * Leva o comerciante a aprovar read_themes (guarda do tema, Decisão 32), fora do iframe do
+ * Admin. Só leitura: a app nunca pede write_themes.
  */
 export const loader = async ({ request }) => {
-  const { scopes } = await authenticateAdmin(request);
-  await scopes.request(["read_themes"]);
-  return redirect("/app");
+  const { scopes, redirect } = await authenticateAdmin(request);
+  return requestScopesOutOfFrame({ scopes, redirect, requested: ["read_themes"] });
 };

@@ -149,6 +149,7 @@ export default function SettingsPage() {
   const fetcher = useFetcher();
   const excludeFetcher = useFetcher();
   const marketFetcher = useFetcher();
+  const themeScopeFetcher = useFetcher();
   const shopify = useAppBridge();
   const [excludeDraft, setExcludeDraft] = useState(excludeListJson);
   const [marketDraft, setMarketDraft] = useState(marketSettingsJson);
@@ -507,7 +508,11 @@ export default function SettingsPage() {
             aqui e liga <code>THEME_GUARD=ON</code> depois.
           </Text>
           <div>
-            <Button onClick={() => window.open("/api/shopify/grant-themes-scope", "_top")}>
+            {/* fetch com session token: o App Bridge segue o redirect e sai do iframe */}
+            <Button
+              loading={themeScopeFetcher.state !== "idle"}
+              onClick={() => themeScopeFetcher.load("/api/shopify/grant-themes-scope")}
+            >
               Autorizar leitura do tema
             </Button>
           </div>
