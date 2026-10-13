@@ -15,7 +15,13 @@
 #      visível no summary enquanto o environment pede aprovação. Nas tarefas só de leitura, mode=execute não
 #      faz nada de diferente.
 #
-# catalog_health e db_push esperam por uma indexação a decorrer, até 15 min.
+# catalog_health e db_push esperam por uma indexação a decorrer, até 15 min. Se ao fim disso ainda indexar,
+# ambos falham sem correr ("catálogo a indexar, repetir").
+#
+# Repositório público: logs e resumos só têm contagens e estados (ver scripts/ci/maintenance.sh).
+#
+# Concorrência: o mesmo grupo (deploy-production) do workflow `deploy`, sem cancelar; uma corrida à espera de
+# aprovação do environment ocupa o grupo e as seguintes ficam em fila.
 #
 # PRICE_MODE e THEME_GUARD NÃO são tocados aqui. Só corre a partir de main.
 # Precisa do secret FLY_API_TOKEN e do environment "production" (ver o resumo de configuração no repositório).
@@ -47,7 +53,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: maintenance-production
+  group: deploy-production
   cancel-in-progress: false
 
 jobs:

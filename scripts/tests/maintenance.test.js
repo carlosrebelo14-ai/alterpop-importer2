@@ -91,10 +91,14 @@ case "$cmd" in
     if [ -n "$FAKE_PROBE_ERROR" ]; then echo "[check-no-indexing] não consegui ler"; exit 2; fi
     echo "[check-no-indexing] nenhuma indexação a decorrer."; exit 0;;
   *"npm run catalog:health"*)
-    printf '  ✓ V3  ok\\n  ✗ V5  total — esperado x, obtido y\\n  ! V11  aviso\\n'; exit "\${FAKE_HEALTH_RC:-0}";;
-  *"migrate diff"*) echo "-- CreateTable"; exit "\${FAKE_DIFF_RC:-2}";;
-  *tags-cleanup*) echo "produtos lidos: 57 · limpos: 0 · a limpar: 57 (179 tag(s))"; exit "\${FAKE_RC:-0}";;
-  *character-pages-sync*) printf '  update     darth-vader  Star Wars  24 produtos\\n  create     grogu  Star Wars  7 produtos\\n'; exit "\${FAKE_RC:-0}";;
+    printf '  ✓ V3  produtos APPROVED = 0\n  ✗ V5  total — esperado 8435450233067, obtido darth-vader\n  ! V11  gid://shopify/Product/123 a 9,99 €\n'; exit "\${FAKE_HEALTH_RC:-0}";;
+  *"migrate diff"*) printf 'CREATE TABLE "Segredo" (preco 9,99);\nCREATE UNIQUE INDEX "x" ON "Segredo"(a);\n'; exit "\${FAKE_DIFF_RC:-2}";;
+  *tags-cleanup*)
+    printf 'produtos lidos: 57 · limpos: 0 · a limpar: 57 (179 tag(s)) · sync_locked de fora: 0\ntags distintas fora da lista: 2\n    57  new-arrival\n    40  Funko\n  star-wars-darth-vader SKU 8435450233067 9,99 €\nreleitura: 57 produto(s) · com tags fora da lista (sem contar sync_locked excluídos): 0\n'; exit "\${FAKE_RC:-0}";;
+  *character-pages-sync*) printf '  update     darth-vader  Star Wars  24 produtos\n  create     grogu  Star Wars  7 produtos gid://shopify/Metaobject/1\nalterpop.character escrito em 31 produto(s)\n'; exit "\${FAKE_RC:-0}";;
+  *print-access-scopes*) printf '[print-access-scopes] 15 scope(s) concedido(s) em loja-secreta.myshopify.com:\n  - read_themes\n[print-access-scopes] read_themes: concedido\n'; exit "\${FAKE_RC:-0}";;
+  *theme-contract-status*) printf '{"ok":true,"enforced":true,"status":"ok","blocking":0,"warnings":1,"checkedAt":"2026-10-13T00:00:00Z","erro":false}\n'; exit "\${FAKE_RC:-0}";;
+  *character-cycle-summary*) printf '{"status":"yellow","ranAt":"2026-10-09T10:00:00Z","toApply_n":8}\n'; exit "\${FAKE_RC:-0}";;
   *) echo "ran: $cmd"; exit "\${FAKE_RC:-0}";;
 esac
 `,
@@ -141,7 +145,7 @@ check("tags_cleanup dry-run: sem --execute, só lista; execute: com --execute", 
 check("character_pages_sync: dry-run sem --execute, execute com", () => {
   let r = run("character_pages_sync", "dry-run");
   assert.ok(!ran(r, "--execute"));
-  assert.match(r.summaryText, /update {5}darth-vader/);
+  assert.match(r.summaryText, /1 criar, 1 atualizar/);
   assert.match(r.summaryText, /2 ações/);
   r = run("character_pages_sync", "execute");
   assert.ok(ran(r, "character-pages-sync.js --execute"));
@@ -155,9 +159,12 @@ check("tarefas só de leitura ignoram execute: nunca correm comandos de escrita"
 });
 check("diagnose_theme corre os dois comandos de leitura; diagnose_characters o cat e o dry-run", () => {
   let r = run("diagnose_theme", "dry-run");
-  assert.ok(ran(r, "print-access-scopes.js") && ran(r, "theme-contract-status.js"));
+  assert.ok(ran(r, "print-access-scopes.js") && ran(r, "theme-contract-status.js --summary"));
+  assert.match(r.summaryText, /read_themes: \*\*concedido\*\*/);
+  assert.match(r.summaryText, /enforced = true/);
   r = run("diagnose_characters", "dry-run");
-  assert.ok(ran(r, "character-pages-cycle-state.json") && ran(r, "character-pages-sync.js"));
+  assert.ok(ran(r, "character-cycle-summary.js") && ran(r, "character-pages-sync.js"));
+  assert.ok(!r.calls.some((c) => c.includes("cat /app")));
   assert.ok(!ran(r, "--execute"));
 });
 
@@ -167,6 +174,7 @@ check("sem indexação: avalia logo (1 sondagem)", () => {
   assert.equal(r.status, 0);
   assert.equal(r.probes, 1);
   assert.match(r.summaryText, /1 verdes, 1 vermelhas, 1 avisos/);
+  assert.match(r.summaryText, /Vermelhas: V5/);
 });
 check("indexação nas 2 primeiras sondagens: espera, repete e só avalia à 3.ª", () => {
   const r = run("catalog_health", "dry-run", { FAKE_INDEXING_CALLS: "2" });
@@ -177,11 +185,13 @@ check("indexação nas 2 primeiras sondagens: espera, repete e só avalia à 3.�
   const health = calls.findIndex((c) => c.includes("catalog:health"));
   assert.ok(health > lastProbe, "o portão tem de correr depois da última sondagem");
 });
-check("indexação até ao fim do tempo: avalia na mesma e avisa que V5, V6, V7 e V17 podem estar errados", () => {
+check("indexação até ao fim do tempo: falha sem avaliar o portão, 'catálogo a indexar, repetir'", () => {
   const r = run("catalog_health", "dry-run", { FAKE_INDEXING_CALLS: "99" });
+  assert.equal(r.status, 75);
   assert.equal(r.probes, 3);
-  assert.ok(ran(r, "catalog:health"));
-  assert.match(r.summaryText, /V5, V6, V7 e V17 podem estar errados/);
+  assert.ok(!ran(r, "catalog:health"), "o portão não pode correr a meio da indexação");
+  assert.match(r.summaryText, /Catálogo a indexar, repetir/);
+  assert.doesNotMatch(r.summaryText, /verdes/);
 });
 check("estado da indexação ilegível: o portão não corre (falha fechada)", () => {
   const r = run("catalog_health", "dry-run", { FAKE_PROBE_ERROR: "1" });
@@ -192,8 +202,7 @@ check("portão vermelho → código 1 e vermelhas listadas no resumo, em portugu
   const r = run("catalog_health", "dry-run", { FAKE_HEALTH_RC: "1" });
   assert.equal(r.status, 1);
   assert.match(r.summaryText, /Resultado:\*\* ❌ Falhou \(código 1\)/);
-  assert.match(r.summaryText, /Vermelhas:/);
-  assert.match(r.summaryText, /V5 {2}total/);
+  assert.match(r.summaryText, /Vermelhas: V5/);
 });
 check("o tempo de espera por omissão é 15 min (15 sondagens de 60 s)", () => {
   assert.match(sh, /WAIT_STEP="\$\{WAIT_STEP_SECONDS:-60\}"/);
@@ -205,7 +214,7 @@ check("dry-run: só migrate diff (sem db:push), SQL diferente é sucesso", () =>
   let r = run("db_push", "dry-run");
   assert.equal(r.status, 0);
   assert.ok(ran(r, "prisma migrate diff") && !ran(r, "npm run db:push"));
-  assert.match(r.summaryText, /difere/);
+  assert.match(r.summaryText, /difere.*1 tabelas a criar, 0 alterações de tabela, 1 índices a criar/);
   r = run("db_push", "dry-run", { FAKE_DIFF_RC: "0" });
   assert.equal(r.status, 0);
   assert.match(r.summaryText, /Sem alterações/);
@@ -234,13 +243,45 @@ check("execute com estado ilegível: não corre db:push", () => {
   assert.ok(!ran(r, "db:push"));
 });
 
+console.log("repositório público: logs e resumos só com contagens e estados");
+const PROIBIDO = [/8435450233067/, /darth-vader/, /gid:\/\/shopify/, /9,99/, /€/, /star-wars-/, /loja-secreta/, /Segredo/, /"checkedAt"/];
+check("nenhuma tarefa/fase deixa SKU, handle, preço, GID ou JSON completo no log nem no resumo", () => {
+  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters", "tags_cleanup", "character_pages_sync", "db_push"]) {
+    for (const phase of ["dry-run", "execute"]) {
+      const r = run(task, phase);
+      const visivel = `${r.stdout}\n${r.stderr}\n${r.summaryText}`;
+      for (const rx of PROIBIDO) assert.doesNotMatch(visivel, rx, `${task}/${phase} expõe ${rx}`);
+      assert.ok(visivel.length > 50, `${task}/${phase} sem resumo`);
+    }
+  }
+});
+check("em falha, nenhum texto bruto: só a causa classificada", () => {
+  const r = run("tags_cleanup", "execute", { FAKE_RC: "1" });
+  assert.equal(r.status, 1);
+  assert.match(r.summaryText, /Causa provável:/);
+  for (const rx of PROIBIDO) assert.doesNotMatch(`${r.stdout}${r.stderr}${r.summaryText}`, rx);
+});
+check("o script nunca escreve a saída bruta no log (sem tee nem cat do ficheiro de saída)", () => {
+  const exec = sh.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+  assert.doesNotMatch(exec, /\btee\b/);
+  assert.doesNotMatch(exec, /cat "\$OUT"|tail .*\$OUT/);
+  assert.match(exec, />>"\$OUT" 2>&1/);
+});
+check("o workflow maintenance e o deploy usam o mesmo grupo de concorrência, sem cancelar", () => {
+  const dep = fs.readFileSync(path.join(ROOT, ".github/workflows/deploy.yml"), "utf8");
+  const group = (t) => t.match(/concurrency:\n\s+group: (\S+)\n\s+cancel-in-progress: (\w+)/);
+  assert.deepEqual(group(yml).slice(1), ["deploy-production", "false"]);
+  assert.deepEqual(group(dep).slice(1), ["deploy-production", "false"]);
+});
+
 console.log("resumo");
 check("resumo em português com tarefa, modo, resultado, o que faz e saída", () => {
   const r = run("tags_cleanup", "dry-run");
-  for (const frag of ["## Manutenção · `tags_cleanup` · dry-run (não escreve)", "**Resultado:** ✅ Concluída sem erros", "**O que faz:**", "Não escreve na loja", "<details><summary>Saída"]) {
+  for (const frag of ["## Manutenção · `tags_cleanup` · dry-run (não escreve)", "**Resultado:** ✅ Concluída sem erros", "**O que faz:**", "Não escreve na loja", "Este resumo só tem contagens e estados"]) {
     assert.ok(r.summaryText.includes(frag), frag);
   }
-  assert.match(r.summaryText, /produtos lidos: 57/);
+  assert.match(r.summaryText, /Produtos lidos: \*\*57\*\*/);
+  assert.match(r.summaryText, /new-arrival: 57; Funko: 40/);
   const e = run("tags_cleanup", "execute");
   assert.match(e.summaryText, /execute \(escreve\)/);
 });
@@ -251,7 +292,7 @@ check("GITHUB_OUTPUT recebe a linha-chave do dry-run para o job execute", () => 
     cwd: ROOT, encoding: "utf8",
     env: { PATH: process.env.PATH, FLYCTL: t.bin, FAKE_LOG: t.log, FAKE_COUNT: t.count, GITHUB_STEP_SUMMARY: t.summary, GITHUB_OUTPUT: out },
   });
-  assert.match(fs.readFileSync(out, "utf8"), /key=produtos lidos: 57/);
+  assert.match(fs.readFileSync(out, "utf8"), /key=lidos 57, a limpar 57,179/);
 });
 
 if (failures) {
