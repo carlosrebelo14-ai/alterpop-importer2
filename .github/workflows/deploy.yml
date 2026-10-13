@@ -22,6 +22,11 @@
 # scripts/catalog/character-pages-sync.js (sem --execute: não escreve na loja). Salta deploy,
 # catalog:health, verificação de indexação e db:push. Não se combina com db_push_only.
 #
+# Input diagnose_theme (boolean, default false): só leitura. Com true corre só checkout, setup-flyctl e dois
+# comandos fixos: scripts/maintenance/print-access-scopes.js (scopes concedidos, incl. read_themes) e
+# scripts/maintenance/theme-contract-status.js (o mesmo JSON de GET /api/theme-contract/status). Não liga
+# THEME_GUARD. Não se combina com db_push_only nem diagnose_characters.
+#
 # setup-flyctl instala o binário `flyctl` (sem o alias `fly`): os passos de SSH usam `flyctl`.
 #
 # PRICE_MODE e THEME_GUARD NÃO são tocados aqui: as flags continuam como estão na Fly.
@@ -50,6 +55,10 @@ on:
         description: "Só leitura: estado do ciclo de Characters e dry-run do character-pages-sync (sem deploy nem db:push)"
         type: boolean
         default: false
+      diagnose_theme:
+        description: "Só leitura: scopes concedidos (read_themes) e estado do contrato do tema (sem deploy nem db:push)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -67,12 +76,13 @@ jobs:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       DB_PUSH_ONLY: ${{ inputs.db_push_only == true || inputs.db_push_only == 'true' }}
       DIAGNOSE_CHARACTERS: ${{ inputs.diagnose_characters == true || inputs.diagnose_characters == 'true' }}
-      SKIP_DEPLOY: ${{ inputs.skip_deploy == true || inputs.skip_deploy == 'true' || inputs.db_push_only == true || inputs.db_push_only == 'true' || inputs.diagnose_characters == true || inputs.diagnose_characters == 'true' }}
+      DIAGNOSE_THEME: ${{ inputs.diagnose_theme == true || inputs.diagnose_theme == 'true' }}
+      SKIP_DEPLOY: ${{ inputs.skip_deploy == true || inputs.skip_deploy == 'true' || inputs.db_push_only == true || inputs.db_push_only == 'true' || inputs.diagnose_characters == true || inputs.diagnose_characters == 'true' || inputs.diagnose_theme == true || inputs.diagnose_theme == 'true' }}
     steps:
-      - name: Recusar db_push_only e diagnose_characters em conjunto
-        if: env.DB_PUSH_ONLY == 'true' && env.DIAGNOSE_CHARACTERS == 'true'
+      - name: Recusar db_push_only, diagnose_characters e diagnose_theme em conjunto
+        if: (env.DB_PUSH_ONLY == 'true' && env.DIAGNOSE_CHARACTERS == 'true') || (env.DB_PUSH_ONLY == 'true' && env.DIAGNOSE_THEME == 'true') || (env.DIAGNOSE_CHARACTERS == 'true' && env.DIAGNOSE_THEME == 'true')
         run: |
-          echo "db_push_only e diagnose_characters não se combinam: escolhe um."
+          echo "db_push_only, diagnose_characters e diagnose_theme não se combinam: escolhe um."
           exit 1
 
       - uses: actions/checkout@v4
@@ -101,7 +111,7 @@ jobs:
         run: bash scripts/deploy.sh
 
       - name: Saúde do catálogo na Fly (catalog:health)
-        if: env.DB_PUSH_ONLY != 'true' && env.DIAGNOSE_CHARACTERS != 'true'
+        if: env.DB_PUSH_ONLY != 'true' && env.DIAGNOSE_CHARACTERS != 'true' && env.DIAGNOSE_THEME != 'true'
         run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run catalog:health'"
 
       - name: Verificar que não há indexação a decorrer (só db_push_only)
@@ -118,6 +128,14 @@ jobs:
         if: env.DIAGNOSE_CHARACTERS == 'true'
         run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && node scripts/catalog/character-pages-sync.js'"
 
+      - name: Tema, scopes concedidos (só diagnose_theme, só leitura)
+        if: env.DIAGNOSE_THEME == 'true'
+        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && node scripts/maintenance/print-access-scopes.js'"
+
+      - name: Tema, estado do contrato (só diagnose_theme, só leitura)
+        if: env.DIAGNOSE_THEME == 'true'
+        run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && node scripts/maintenance/theme-contract-status.js'"
+
       - name: Esquema na Fly (db:push)
-        if: env.DIAGNOSE_CHARACTERS != 'true'
+        if: env.DIAGNOSE_CHARACTERS != 'true' && env.DIAGNOSE_THEME != 'true'
         run: flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && npm run db:push'"

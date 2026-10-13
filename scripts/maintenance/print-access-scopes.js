@@ -1,3 +1,4 @@
+/* eslint-env node */
 // B14 (briefing backend, 24/09/2026), secção 4.
 //
 // shopify.app.toml declara o PEDIDO de scope, não a CONCESSÃO — só a loja, ao aprovar no
@@ -7,7 +8,7 @@
 // Uso: node scripts/maintenance/print-access-scopes.js
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
-import { checkAccessScopes, REQUIRED_PUBLISH_SCOPES } from "../../lib/importer/shopify/accessScopesGuard.js";
+import { checkAccessScopes, REQUIRED_PUBLISH_SCOPES, REQUIRED_THEME_SCOPES } from "../../lib/importer/shopify/accessScopesGuard.js";
 
 const SHOP = process.env.SHOPIFY_SHOP_URL;
 
@@ -34,6 +35,12 @@ async function main() {
   for (const scope of REQUIRED_PUBLISH_SCOPES) {
     const grantedNow = result.granted.includes(scope);
     console.log(`[print-access-scopes] ${scope}: ${grantedNow ? "concedido" : "EM FALTA"}`);
+  }
+
+  // Guarda do tema (Decisão 32): informativo, não muda o código de saída (a guarda é opcional).
+  const theme = checkAccessScopes(handles, REQUIRED_THEME_SCOPES);
+  for (const scope of REQUIRED_THEME_SCOPES) {
+    console.log(`[print-access-scopes] ${scope}: ${theme.granted.includes(scope) ? "concedido" : "EM FALTA"}`);
   }
 
   if (!result.ok) {

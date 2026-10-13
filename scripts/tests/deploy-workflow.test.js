@@ -91,8 +91,20 @@ check("diagnose_characters: dois comandos fixos, só leitura, sem texto livre", 
   assert.match(cycle, /cat \/app\/data\/character-pages-cycle-state\.json/);
   assert.match(sync, /node scripts\/catalog\/character-pages-sync\.js'"/); // sem argumentos: dry-run
   assert.doesNotMatch(code, /character-pages-sync\.js[^\n]*--execute/);
-  assert.doesNotMatch(code, /\$\{\{\s*(inputs\.(?!skip_deploy|db_push_only|diagnose_characters)|github\.event)/); // nenhum texto livre entra em comandos
+  assert.doesNotMatch(code, /\$\{\{\s*(inputs\.(?!skip_deploy|db_push_only|diagnose_characters|diagnose_theme)|github\.event)/); // nenhum texto livre entra em comandos
   assert.doesNotMatch(cycle, /\$[A-Za-z{]/); // nada que o shell do runner expanda
+});
+check("diagnose_theme: boolean, default false, dois comandos fixos só de leitura, sem db:push", () => {
+  assert.match(code, /diagnose_theme:\n\s+description: .*\n\s+type: boolean\n\s+default: false/);
+  assert.match(code, /SKIP_DEPLOY: .*inputs\.diagnose_theme == true/);
+  const scopes = step("print-access-scopes.js");
+  const status = step("theme-contract-status.js");
+  for (const s of [scopes, status]) assert.match(s, /if: env\.DIAGNOSE_THEME == 'true'/);
+  assert.match(scopes, /node scripts\/maintenance\/print-access-scopes\.js'"/);
+  assert.match(status, /node scripts\/maintenance\/theme-contract-status\.js'"/);
+  assert.match(step("npm run catalog:health"), /env\.DIAGNOSE_THEME != 'true'/);
+  assert.match(step("npm run db:push"), /env\.DIAGNOSE_THEME != 'true'/);
+  assert.match(step("Recusar db_push_only"), /DIAGNOSE_CHARACTERS == 'true' && env\.DIAGNOSE_THEME == 'true'/);
 });
 check("a verificação só corre com db_push_only e vem antes do db:push", () => {
   const s = step("check-no-indexing.mjs");
