@@ -81,7 +81,7 @@ check("setup-flyctl corre sempre; db:push só não corre no diagnóstico", () =>
 });
 check("diagnose_characters: boolean, default false, e não se combina com db_push_only", () => {
   assert.match(code, /diagnose_characters:\n\s+description: .*\n\s+type: boolean\n\s+default: false/);
-  assert.match(step("Recusar db_push_only"), /DB_PUSH_ONLY == 'true' && env\.DIAGNOSE_CHARACTERS == 'true'/);
+  assert.match(step("Recusar mais do que um modo"), /DIAGNOSE_CHARACTERS/);
   assert.match(code, /SKIP_DEPLOY: .*inputs\.diagnose_characters == true/);
 });
 check("diagnose_characters: dois comandos fixos, só leitura, sem texto livre", () => {
@@ -91,7 +91,7 @@ check("diagnose_characters: dois comandos fixos, só leitura, sem texto livre", 
   assert.match(cycle, /cat \/app\/data\/character-pages-cycle-state\.json/);
   assert.match(sync, /node scripts\/catalog\/character-pages-sync\.js'"/); // sem argumentos: dry-run
   assert.doesNotMatch(code, /character-pages-sync\.js[^\n]*--execute/);
-  assert.doesNotMatch(code, /\$\{\{\s*(inputs\.(?!skip_deploy|db_push_only|diagnose_characters|diagnose_theme)|github\.event)/); // nenhum texto livre entra em comandos
+  assert.doesNotMatch(code, /\$\{\{\s*(inputs\.(?!skip_deploy|db_push_only|diagnose_characters|diagnose_theme|tags_cleanup)|github\.event)/); // nenhum texto livre entra em comandos
   assert.doesNotMatch(cycle, /\$[A-Za-z{]/); // nada que o shell do runner expanda
 });
 check("diagnose_theme: boolean, default false, dois comandos fixos só de leitura, sem db:push", () => {
@@ -104,7 +104,25 @@ check("diagnose_theme: boolean, default false, dois comandos fixos só de leitur
   assert.match(status, /node scripts\/maintenance\/theme-contract-status\.js'"/);
   assert.match(step("npm run catalog:health"), /env\.DIAGNOSE_THEME != 'true'/);
   assert.match(step("npm run db:push"), /env\.DIAGNOSE_THEME != 'true'/);
-  assert.match(step("Recusar db_push_only"), /DIAGNOSE_CHARACTERS == 'true' && env\.DIAGNOSE_THEME == 'true'/);
+  assert.match(step("Recusar mais do que um modo"), /DIAGNOSE_THEME/);
+});
+check("tags_cleanup: choice off|dry-run|execute, default off, comandos fixos, exclusivo", () => {
+  assert.match(code, /tags_cleanup:\n\s+description: .*\n\s+type: choice\n\s+default: "off"\n\s+options:\n\s+- "off"\n\s+- dry-run\n\s+- execute/);
+  assert.match(code, /TAGS_CLEANUP: \$\{\{ inputs\.tags_cleanup \|\| 'off' \}\}/);
+  assert.match(code, /SKIP_DEPLOY: \$\{\{ inputs\.tags_cleanup == 'dry-run' \|\| inputs\.tags_cleanup == 'execute'/);
+  const dry = step("dry-run do tags-cleanup");
+  const exec = step("EXECUTE do tags-cleanup");
+  assert.match(dry, /if: env\.TAGS_CLEANUP == 'dry-run'/);
+  assert.match(exec, /if: env\.TAGS_CLEANUP == 'execute'/);
+  assert.match(dry, /cd \/app && node scripts\/catalog\/tags-cleanup\.js'"/); // sem flags: dry-run
+  assert.match(exec, /cd \/app && node scripts\/catalog\/tags-cleanup\.js --execute'"/);
+  assert.doesNotMatch(code, /tags-cleanup\.js[^\n]*(--include-locked|--all-statuses)/);
+  assert.match(step("npm run catalog:health"), /env\.TAGS_CLEANUP == 'off'/);
+  assert.match(step("npm run db:push"), /env\.TAGS_CLEANUP == 'off'/);
+  const guard = step("Recusar mais do que um modo");
+  assert.match(guard, /TAGS_CLEANUP" != "off"/);
+  assert.doesNotMatch(guard, /\bif: /); // corre sempre
+  assert.doesNotMatch(code, /\$\{\{\s*inputs\.tags_cleanup\s*\}\}.*run:/);
 });
 check("a verificação só corre com db_push_only e vem antes do db:push", () => {
   const s = step("check-no-indexing.mjs");
