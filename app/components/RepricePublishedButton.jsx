@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { BlockStack, Banner, Button, InlineStack, Modal, Text, Badge, ChoiceList, Tooltip } from "@shopify/polaris";
+import { BlockStack, Banner, Button, Checkbox, InlineStack, Modal, Text, Badge, ChoiceList, Tooltip } from "@shopify/polaris";
 import { BulkActionConfirm, isBulkConfirmed } from "./BulkActionConfirm.jsx";
 import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
 
@@ -9,6 +9,11 @@ import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
  * Âmbito por omissão: todos os publicados com a regra desatualizada; limitado: os do filtro
  * atual do painel. O preço da loja é lido da Shopify no momento da pré-visualização.
  * Servidor: app/routes/api.curation.reprice-published.jsx.
+ *
+ * Regra de preço (Decisão 31): com PRICE_MODE desligada o botão extra "Pré-visualizar regra
+ * NET" mostra os preços NET (só leitura; o servidor recusa executar uma regra que não é a
+ * sua). Produtos com preço manual (override da curadoria) ficam de fora, salvo a opção
+ * "Incluir preços manuais".
  */
 const THRESHOLD_FALLBACK = 50;
 const fmtPct = (n) => `${n > 0 ? "+" : ""}${(Math.round(n * 10) / 10).toLocaleString("pt-PT")} %`;
@@ -39,6 +44,8 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
   const [typed, setTyped] = useState("");
   const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState(null);
+  const [previewRule, setPreviewRule] = useState(null); // null = regra do servidor; "NET" = só pré-visualização
+  const [includeManual, setIncludeManual] = useState(false);
 
   // Quantos publicados têm a regra desatualizada → ativa o botão.
   useEffect(() => {
@@ -48,7 +55,7 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
         const res = await fetch("/api/curation/reprice-published", { credentials: "same-origin" });
         const data = await res.json();
         if (cancelled) return;
-        setSummary(data.ok ? { published: data.published, outdated: data.outdated } : { error: data.error || "Erro" });
+        setSummary(data.ok ? { published: data.published, outdated: data.outdated, rule: data.rule } : { error: data.error || "Erro" });
       } catch (err) {
         if (!cancelled) setSummary({ error: err?.message || "Falha de rede" });
       }
@@ -59,25 +66,29 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
   }, [refreshKey]);
 
   const loadPreview = useCallback(
-    async (m) => {
+    async (m, rule = previewRule, manual = includeManual) => {
       setLoading(true);
       setError(null);
       setPreview(null);
       setTyped("");
-      const data = await post({ action: "preview", mode: m, filters });
+      const data = await post({ action: "preview", mode: m, filters, rule: rule || undefined, includeManual: manual });
       setLoading(false);
       if (!data.ok) setError(data.error || "Erro na pré-visualização");
       else setPreview(data);
     },
-    [filters]
+    [filters, previewRule, includeManual]
   );
 
-  const openModal = useCallback(() => {
-    setOpen(true);
-    setResult(null);
-    setMode("rule");
-    loadPreview("rule");
-  }, [loadPreview]);
+  const openModal = useCallback(
+    (rule = null) => {
+      setOpen(true);
+      setResult(null);
+      setMode("rule");
+      setPreviewRule(rule);
+      loadPreview("rule", rule, includeManual);
+    },
+    [loadPreview, includeManual]
+  );
 
   const close = useCallback(() => {
     setOpen(false);
@@ -90,11 +101,13 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
   const threshold = preview?.confirmThreshold ?? THRESHOLD_FALLBACK;
   const actionable = preview ? preview.totals.counts.update + preview.totals.counts.notFound : 0;
   const confirmed = isBulkConfirmed(scope, typed, threshold);
+  // Pré-visualização de uma regra que não é a do servidor: nunca se executa daqui.
+  const previewOnly = Boolean(preview && preview.rule !== preview.serverRule);
 
   const execute = useCallback(async () => {
     setExecuting(true);
     setError(null);
-    const data = await post({ action: "execute", mode, filters, confirmCount: scope });
+    const data = await post({ action: "execute", mode, filters, confirmCount: scope, rule: preview?.rule, includeManual });
     setExecuting(false);
     if (!data.ok) {
       setError(data.error || "Erro ao atualizar preços");
@@ -102,7 +115,7 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
     }
     setResult(data);
     onApplied?.(`Publicados: ${data.updated} atualizado(s), ${data.failed} falhado(s), ${data.ignored} ignorado(s).`);
-  }, [mode, filters, scope, onApplied]);
+  }, [mode, filters, scope, onApplied, preview?.rule, includeManual]);
 
   const ex = preview ? preview.rows.filter((r) => r.category === "ignored" || r.category === "failed" || r.category === "notFound") : [];
   const updates = preview ? preview.rows.filter((r) => r.category === "update") : [];
@@ -120,10 +133,17 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
   return (
     <>
       <Tooltip content={tip}>
-        <Button size="slim" disabled={disabled} onClick={openModal}>
+        <Button size="slim" disabled={disabled} onClick={() => openModal(null)}>
           {summary?.outdated > 0 ? `Aplicar aos publicados (${summary.outdated})` : "Aplicar aos publicados"}
         </Button>
       </Tooltip>
+      {summary?.rule === "LEGACY" && (
+        <Tooltip content="Mostra os preços que a regra NET (sem IVA) daria, só em leitura. Não liga a regra nem escreve na loja.">
+          <Button size="slim" onClick={() => openModal("NET")}>
+            Pré-visualizar regra NET
+          </Button>
+        </Tooltip>
+      )}
 
       {open && (
         <Modal
@@ -139,7 +159,7 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
                   destructive: true,
                   onAction: execute,
                   loading: executing,
-                  disabled: !preview || loading || executing || actionable === 0 || !confirmed,
+                  disabled: !preview || loading || executing || actionable === 0 || !confirmed || previewOnly,
                 }
           }
           secondaryActions={result ? [] : [{ content: "Cancelar", onAction: close }]}
@@ -163,7 +183,25 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
                 />
               )}
 
+              {!result && (
+                <Checkbox
+                  label="Incluir preços manuais"
+                  helpText="Produtos com preço fixado na curadoria ficam de fora por omissão. Ao incluí-los, o preço da loja passa ao da regra."
+                  checked={includeManual}
+                  onChange={(v) => {
+                    setIncludeManual(v);
+                    loadPreview(mode, previewRule, v);
+                  }}
+                />
+              )}
+
               {loading && <Text as="p" tone="subdued">A ler os preços da loja…</Text>}
+
+              {previewOnly && !result && (
+                <Banner tone="warning">
+                  {`Pré-visualização com a regra ${preview.rule} (o servidor está em ${preview.serverRule}). Só leitura: não é possível atualizar preços a partir daqui. Para aplicar a regra ${preview.rule}, liga PRICE_MODE=${preview.rule} depois de configurar os impostos na Shopify.`}
+                </Banner>
+              )}
 
               {preview && !result && (
                 <>
@@ -214,6 +252,7 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
                               <td style={td}>{`${fmtEurSigned(r.diff)} (${fmtPct(r.diffPct)})`}</td>
                               <td style={tdL}>
                                 {r.reasons.length ? r.reasons.join("; ") : "—"}
+                                {r.manualOverride ? " · preço manual incluído" : ""}
                                 {r.marginInferred && r.reasons.some((x) => x.startsWith("margem")) ? " *" : ""}
                               </td>
                               <td style={tdL}>{r.limit}</td>
@@ -223,7 +262,7 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
                       </table>
                       {updates.some((r) => r.marginInferred && r.reasons.some((x) => x.startsWith("margem"))) && (
                         <Text as="p" variant="bodySm" tone="subdued">
-                          * margem de origem estimada pelo preço da loja (a regra sobe em degraus de ,50 e ,90)
+                          * margem de origem estimada pelo preço da loja (a regra sobe em degraus de {preview.rule === "NET" ? "10 cêntimos" : ",50 e ,90"})
                         </Text>
                       )}
                     </div>

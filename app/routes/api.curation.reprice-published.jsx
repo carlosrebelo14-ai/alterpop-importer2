@@ -15,12 +15,14 @@ import { clearLivePriceCache } from "../../lib/importer/shopify/livePricePanel.s
  * "Aplicar aos publicados" — mudar a margem nunca mexe na loja; esta ação separada atualiza
  * os preços dos produtos já publicados.
  *
- * GET  → { published, outdated }: quantos publicados têm a regra desatualizada (ativa o botão).
- * POST { action: 'preview', mode: 'rule'|'filter', filters? }
- *      → pré-visualização, lida da Shopify no momento. Não escreve nada.
- * POST { action: 'execute', mode, filters?, confirmCount }
+ * GET  → { published, outdated, rule }: quantos publicados têm a regra desatualizada (ativa
+ *        o botão) e a regra de preço do servidor (PRICE_MODE).
+ * POST { action: 'preview', mode: 'rule'|'filter', filters?, rule?: 'NET'|'LEGACY', includeManual? }
+ *      → pré-visualização, lida da Shopify no momento. Não escreve nada. `rule` calcula numa
+ *        regra pedida sem mudar a global (pré-visualizar NET com PRICE_MODE desligada).
+ * POST { action: 'execute', mode, filters?, confirmCount, rule?, includeManual? }
  *      → escreve. confirmCount = nº de produtos do âmbito mostrado; se diferir, recusa.
- *        Recusa com um ciclo de sync a correr.
+ *        Recusa com um ciclo de sync a correr e com `rule` diferente da do servidor (409).
  */
 async function makeClient(shop) {
   return createShopifyClientFromSession(await loadOfflineSessionForShop(shop));
@@ -30,7 +32,7 @@ export const loader = async ({ request }) => {
   const { session } = await authenticateAdmin(request);
   try {
     const p = await buildRepricePreview({ shop: session.shop, client: await makeClient(session.shop), mode: "rule" });
-    return Response.json({ ok: true, published: p.publishedTotal, outdated: p.outdatedTotal });
+    return Response.json({ ok: true, published: p.publishedTotal, outdated: p.outdatedTotal, rule: p.serverRule });
   } catch (err) {
     return Response.json({ ok: false, error: err?.message || String(err) }, { status: 500 });
   }
@@ -54,8 +56,11 @@ export const action = async ({ request }) => {
     const skus = mode === "filter" ? await resolveFilteredSkus(shop, body.filters || {}) : [];
     const client = await makeClient(shop);
 
+    const rule = body.rule == null || body.rule === "" ? null : String(body.rule);
+    const includeManual = body.includeManual === true;
+
     if (body.action === "preview") {
-      const preview = await buildRepricePreview({ shop, client, mode, skus });
+      const preview = await buildRepricePreview({ shop, client, mode, skus, rule, includeManual });
       return Response.json({ ok: true, confirmThreshold: CONFIRM_THRESHOLD, ...preview });
     }
     if (body.action === "execute") {
@@ -64,6 +69,8 @@ export const action = async ({ request }) => {
         client,
         mode,
         skus,
+        rule,
+        includeManual,
         confirmCount: Number.isInteger(body.confirmCount) ? body.confirmCount : null,
       });
       invalidateCurationQueueCache();
@@ -73,7 +80,7 @@ export const action = async ({ request }) => {
     return Response.json({ ok: false, error: "Ação inválida." }, { status: 400 });
   } catch (err) {
     if (err instanceof RepriceError) {
-      const status = err.code === "SYNC_RUNNING" || err.code === "SCOPE_CHANGED" ? 409 : 400;
+      const status = err.code === "SYNC_RUNNING" || err.code === "SCOPE_CHANGED" || err.code === "RULE_MISMATCH" ? 409 : 400;
       return Response.json({ ok: false, code: err.code, error: err.message, confirmed: err.confirmed, now: err.now }, { status });
     }
     return Response.json({ ok: false, error: err?.message || String(err) }, { status: 500 });
