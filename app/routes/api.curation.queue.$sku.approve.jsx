@@ -30,6 +30,13 @@ export const action = async ({ request, params }) => {
       previousSnapshot,
     });
   } catch (err) {
+    if (err?.code === "APPROVE_PUBLISHED") {
+      return Response.json({ ok: false, error: err.message }, { status: 409 });
+    }
+    // Modo degradado (Decisão 34): 503 com a causa, não 404 de "SKU não encontrado".
+    if (err?.code === "DB_DEGRADED") {
+      return Response.json({ ok: false, error: err.message, dbDegraded: err.state ?? null }, { status: 503 });
+    }
     return Response.json(
       { ok: false, error: err?.message || String(err) },
       { status: 404 }

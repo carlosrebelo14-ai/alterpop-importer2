@@ -7,7 +7,8 @@ import {
   failShopifySyncJob,
 } from "../../lib/importer/shopify/shopifySyncJob.server.js";
 import { startApprovedShopifySyncInBackground } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
-import { listApprovedSkusForShopifySync } from "../../lib/curation/curationQueue.server.js";
+import { listApprovedSkusForShopifySync, loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
+import { resolveSyncSkus } from "../../lib/importer/shopify/resolveSyncSkus.js";
 import {
   loadOfflineSessionForShop,
   ShopifyAuthSessionError,
@@ -47,6 +48,8 @@ export const action = async ({ request }) => {
 
   let customTagsError = null;
   let requestedSkus = null;
+  let skusVazios = false;
+  let skusInvalidos = false;
   let force = false;
   let confirmCount = null;
   let clearLock = false;
@@ -64,16 +67,31 @@ export const action = async ({ request }) => {
     if (Number.isInteger(json.confirmCount)) confirmCount = json.confirmCount;
     if (json.cancel || json.intent === "cancel") isCancel = true;
     customTagsError = rejectCustomTags(json.customTags);
-    if (Array.isArray(json.skus) && json.skus.length > 0) {
+    if (json.skus !== undefined && !Array.isArray(json.skus)) skusInvalidos = true;
+    if (Array.isArray(json.skus)) {
       requestedSkus = json.skus.map(String).filter(Boolean);
+      skusVazios = requestedSkus.length === 0;
     }
   } catch {
     /* sem body */
   }
 
+  // Lote 1 (DBG-03): `skus` que não é lista (string, número, objeto) lia-se como ausente e publicava tudo.
+  if (skusInvalidos && !isCancel) {
+    return Response.json({ ok: false, error: "O campo skus tem de ser uma lista de SKUs." }, { status: 400 });
+  }
+
   // A2 (29/09/2026): customTags recusado com erro visível — nunca ignorado em silêncio.
   if (customTagsError && !isCancel) {
     return Response.json({ ok: false, error: customTagsError }, { status: 400 });
+  }
+
+  // Lote 1 (DBG-03): `skus: []` lia-se como "todos os APPROVED". Publicar tudo pede-se sem o campo.
+  if (skusVazios && !isCancel) {
+    return Response.json(
+      { ok: false, error: "Lista de SKUs vazia. Para publicar todos os APPROVED, não envies o campo skus." },
+      { status: 400 }
+    );
   }
 
   // Handle cancellation
@@ -122,14 +140,16 @@ export const action = async ({ request }) => {
     );
   }
 
-  let approvedSkus = await listApprovedSkusForShopifySync();
-  if (requestedSkus && requestedSkus.length > 0) {
-    const reqSet = new Set(requestedSkus);
-    approvedSkus = approvedSkus.filter((sku) => reqSet.has(sku));
-    if (!approvedSkus.length) {
-      approvedSkus = requestedSkus;
-    }
+  // Lote 1 (DBG-03): só APPROVED. Um SKU pedido fora de APPROVED recusa o pedido inteiro, sem fallback.
+  const approvedList = await listApprovedSkusForShopifySync();
+  const statusBySku = requestedSkus?.length
+    ? new Map((await loadCurationQueue()).items.map((i) => [i.sku, i.status]))
+    : new Map();
+  const resolved = resolveSyncSkus({ requested: requestedSkus, approved: approvedList, statusBySku });
+  if (!resolved.ok) {
+    return Response.json({ ok: false, error: resolved.error, rejected: resolved.rejected }, { status: 400 });
   }
+  const approvedSkus = resolved.skus;
 
   if (!approvedSkus.length) {
     return Response.json(
