@@ -17,6 +17,7 @@ import { rejectCustomTags } from "../../lib/importer/shopify/tagAllowlist.js";
 import { assertBulkConfirm, BulkConfirmError } from "../../lib/curation/bulkConfirm.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { assertThemeContractValid, ThemeContractError } from "../../lib/importer/shopify/themeContract.server.js";
+import { readDbDegraded } from "../../lib/health/dbDegraded.js";
 
 /**
  * GET /api/shopify-sync — estado do job em curso (polling UI).
@@ -88,6 +89,15 @@ export const action = async ({ request }) => {
   if (clearLock) {
     await failShopifySyncJob(session.shop, "Bloqueio libertado manualmente pelo utilizador.");
     return Response.json({ ok: true, message: "Trava de sincronização libertada." });
+  }
+
+  // Modo degradado (Decisão 34): publicar recusa-se com a causa à vista. Cancelar continua a funcionar.
+  const dbDegraded = readDbDegraded();
+  if (dbDegraded) {
+    return Response.json(
+      { ok: false, error: `BD em modo degradado: ${dbDegraded.cause}`, dbDegraded },
+      { status: 503 }
+    );
   }
 
   if (await isShopifyResetRunning(session.shop)) {

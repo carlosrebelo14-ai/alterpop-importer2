@@ -13,6 +13,7 @@ import {
   loadOfflineSessionForShop,
   ShopifyAuthSessionError,
 } from "../../lib/session/loadOfflineSessionForShop.server.js";
+import { readDbDegraded } from "../../lib/health/dbDegraded.js";
 
 const CONFIRM_WORD = "APAGAR";
 
@@ -73,6 +74,15 @@ export const action = async ({ request }) => {
         error: `Confirmação inválida. Escreve exactamente "${CONFIRM_WORD}" para continuar.`,
       },
       { status: 400 }
+    );
+  }
+
+  // Modo degradado (Decisão 34): o reset apaga produtos na Shopify. Recusa-se antes de qualquer chamada.
+  const dbDegraded = readDbDegraded();
+  if (dbDegraded) {
+    return Response.json(
+      { ok: false, error: `BD em modo degradado: ${dbDegraded.cause}`, dbDegraded },
+      { status: 503 }
     );
   }
 

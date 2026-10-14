@@ -2,17 +2,21 @@
 import { Outlet, useFetchers, useLoaderData, useNavigation, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
-import { AppProvider as PolarisAppProvider, InlineStack, Spinner, Text } from "@shopify/polaris";
+import { AppProvider as PolarisAppProvider, Banner, InlineStack, Spinner, Text } from "@shopify/polaris";
 import enTranslations from "@shopify/polaris/locales/en.json";
 import { authenticateAdmin } from "../utils/authenticate.server";
+import { readDbDegraded } from "../../lib/health/dbDegraded.js";
 
 export const loader = async ({ request }) => {
   await authenticateAdmin(request);
-  return { apiKey: globalThis.process?.env?.SHOPIFY_API_KEY || "" };
+  return {
+    apiKey: globalThis.process?.env?.SHOPIFY_API_KEY || "",
+    dbDegraded: readDbDegraded(),
+  };
 };
 
 export default function App() {
-  const { apiKey } = useLoaderData();
+  const { apiKey, dbDegraded } = useLoaderData();
   const navigation = useNavigation();
   const fetchers = useFetchers();
   const isBusy =
@@ -28,6 +32,16 @@ export default function App() {
           <s-link href="/app/settings">Definições</s-link>
           <s-link href="/app/setup-guide">Setup Guide</s-link>
         </s-app-nav>
+        {dbDegraded && (
+          <div style={{ padding: "12px 12px 0" }}>
+            <Banner tone="critical" title="Base de dados em modo degradado">
+              <p>
+                {dbDegraded.cause}
+                {dbDegraded.at ? ` (desde ${dbDegraded.at})` : ""}. Publicação, sync de stock, escrita na fila e escrita na BD estão bloqueados. Não apagar nem reiniciar sem o restauro aprovado (Decisão 34).
+              </p>
+            </Banner>
+          </div>
+        )}
         {isBusy && (
           <div
             style={{
