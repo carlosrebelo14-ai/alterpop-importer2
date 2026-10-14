@@ -48,6 +48,7 @@ export const action = async ({ request }) => {
 
   let customTagsError = null;
   let requestedSkus = null;
+  let skusVazios = false;
   let force = false;
   let confirmCount = null;
   let clearLock = false;
@@ -65,8 +66,9 @@ export const action = async ({ request }) => {
     if (Number.isInteger(json.confirmCount)) confirmCount = json.confirmCount;
     if (json.cancel || json.intent === "cancel") isCancel = true;
     customTagsError = rejectCustomTags(json.customTags);
-    if (Array.isArray(json.skus) && json.skus.length > 0) {
+    if (Array.isArray(json.skus)) {
       requestedSkus = json.skus.map(String).filter(Boolean);
+      skusVazios = requestedSkus.length === 0;
     }
   } catch {
     /* sem body */
@@ -75,6 +77,14 @@ export const action = async ({ request }) => {
   // A2 (29/09/2026): customTags recusado com erro visível — nunca ignorado em silêncio.
   if (customTagsError && !isCancel) {
     return Response.json({ ok: false, error: customTagsError }, { status: 400 });
+  }
+
+  // Lote 1 (DBG-03): `skus: []` lia-se como "todos os APPROVED". Publicar tudo pede-se sem o campo.
+  if (skusVazios && !isCancel) {
+    return Response.json(
+      { ok: false, error: "Lista de SKUs vazia. Para publicar todos os APPROVED, não envies o campo skus." },
+      { status: 400 }
+    );
   }
 
   // Handle cancellation

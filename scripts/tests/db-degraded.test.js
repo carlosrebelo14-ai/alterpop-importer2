@@ -165,7 +165,7 @@ await check("entradas de escrita têm guarda antes da primeira ação", () => {
   guard("lib/importer/shopify/publishedReprice.server.js", 'assertDbNotDegraded("aplicar preços aos publicados")');
   guard("app/routes/api.shopify-reset.jsx", "readDbDegraded()");
   guard("lib/curation/curationQueue.server.js", 'assertDbNotDegraded("recuperação da fila de curadoria")');
-  guard("lib/curation/curationQueue.server.js", 'assertDbNotDegraded("reinício da fila de curadoria")');
+  guard("lib/curation/curationQueue.server.js", 'assertDbNotDegraded("leitura da fila de curadoria")');
 });
 
 console.log("rotas e painel — ligação ao guarda");

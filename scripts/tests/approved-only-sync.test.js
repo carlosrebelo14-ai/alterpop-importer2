@@ -13,7 +13,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveSyncSkus } from "../../lib/importer/shopify/resolveSyncSkus.js";
-import { assertApprovable, ApprovePublishedError } from "../../lib/curation/approvalGuard.js";
+import { assertApprovable, assertTransitionAllowed, ApprovePublishedError } from "../../lib/curation/approvalGuard.js";
+import { partitionPublishSelection, describeLeftOut } from "../../lib/curation/publishSelection.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -122,6 +123,62 @@ check("motor sem o fallback uniqueSkus = [...requestedSet]", () => {
 check("aprovação recusa PUBLISHED: a guarda corre antes de gravar", () => {
   assert.match(queue, /assertApprovable\(item\);/);
   assert.match(approveRoute, /err\?\.code === "APPROVE_PUBLISHED"[\s\S]*status: 409/);
+});
+
+console.log("assertTransitionAllowed — DBG-11, setter em massa");
+check("lote com PUBLISHED para APPROVED → lança com a lista de todos", () => {
+  assert.throws(
+    () => assertTransitionAllowed([{ sku: "A", status: "PENDING" }, { sku: "B", status: "PUBLISHED" }, { sku: "C", status: "PUBLISHED" }], "APPROVED"),
+    (err) => err.code === "APPROVE_PUBLISHED" && err.skus.join() === "B,C" && /2 SKU\(s\)/.test(err.message)
+  );
+});
+check("lote com PUBLISHED para PENDING ou REJECTED → permitido (revert)", () => {
+  assert.doesNotThrow(() => assertTransitionAllowed([{ sku: "B", status: "PUBLISHED" }], "PENDING"));
+  assert.doesNotThrow(() => assertTransitionAllowed([{ sku: "B", status: "PUBLISHED" }], "REJECTED"));
+});
+
+console.log("partitionPublishSelection — DBG-03, painel");
+const decisions = { A1: "APPROVED", A2: "APPROVED", P1: "PENDING", R1: "REJECTED", PUB1: "PUBLISHED" };
+check("só APPROVED vai para publicar; o resto é contado por estado", () => {
+  const p = partitionPublishSelection(["A1", "P1", "PUB1", "R1", "A2", "NOVO"], decisions);
+  assert.deepEqual(p.publish, ["A1", "A2"]);
+  assert.equal(p.leftOutCount, 4);
+  assert.deepEqual(p.leftOut, { PENDING: 1, PUBLISHED: 1, REJECTED: 1, "sem decisão": 1 });
+  assert.equal(describeLeftOut(p.leftOut), "1 PENDING, 1 PUBLISHED, 1 REJECTED, 1 sem decisão");
+});
+check("seleção toda APPROVED → nada de fora", () => {
+  const p = partitionPublishSelection(["A1", "A2"], decisions);
+  assert.deepEqual(p.publish, ["A1", "A2"]);
+  assert.equal(p.leftOutCount, 0);
+  assert.equal(describeLeftOut(p.leftOut), "");
+});
+check("seleção sem nenhum APPROVED → publish vazio (o painel não envia lista vazia)", () => {
+  const p = partitionPublishSelection(["P1", "R1"], decisions);
+  assert.deepEqual(p.publish, []);
+  assert.equal(p.leftOutCount, 2);
+});
+
+console.log("ligação ao código real — DBG-03, DBG-22 e painel");
+check("route recusa skus: [] (lia-se como todos os APPROVED)", () => {
+  assert.match(route, /skusVazios = requestedSkus\.length === 0/);
+  assert.match(route, /if \(skusVazios && !isCancel\)/);
+});
+check("painel envia só publishSkus e conta com a mesma lista", () => {
+  const ui = read("app/routes/app._index.jsx");
+  assert.match(ui, /partitionPublishSelection\(selectedSkus, decisions\)/);
+  assert.match(ui, /skus: publishSkus,\s*confirmCount: publishSkus\.length/);
+  assert.match(ui, /publishCount=\{publishSkus\.length\}/);
+  assert.doesNotMatch(ui, /skus: selectedSkus\.length > 0 \? selectedSkus : approvedSkus/);
+  assert.match(ui, /if \(publishSkus\.length === 0\)/);
+});
+check("DBG-22: a fila que não recupera já não é reiniciada; grava a flag e lança", () => {
+  assert.doesNotMatch(queue, /resetCorruptedQueueToEmpty/);
+  assert.match(queue, /async function degradeUnrecoverableQueue/);
+  assert.match(queue, /markDbDegraded\(/);
+  assert.match(queue, /throw new DbDegradedError\("leitura da fila de curadoria"/);
+});
+check("setter em massa tem a guarda antes de mutar", () => {
+  assert.match(queue, /assertTransitionAllowed\(\s*queue\.items\.filter/);
 });
 
 if (failures) {

@@ -122,7 +122,8 @@ check("«Aprovar/Rejeitar Toda a Pesquisa» conta no servidor e confirma com o n
 check("publicar envia o número e passa pela confirmação acima de 50 (botão e modal de staging)", () => {
   assert.match(page, /body: JSON\.stringify\(\{ confirmCount \}\)/);
   assert.match(page, /approvedSkus\.length > BULK_CONFIRM_THRESHOLD/);
-  assert.match(page, /confirmCount: \(selectedSkus\.length > 0 \? selectedSkus : approvedSkus\)\.length/);
+  // Lote 1 (DBG-03): o painel envia só APPROVED da seleção, e o número confirmado é o da lista enviada.
+  assert.match(page, /skus: publishSkus,\s*confirmCount: publishSkus\.length/);
   const staging = read("app/components/SyncStagingModal.jsx");
   assert.match(staging, /isBulkConfirmed\(publishCount, typed\)/);
   assert.match(staging, /BulkActionConfirm/);

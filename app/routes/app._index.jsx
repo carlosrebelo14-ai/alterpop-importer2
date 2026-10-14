@@ -39,6 +39,7 @@ import {
   readCatalogRebuildStatus,
 } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
+import { partitionPublishSelection, describeLeftOut } from "../../lib/curation/publishSelection.js";
 import { countSmartRuleDecisions } from "../../lib/importer/curation/smartRules.server.js";
 import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
 import { translateCategoryLabel } from "../../lib/importer/catalog/categoryLabel.js";
@@ -112,7 +113,15 @@ export const loader = async ({ request }) => {
   const catalogRebuildStatus = await readCatalogRebuildStatus(session.shop);
   const catalogCanResume = canResumeCatalogRebuild(catalogRebuildStatus);
 
-  const curationQueue = await loadCurationQueue();
+  // DBG-22: fila corrompida e não recuperável grava a flag DB_DEGRADED e lança. O painel abre
+  // sem itens e o banner (app.jsx) mostra a causa. Nada é escrito.
+  let curationQueue;
+  try {
+    curationQueue = await loadCurationQueue();
+  } catch (err) {
+    if (err?.code !== "DB_DEGRADED") throw err;
+    curationQueue = { version: 1, updatedAt: null, items: [] };
+  }
   const decisions = {};
   const smartFlags = {};
   const reasons = {};
@@ -435,6 +444,15 @@ export default function CurationDashboard() {
   const approvedSkus = useMemo(
     () => Object.entries(decisions).filter(([, s]) => s === "APPROVED").map(([sku]) => sku),
     [decisions]
+  );
+  // Lote 1 (DBG-03): a seleção que vai para a Shopify só tem APPROVED. O resto fica de fora, com contagem e motivo.
+  const publishSelection = useMemo(
+    () => partitionPublishSelection(selectedSkus, decisions),
+    [selectedSkus, decisions]
+  );
+  const publishSkus = useMemo(
+    () => (selectedSkus.length > 0 ? publishSelection.publish : approvedSkus),
+    [selectedSkus, publishSelection, approvedSkus]
   );
   const selectedCount = selectedSkus.length;
 
@@ -1552,6 +1570,16 @@ export default function CurationDashboard() {
     async () => {
       setStagingOpen(false);
       if (stagingLiveMode) {
+        // Nada para publicar: não se envia lista vazia (o servidor recusa `skus: []`).
+        if (publishSkus.length === 0) {
+          shopify.toast.show(
+            selectedSkus.length > 0
+              ? `Nenhum dos ${selectedSkus.length} selecionados está APPROVED. Nada foi publicado.`
+              : "Nenhum produto aprovado para publicar",
+            { isError: true }
+          );
+          return;
+        }
         setShopifyPublishBusy(true);
         try {
           const res = await fetch("/api/shopify-sync", {
@@ -1559,15 +1587,18 @@ export default function CurationDashboard() {
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              skus: selectedSkus.length > 0 ? selectedSkus : approvedSkus,
-              confirmCount: (selectedSkus.length > 0 ? selectedSkus : approvedSkus).length,
+              skus: publishSkus,
+              confirmCount: publishSkus.length,
             }),
           });
           const data = await res.json();
           if (data?.ok) {
             setShopifyPublishJobId(data.jobId || "current");
             setShopifyPublishOpen(true);
-            shopify.toast.show(`Publicação Shopify iniciada (${approvedSkus.length} produtos)`);
+            const deFora = publishSelection.leftOutCount
+              ? `. ${publishSelection.leftOutCount} da seleção ficaram de fora: ${describeLeftOut(publishSelection.leftOut)}`
+              : "";
+            shopify.toast.show(`Publicação Shopify iniciada (${publishSkus.length} produtos)${deFora}`);
           } else {
             shopify.toast.show(data?.error || "Erro ao publicar", { isError: true });
           }
@@ -1581,7 +1612,7 @@ export default function CurationDashboard() {
         shopify.toast.show(`Simulação iniciada (${approvedSkus.length} SKUs)`);
       }
     },
-    [stagingLiveMode, startSyncJob, approvedSkus.length, shopify]
+    [stagingLiveMode, startSyncJob, approvedSkus.length, publishSkus, publishSelection, shopify]
   );
 
   useEffect(() => {
@@ -1897,8 +1928,8 @@ export default function CurationDashboard() {
           confirming={syncBusy}
           summary={stagingSummary}
           liveMode={stagingLiveMode}
-          publishCount={(selectedSkus.length > 0 ? selectedSkus : approvedSkus).length}
-          sampleSkus={(selectedSkus.length > 0 ? selectedSkus : approvedSkus).slice(0, 5)}
+          publishCount={publishSkus.length}
+          sampleSkus={publishSkus.slice(0, 5)}
         />
 
         {smartRuleModalOpen && (
