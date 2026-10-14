@@ -1,6 +1,6 @@
 import fs from "fs";
 import { PrismaClient } from "@prisma/client";
-import { dbFilePath, markDbDegraded } from "../../lib/health/dbDegraded.js";
+import { copySqliteSidecars, dbFilePath, markDbDegraded } from "../../lib/health/dbDegraded.js";
 
 /**
  * Verificação de integridade no arranque do contentor (Decisão 34, DBG-02).
@@ -31,16 +31,7 @@ function preserveSidecarsIfHeaderInvalid() {
     fs.closeSync(fd);
   }
   if (head.toString("latin1") === SQLITE_HEADER) return null;
-
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const copies = [];
-  for (const sidecar of [`${dbPath}-wal`, `${dbPath}-shm`]) {
-    if (!fs.existsSync(sidecar)) continue;
-    const dest = `${sidecar}.corrupt-${stamp}`;
-    fs.copyFileSync(sidecar, dest);
-    copies.push(dest);
-  }
-  return copies;
+  return copySqliteSidecars();
 }
 
 /**
