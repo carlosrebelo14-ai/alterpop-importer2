@@ -86,6 +86,10 @@ cmd="$6"
 echo "$cmd" >> "$FAKE_LOG"
 case "$cmd" in
   *base64*)
+    b=$(echo "$cmd" | cut -d' ' -f7)
+    if echo "$b" | base64 -d 2>/dev/null | grep -q "escrita:"; then
+      printf 'ERRO: escrita: metaobjectUpsert(…): Products cannot be blank\\n'; exit 0
+    fi
     n=$(cat "$FAKE_COUNT" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$FAKE_COUNT"
     if [ "$n" -le "\${FAKE_INDEXING_CALLS:-0}" ]; then echo "[check-no-indexing] INDEXAÇÃO A DECORRER. O db:push não corre"; exit 1; fi
     if [ -n "$FAKE_PROBE_ERROR" ]; then echo "[check-no-indexing] não consegui ler"; exit 2; fi
@@ -165,6 +169,8 @@ check("diagnose_theme corre os dois comandos de leitura; diagnose_characters o c
   r = run("diagnose_characters", "dry-run");
   assert.ok(ran(r, "character-cycle-summary.js") && ran(r, "character-pages-sync.js"));
   assert.ok(!r.calls.some((c) => c.includes("cat /app")));
+  assert.match(r.summaryText, /Erros do último ciclo \(sem handles nem GIDs\):\n {2}- escrita: metaobjectUpsert\(…\): Products cannot be blank/);
+  assert.doesNotMatch(r.stdout, /frodo|gid:\/\//);
   assert.ok(!ran(r, "--execute"));
 });
 

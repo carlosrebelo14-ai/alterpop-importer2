@@ -100,6 +100,9 @@ case "$TASK" in
   diagnose_characters)
     DESC="Mostra o estado do último ciclo das páginas de Character (só estados e contagens) e o dry-run do character-pages-sync. Só lê."
     remote "node scripts/maintenance/character-cycle-summary.js"; RC=$?
+    # Erros de escrita do ciclo sem handles nem GIDs: script só de leitura enviado em base64 (não precisa de deploy).
+    EB64="$(base64 -w0 "$ROOT/scripts/maintenance/character-cycle-errors.mjs")"
+    if [ "$RC" -eq 0 ]; then remote "echo $EB64 | base64 -d | node --input-type=module -"; RC=$?; fi
     if [ "$RC" -eq 0 ]; then remote "node scripts/catalog/character-pages-sync.js"; RC=$?; fi
     ;;
   tags_cleanup)
@@ -181,6 +184,8 @@ case "$TASK" in
     cyc="$(echo "$CLEAN" | grep -E '^\{' | head -1)"
     bullets="- Último ciclo: $(echo "$cyc" | grep -oE '"[A-Za-z_]+":("[^"]*"|[0-9a-z]+)' | sed 's/"//g; s/:/ = /' | paste -sd, - | sed 's/,/, /g')"
     cr=$(count '^\s+create\s'); up=$(count '^\s+update\s'); ra=$(count '^\s+reactivate\s'); sd=$(count '^\s+set-draft\s'); er=$(count '^\s+error\s')
+    errs="$(echo "$CLEAN" | grep -E '^ERRO: ' | sed 's/^ERRO: /  - /')"
+    if [ -n "$errs" ]; then bullets="$bullets"$'\n'"- Erros do último ciclo (sem handles nem GIDs):"$'\n'"$errs"; fi
     bullets="$bullets"$'\n'"- Dry-run: $cr criar, $up atualizar, $ra reativar, $sd rascunho, $er com erro."
     KEY="$((cr + up + ra + sd)) alterações previstas"
     ;;
