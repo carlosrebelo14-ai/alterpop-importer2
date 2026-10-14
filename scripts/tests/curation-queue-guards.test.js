@@ -248,6 +248,23 @@ await check("fila em falta e catálogo ilegível: recusa sem gravar a flag", asy
   }
 });
 
+await check("fila em falta que aparece durante a leitura: recusa, sem fila vazia nem flag, e o ficheiro fica", async () => {
+  clearFlag();
+  fs.rmSync(QUEUE, { force: true });
+  q.setCatalogCountReaderForTests(async () => {
+    fs.writeFileSync(QUEUE, JSON.stringify({ version: 1, updatedAt: null, items: [{ sku: "LATE1", status: "PENDING", metadata: {} }] }), "utf8");
+    return 0;
+  });
+  q.invalidateCurationMemoryCache();
+  try {
+    await assert.rejects(q.loadCurationQueue(), (e) => /apareceu durante a leitura/.test(e.message));
+    assert.equal(fs.existsSync(FLAG), false);
+    assert.equal(JSON.parse(fs.readFileSync(QUEUE, "utf8")).items[0].sku, "LATE1");
+  } finally {
+    q.setCatalogCountReaderForTests(async () => 0);
+  }
+});
+
 console.log("DBG-22 — fila corrompida não reinicia em silêncio");
 
 await check("fila corrompida e não recuperável: backup, flag, leitura recusada, ficheiro intacto", async () => {
