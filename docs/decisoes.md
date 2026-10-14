@@ -4,6 +4,19 @@ Uma entrada por decisão fechada pelo Carlos. Emendas ficam no bloco da decisão
 
 ---
 
+## Decisão 13 — schema muda só por passo manual de deploy
+
+**Data original:** 2026-09-11 (incidente da Tarefa 27, citado no comentário do `Dockerfile`). Registada em 2026-10-14, porque o Lote 0 depende dela.
+**Estado:** fechada, em vigor.
+
+Regra vivia só em comentários de `Dockerfile:25-29` e `prisma/schema.prisma:112-117`.
+
+> 1. `prisma db push` não corre no arranque do contentor. Um `DROP COLUMN` com dados, recusado por falta de `--accept-data-loss`, reiniciou a máquina dez vezes seguidas e pôs a app em baixo cerca de 20 minutos.
+> 2. A mudança de schema é um passo de deploy deliberado e manual: `fly ssh console -C "sh -lc 'cd /app && npm run db:push'"`, depois do `fly deploy`. Lê-se o aviso de perda de dados antes de decidir o `--accept-data-loss`.
+> 3. Esta regra estende-se à runtime. Nenhum código da app corre `prisma db push` por conta própria (ver DBG-01, Decisão 34).
+
+---
+
 ## Decisão 17 — limiar de 3% na regra prefixo-formato
 
 **Data:** 2026-09-11
@@ -222,3 +235,42 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 - Scripts com texto "aplicar só depois do OK do Carlos" (`scripts/catalog/curation-mark-deleted.js:12`, `price-reconcile-dry-run.js:6` e `:127`, `last-price-write-backfill.js:13`, `price-reconcile-apply.js:7`). Atualizar com o ponto 3.
 
 **Referência cruzada:** Decisões 13, 21, 28, 30 e 32, relatório `docs/relatorios/debug-geral-14-10-2026.md`, briefing `docs/briefings/arranque-character-17-09-2026.md`.
+
+---
+
+## Decisão 34 — pré-requisitos do Lote 0 e respostas do arquiteto
+
+**Data:** 2026-10-14
+**Estado:** fechada pelo arquiteto. Implementação em curso neste branch.
+**Origem:** respostas do arquiteto às perguntas da Decisão 33.
+
+**Lote 0**
+> 1. **DBG-02.** `ensure-clean-db` deixa de apagar e deixa de sair com erro. Em corrupção grava a flag `DB_DEGRADED` no volume e sai com 0. A app arranca em modo degradado e evita o crash-loop.
+> 2. **DBG-01.** `prismaSafe` deixa de apagar ficheiros e deixa de correr `prisma db push`. Em corrupção grava a mesma flag e lança erro visível.
+> 3. **Modo degradado.** Bloqueia publish, sync de stock, escrita na fila e escrita na BD. O painel mostra banner vermelho com a causa. Nenhum fallback silencioso.
+> 4. **Saída do modo.** Um script de restauro corre com `--execute` e OK do arquiteto. O script apaga a flag só depois de `PRAGMA integrity_check` dar `ok`.
+> 5. **Suíte verde.** As quatro suítes de `.github/workflows/tests.yml` (`test:franchise`, `test:sync-safety`, `test:health-gate`, `test:deploy`) mais o teste novo de cada defeito.
+
+**Respostas**
+> 6. **DBG-16, regra de escrita.** A regra de `:24` mantém-se. A despublicação usa `publishableUnpublish` no canal Online Store e não toca em título, preço ou categoria.
+> 7. **DBG-16, gatilho.** O SKU publicado falta do feed em 2 ciclos seguidos. O código atual usa 3 (`skuLifecycle.server.js:48`). A mudança entra no Lote 2.
+> 8. **DBG-16, guarda.** O ciclo aborta e avisa se faltarem mais de 5% dos publicados de uma vez, porque isso indica feed truncado.
+> 9. **OK do arquiteto.** O arquiteto é o chat de arquitetura do projeto. O developer entrega o dry-run com contagens. O Carlos passa-o ao arquiteto, e a resposta volta pelo mesmo caminho.
+> 10. **Registo do OK.** Cada `--execute` fica em `docs/execucoes.md` com data, comando, contagens do dry-run e referência ao OK. A linha é escrita antes da corrida.
+> 11. **DBG-10, vocabulário.** O vocabulário de `alterpop.format` ganha "Blister". O teste `format-extractor.test.js` passa de 11 para 12 valores.
+> 12. **DBG-10, invariante.** Verificado em 14/10: `resolveTitleCollisions` não é chamado em nenhum caminho de escrita (`catalogProducts.server.js:56` usa só `cleanProductTitle`). O developer confirma também se correu no ingest desde o PR #68. Se não corre, ligá-lo é pré-requisito do DBG-10.
+> 13. **DBG-10, execução.** Dry-run com contagem de títulos afetados e de colisões antes do OK do arquiteto.
+> 14. **PUBLISHED sem produto na Shopify.** Contam como apagados para a escalada P0 do DBG-03.
+> 15. **DBG-21 (novo).** Entra no Lote 2. O reconciliador marca `deletedInAdmin` quando o produto falta na Shopify e devolve o item a PENDING pela regra de 09/10.
+> 16. **Decisão 13.** Registada acima, porque o Lote 0 depende dela.
+
+**Documentação pendente**
+- `docs/FLY-STAGING.md`, `README.md:65`, a linha 157 do briefing 17/09 e os textos dos scripts que pedem OK do Carlos vão num PR só de documentação. Esse PR não bloqueia o Lote 0.
+
+**Ordem**
+1. Registar a Decisão 13 e esta decisão (feito neste commit).
+2. Entregar DBG-02 e depois DBG-01, cada um com teste.
+3. Fazer deploy e confirmar o portão verde.
+4. Passar ao Lote 1.
+
+**Referência cruzada:** Decisões 13, 28, 30, 33; relatório `docs/relatorios/debug-geral-14-10-2026.md`.
