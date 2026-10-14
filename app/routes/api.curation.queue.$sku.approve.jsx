@@ -30,6 +30,9 @@ export const action = async ({ request, params }) => {
       previousSnapshot,
     });
   } catch (err) {
+    if (err?.code === "APPROVE_PUBLISHED") {
+      return Response.json({ ok: false, error: err.message }, { status: 409 });
+    }
     return Response.json(
       { ok: false, error: err?.message || String(err) },
       { status: 404 }

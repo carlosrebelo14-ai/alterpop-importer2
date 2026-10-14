@@ -7,7 +7,8 @@ import {
   failShopifySyncJob,
 } from "../../lib/importer/shopify/shopifySyncJob.server.js";
 import { startApprovedShopifySyncInBackground } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
-import { listApprovedSkusForShopifySync } from "../../lib/curation/curationQueue.server.js";
+import { listApprovedSkusForShopifySync, loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
+import { resolveSyncSkus } from "../../lib/importer/shopify/resolveSyncSkus.js";
 import {
   loadOfflineSessionForShop,
   ShopifyAuthSessionError,
@@ -122,14 +123,16 @@ export const action = async ({ request }) => {
     );
   }
 
-  let approvedSkus = await listApprovedSkusForShopifySync();
-  if (requestedSkus && requestedSkus.length > 0) {
-    const reqSet = new Set(requestedSkus);
-    approvedSkus = approvedSkus.filter((sku) => reqSet.has(sku));
-    if (!approvedSkus.length) {
-      approvedSkus = requestedSkus;
-    }
+  // Lote 1 (DBG-03): só APPROVED. Um SKU pedido fora de APPROVED recusa o pedido inteiro, sem fallback.
+  const approvedList = await listApprovedSkusForShopifySync();
+  const statusBySku = requestedSkus?.length
+    ? new Map((await loadCurationQueue()).items.map((i) => [i.sku, i.status]))
+    : new Map();
+  const resolved = resolveSyncSkus({ requested: requestedSkus, approved: approvedList, statusBySku });
+  if (!resolved.ok) {
+    return Response.json({ ok: false, error: resolved.error, rejected: resolved.rejected }, { status: 400 });
   }
+  const approvedSkus = resolved.skus;
 
   if (!approvedSkus.length) {
     return Response.json(

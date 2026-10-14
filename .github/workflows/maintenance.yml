@@ -87,6 +87,7 @@ jobs:
           cache: npm
       - name: Dependências e cliente Prisma (só para o restauro de cópia)
         if: inputs.task == 'restore_dry_run'
+        timeout-minutes: 15
         run: npm ci && npx prisma generate
       - name: Dry-run / leitura
         id: run
