@@ -40,7 +40,7 @@ check("só workflow_dispatch, só main", () => {
 check("task: lista fechada exata", () => {
   assert.match(
     code,
-    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- price_check\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+mode:/
+    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- price_check\n\s+- volume_snapshot\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+mode:/
   );
 });
 check("mode: dry-run por omissão, execute", () => {
@@ -57,7 +57,7 @@ check("o job execute: needs dry-run, environment production, só mode=execute na
   assert.match(job, /needs: dry-run/);
   assert.match(job, /environment: production/);
   assert.match(job, /inputs\.mode == 'execute'/);
-  assert.match(job, /\["tags_cleanup","character_pages_sync","db_push"\]/);
+  assert.match(job, /\["volume_snapshot","tags_cleanup","character_pages_sync","db_push"\]/);
   assert.match(job, /maintenance\.sh "\$TASK" execute/);
 });
 check("nenhum texto livre vai para comandos; token só por secrets.FLY_API_TOKEN; sem flags de loja", () => {
@@ -82,6 +82,15 @@ function setup() {
   fs.writeFileSync(
     bin,
     `#!/bin/sh
+if [ "$1" = "volumes" ]; then
+  echo "$*" >> "$FAKE_LOG"
+  n=$(cat "$FAKE_SNAPS" 2>/dev/null || echo 2)
+  case "$*" in
+    "volumes list"*) if [ "\${FAKE_VOLS:-1}" = "1" ]; then echo '[{"id":"vol_segredo123","name":"data","state":"created","region":"mad"}]'; else echo '[{"id":"vol_a"},{"id":"vol_b"}]'; fi; exit 0;;
+    "volumes snapshots list"*) if [ "$n" = "2" ]; then echo '[{"id":"vs_0"},{"id":"vs_1"}]'; else echo '[{"id":"vs_0"},{"id":"vs_1"},{"id":"vs_2"}]'; fi; exit 0;;
+    "volumes snapshots create"*) if [ -n "$FAKE_SNAP_FAIL" ]; then echo "Error: unauthorized token"; exit 1; fi; echo $((n+1)) > "$FAKE_SNAPS"; echo "snapshot vs_new"; exit 0;;
+  esac
+fi
 cmd="$6"
 echo "$cmd" >> "$FAKE_LOG"
 case "$cmd" in
@@ -122,6 +131,7 @@ function run(task, phase, env = {}) {
       FLYCTL: t.bin,
       FAKE_LOG: t.log,
       FAKE_COUNT: t.count,
+      FAKE_SNAPS: path.join(t.dir, "snaps"),
       GITHUB_STEP_SUMMARY: t.summary,
       WAIT_STEP_SECONDS: "0",
       WAIT_MAX_ATTEMPTS: "3",
@@ -176,6 +186,28 @@ check("diagnose_theme corre os dois comandos de leitura; diagnose_characters o c
   assert.ok(!ran(r, "--execute"));
 });
 
+check("volume_snapshot: dry-run só lê (lista volume e snapshots); execute cria 1 snapshot e mostra antes/depois", () => {
+  let r = run("volume_snapshot", "dry-run");
+  assert.equal(r.status, 0);
+  assert.ok(ran(r, "volumes list") && ran(r, "volumes snapshots list"));
+  assert.ok(!ran(r, "snapshots create"));
+  assert.match(r.summaryText, /Volumes da app: \*\*1\*\*\. Snapshots existentes antes: \*\*2\*\*/);
+  assert.match(r.summaryText, /só leitura|dry-run \(não escreve\)/);
+  r = run("volume_snapshot", "execute");
+  assert.equal(r.status, 0);
+  assert.ok(ran(r, "volumes snapshots create"));
+  assert.match(r.summaryText, /execute \(escreve\)/);
+  assert.match(r.summaryText, /Snapshots depois do pedido: \*\*3\*\*/);
+});
+check("volume_snapshot: mais de um volume ou erro de autorização → falha sem criar nada", () => {
+  let r = run("volume_snapshot", "execute", { FAKE_VOLS: "2" });
+  assert.equal(r.status, 3);
+  assert.ok(!ran(r, "snapshots create"));
+  assert.match(r.summaryText, /exatamente 1 volume e encontrei 2/);
+  r = run("volume_snapshot", "execute", { FAKE_SNAP_FAIL: "1" });
+  assert.equal(r.status, 1);
+  assert.match(r.summaryText, /autorização da Fly/);
+});
 check("price_check: só leitura, resumo em português com impostos, regra e contagens", () => {
   const r = run("price_check", "execute"); // execute não se aplica: é só leitura
   assert.equal(r.status, 0);
@@ -277,9 +309,9 @@ check("execute com estado ilegível: não corre db:push", () => {
 });
 
 console.log("repositório público: logs e resumos só com contagens e estados");
-const PROIBIDO = [/8435450233067/, /darth-vader/, /gid:\/\/shopify/, /9,99/, /€/, /star-wars-/, /loja-secreta/, /Segredo/, /"checkedAt"/];
+const PROIBIDO = [/vol_/, /vs_/, /8435450233067/, /darth-vader/, /gid:\/\/shopify/, /9,99/, /€/, /star-wars-/, /loja-secreta/, /Segredo/, /"checkedAt"/];
 check("nenhuma tarefa/fase deixa SKU, handle, preço, GID ou JSON completo no log nem no resumo", () => {
-  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters", "price_check", "tags_cleanup", "character_pages_sync", "db_push"]) {
+  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters", "price_check", "volume_snapshot", "tags_cleanup", "character_pages_sync", "db_push"]) {
     for (const phase of ["dry-run", "execute"]) {
       const r = run(task, phase);
       const visivel = `${r.stdout}\n${r.stderr}\n${r.summaryText}`;

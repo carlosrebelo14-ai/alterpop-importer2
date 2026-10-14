@@ -3,7 +3,7 @@
 #
 #   bash scripts/ci/maintenance.sh <tarefa> <fase>
 #
-# tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | tags_cleanup | character_pages_sync | db_push
+# tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push
 # fase    dry-run  só lê (ou lista o que mudaria)
 #         execute  escreve (só tags_cleanup, character_pages_sync e db_push; nas outras é igual ao dry-run)
 #
@@ -34,7 +34,7 @@ NOTE=""
 WAITED_MIN=0
 
 case "$TASK" in
-  catalog_health | diagnose_theme | diagnose_characters | price_check | tags_cleanup | character_pages_sync | db_push) ;;
+  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
 esac
 case "$PHASE" in
@@ -43,7 +43,7 @@ case "$PHASE" in
 esac
 
 WRITES=false
-case "$TASK" in tags_cleanup | character_pages_sync | db_push) WRITES=true ;; esac
+case "$TASK" in volume_snapshot | tags_cleanup | character_pages_sync | db_push) WRITES=true ;; esac
 EFFECTIVE="$PHASE"
 if [ "$WRITES" = false ]; then EFFECTIVE="dry-run"; fi
 
@@ -108,6 +108,32 @@ case "$TASK" in
   price_check)
     DESC="Lê na Shopify se os preços incluem imposto (taxesIncluded) e os preços dos publicados, e compara-os com a regra NET. Só lê. Não muda PRICE_MODE nem a loja."
     remote "node scripts/maintenance/price-check.js"; RC=$?
+    ;;
+  volume_snapshot)
+    # Snapshot do volume da app (cópia do SQLite com PriceHistory e lastPriceWrite) antes de operações grandes.
+    # Corre no runner com o flyctl (não por ssh). Nunca imprime ids de volumes nem de snapshots.
+    VOL_COUNT=0; SNAP_BEFORE=0; SNAP_AFTER=0
+    jcount() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);console.log(Array.isArray(j)?j.length:0)}catch{console.log("x")}})'; }
+    jfirst() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);console.log(Array.isArray(j)&&j[0]?String(j[0].id||""):"")}catch{console.log("")}})'; }
+    if [ "$EFFECTIVE" = "execute" ]; then
+      DESC="Cria um snapshot do volume da app na Fly (cópia da base de dados). Escreve na Fly (cria um snapshot); não toca na loja nem nos dados."
+    else
+      DESC="Lê o volume da app e os snapshots existentes. Só lê. O execute cria um snapshot novo."
+    fi
+    VOLS="$("$FLYCTL" volumes list -a "$APP" --json 2>>"$OUT")"; RC=$?
+    if [ "$RC" -eq 0 ]; then
+      VOL_COUNT="$(echo "$VOLS" | jcount)"
+      if [ "$VOL_COUNT" != "1" ]; then
+        NOTE="Esperava exatamente 1 volume e encontrei ${VOL_COUNT}. Não escolho um à sorte: indica qual."; RC=3
+      else
+        VID="$(echo "$VOLS" | jfirst)"
+        SNAP_BEFORE="$("$FLYCTL" volumes snapshots list "$VID" --json 2>>"$OUT" | jcount)"
+        if [ "$EFFECTIVE" = "execute" ]; then
+          "$FLYCTL" volumes snapshots create "$VID" -a "$APP" >>"$OUT" 2>&1; RC=$?
+          if [ "$RC" -eq 0 ]; then SNAP_AFTER="$("$FLYCTL" volumes snapshots list "$VID" --json 2>>"$OUT" | jcount)"; fi
+        fi
+      fi
+    fi
     ;;
   tags_cleanup)
     if [ "$EFFECTIVE" = "execute" ]; then
@@ -210,6 +236,19 @@ case "$TASK" in
       bullets="$bullets"$'\n'"- Diferença por degrau: até 1 %: $(pc banda_ate_1); 1 a 5 %: $(pc banda_1_a_5); 5 a 15 %: $(pc banda_5_a_15); acima de 15 %: $(pc banda_acima_15)."
       bullets="$bullets"$'\n'"- Ficam fora por preço manual: **$(pc fora_preco_manual)** (override da curadoria $(pc manual_override), preço detetado $(pc manual_detetado)). Trancados: $(pc trancados); sem registo da última escrita: $(pc sem_registo); outros ignorados: $(pc outros_ignorados); não encontrados: $(pc nao_encontrados); falhados: $(pc falhados)."
       KEY="regra $rule, impostos incluídos $taxes, $(pc a_atualizar) a atualizar, $(pc fora_preco_manual) fora por preço manual"
+    fi
+    ;;
+  volume_snapshot)
+    if [ "$VOL_COUNT" = "1" ]; then
+      bullets="- Volumes da app: **1**. Snapshots existentes antes: **$SNAP_BEFORE**."
+      if [ "$EFFECTIVE" = "execute" ] && [ "$RC" -eq 0 ]; then
+        bullets="$bullets"$'\n'"- Snapshots depois do pedido: **$SNAP_AFTER**. O snapshot pode demorar alguns minutos a ficar disponível; confirma mais tarde com a tarefa volume_snapshot em dry-run."
+        KEY="snapshot pedido ($SNAP_BEFORE → $SNAP_AFTER snapshots)"
+      else
+        KEY="1 volume, $SNAP_BEFORE snapshots"
+      fi
+    else
+      KEY="volumes: $VOL_COUNT"
     fi
     ;;
   tags_cleanup)

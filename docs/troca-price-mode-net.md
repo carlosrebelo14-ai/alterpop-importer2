@@ -19,7 +19,7 @@ Quem faz o quê: os passos de leitura (`price_check`, `catalog_health`, `diagnos
 | P3 | `diagnose_theme` | `read_themes` concedido; contrato do tema sem bloqueios |
 | P4 | No painel, "Pré-visualizar regra NET" | os totais batem com o `price_check` (a atualizar, fora por preço manual); as 5 linhas de amostra descem cerca de um sexto (1/1,21) em degraus de 10 cêntimos; a tabela "Fora por preço manual" lista os produtos que ficam como estão |
 | P5 | Fila | sem aprovados à espera de publicar (senão o próximo ciclo publicaria já com a regra NET e impostos incluídos) |
-| P6 | Fly | `fly volumes snapshots create` do volume `/app/data` (cópia do SQLite com `PriceHistory` e `lastPriceWrite`) |
+| P6 | Fly | `maintenance` tarefa `volume_snapshot` em `execute` (pede aprovação no `production`): cria um snapshot do volume `/app/data`, a cópia do SQLite com `PriceHistory` e `lastPriceWrite`. Depois, `volume_snapshot` em dry-run mostra +1 snapshot |
 | P7 | Shopify, Definições → Impostos e direitos | anotar (captura de ecrã) a configuração atual por região; confirmar que o IVA está configurado para cobrar nos países onde vendes |
 
 A troca faz-se numa hora sem tráfego. Opcional: palavra-passe da loja ligada durante a janela, para ninguém comprar a meio.

@@ -1,6 +1,6 @@
 # Manutenção da app na Fly, disparada à mão: Actions → maintenance → Run workflow.
 #
-# task  lista fechada: catalog_health, diagnose_theme, diagnose_characters, price_check, tags_cleanup,
+# task  lista fechada: catalog_health, diagnose_theme, diagnose_characters, price_check, volume_snapshot, tags_cleanup,
 #       character_pages_sync, db_push
 # mode  dry-run (por omissão) ou execute
 #
@@ -11,7 +11,7 @@
 #      mudaria, ou o SQL do db:push); nas outras faz a tarefa, que é só leitura. O resumo em português fica
 #      no job summary da corrida.
 #   2. Job `execute` (environment "production"): só com mode=execute e só nas tarefas que escrevem
-#      (tags_cleanup, character_pages_sync, db_push). Depende do job 1, por isso o dry-run corre antes e está
+#      (volume_snapshot, tags_cleanup, character_pages_sync, db_push). Depende do job 1, por isso o dry-run corre antes e está
 #      visível no summary enquanto o environment pede aprovação. Nas tarefas só de leitura, mode=execute não
 #      faz nada de diferente.
 #
@@ -39,11 +39,12 @@ on:
           - diagnose_theme
           - diagnose_characters
           - price_check
+          - volume_snapshot
           - tags_cleanup
           - character_pages_sync
           - db_push
       mode:
-        description: "dry-run (por omissão) ou execute; execute só tem efeito em tags_cleanup, character_pages_sync e db_push"
+        description: "dry-run (por omissão) ou execute; execute só tem efeito em volume_snapshot, tags_cleanup, character_pages_sync e db_push"
         type: choice
         default: dry-run
         options:
@@ -81,7 +82,7 @@ jobs:
   execute:
     name: "2 · execute (environment production)"
     needs: dry-run
-    if: github.ref == 'refs/heads/main' && inputs.mode == 'execute' && contains(fromJSON('["tags_cleanup","character_pages_sync","db_push"]'), inputs.task)
+    if: github.ref == 'refs/heads/main' && inputs.mode == 'execute' && contains(fromJSON('["volume_snapshot","tags_cleanup","character_pages_sync","db_push"]'), inputs.task)
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 40
