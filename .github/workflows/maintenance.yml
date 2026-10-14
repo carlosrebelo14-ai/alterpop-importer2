@@ -1,7 +1,9 @@
 # Manutenção da app na Fly, disparada à mão: Actions → maintenance → Run workflow.
 #
 # task  lista fechada: catalog_health, diagnose_theme, diagnose_characters, price_check, volume_snapshot, tags_cleanup,
-#       character_pages_sync, db_push
+#       character_pages_sync, db_push, db_flag_check, logs_recent, restore_dry_run
+#       (db_flag_check, logs_recent e restore_dry_run só leem: nunca entram no job de escrita)
+#       db_push recusa-se com a flag DB_DEGRADED presente (Decisão 34).
 # mode  dry-run (por omissão) ou execute
 #
 # Os comandos estão fixos em scripts/ci/maintenance.sh; nenhum texto livre chega à Fly.
@@ -43,6 +45,9 @@ on:
           - tags_cleanup
           - character_pages_sync
           - db_push
+          - db_flag_check
+          - logs_recent
+          - restore_dry_run
       mode:
         description: "dry-run (por omissão) ou execute; execute só tem efeito em volume_snapshot, tags_cleanup, character_pages_sync e db_push"
         type: choice
@@ -75,6 +80,14 @@ jobs:
         with:
           ref: main
       - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: actions/setup-node@v4
+        if: inputs.task == 'restore_dry_run'
+        with:
+          node-version: 20
+          cache: npm
+      - name: Dependências e cliente Prisma (só para o restauro de cópia)
+        if: inputs.task == 'restore_dry_run'
+        run: npm ci && npx prisma generate
       - name: Dry-run / leitura
         id: run
         run: bash scripts/ci/maintenance.sh "$TASK" dry-run

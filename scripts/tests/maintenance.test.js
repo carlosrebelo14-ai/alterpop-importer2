@@ -40,7 +40,7 @@ check("só workflow_dispatch, só main", () => {
 check("task: lista fechada exata", () => {
   assert.match(
     code,
-    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- price_check\n\s+- volume_snapshot\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+mode:/
+    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- price_check\n\s+- volume_snapshot\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+- db_flag_check\n\s+- logs_recent\n\s+- restore_dry_run\n\s+mode:/
   );
 });
 check("mode: dry-run por omissão, execute", () => {
@@ -91,9 +91,22 @@ if [ "$1" = "volumes" ]; then
     "volumes snapshots create"*) if [ -n "$FAKE_SNAP_FAIL" ]; then echo "Error: unauthorized token"; exit 1; fi; echo $((n+1)) > "$FAKE_SNAPS"; echo "snapshot vs_new"; exit 0;;
   esac
 fi
+if [ "$1" = "logs" ]; then echo "logs $*" >> "$FAKE_LOG"; printf '%b\\n' "$FAKE_LOGS"; exit "\${FAKE_LOGS_RC:-0}"; fi
+if [ "$1" = "ssh" ] && [ "$2" = "sftp" ]; then
+  echo "sftp $*" >> "$FAKE_LOG"
+  case "$4" in *-wal) exit 1;; esac
+  if [ -n "$FAKE_DB" ]; then cp "$FAKE_DB" "$5"; exit 0; fi
+  exit 1
+fi
 cmd="$6"
 echo "$cmd" >> "$FAKE_LOG"
 case "$cmd" in
+  *DB_DEGRADED*)
+    case "\${FAKE_FLAG:-absent}" in
+      present) echo FLAG_PRESENT; exit 0;;
+      unknown) echo "ssh: falhou"; exit 1;;
+      *) echo FLAG_ABSENT; exit 0;;
+    esac;;
   *base64*)
     b=$(echo "$cmd" | cut -d' ' -f7)
     if echo "$b" | base64 -d 2>/dev/null | grep -q "escrita:"; then
@@ -142,6 +155,7 @@ function run(task, phase, env = {}) {
   return { ...r, calls: read(t.log).split("\n").filter(Boolean), summaryText: read(t.summary), probes: Number(read(t.count) || 0) };
 }
 const ran = (r, needle) => r.calls.some((c) => c.includes(needle));
+const SO_LEITURA_NOVA = ["db_flag_check", "logs_recent", "restore_dry_run"];
 
 check("tarefa ou fase fora da lista → recusa sem tocar na Fly", () => {
   for (const [t, p] of [["rm_rf", "dry-run"], ["tags_cleanup", "yolo"], ["", ""], ["tags_cleanup; ls", "dry-run"]]) {
@@ -311,8 +325,8 @@ check("execute com estado ilegível: não corre db:push", () => {
 console.log("repositório público: logs e resumos só com contagens e estados");
 const PROIBIDO = [/vol_/, /vs_/, /8435450233067/, /darth-vader/, /gid:\/\/shopify/, /9,99/, /€/, /star-wars-/, /loja-secreta/, /Segredo/, /"checkedAt"/];
 check("nenhuma tarefa/fase deixa SKU, handle, preço, GID ou JSON completo no log nem no resumo", () => {
-  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters", "price_check", "volume_snapshot", "tags_cleanup", "character_pages_sync", "db_push"]) {
-    for (const phase of ["dry-run", "execute"]) {
+  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters", "price_check", "volume_snapshot", "tags_cleanup", "character_pages_sync", "db_push", "db_flag_check", "logs_recent", "restore_dry_run"]) {
+    for (const phase of SO_LEITURA_NOVA.includes(task) ? ["dry-run"] : ["dry-run", "execute"]) {
       const r = run(task, phase);
       const visivel = `${r.stdout}\n${r.stderr}\n${r.summaryText}`;
       for (const rx of PROIBIDO) assert.doesNotMatch(visivel, rx, `${task}/${phase} expõe ${rx}`);
@@ -329,7 +343,7 @@ check("em falha, nenhum texto bruto: só a causa classificada", () => {
 check("o script nunca escreve a saída bruta no log (sem tee nem cat do ficheiro de saída)", () => {
   const exec = sh.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
   assert.doesNotMatch(exec, /\btee\b/);
-  assert.doesNotMatch(exec, /cat "\$OUT"|tail .*\$OUT/);
+  assert.doesNotMatch(exec, /cat "\$OUT"|(^|[|;&(])\s*tail\s.*\$OUT/m); // "--no-tail" não é o comando tail
   assert.match(exec, />>"\$OUT" 2>&1/);
 });
 check("o workflow maintenance e o deploy usam o mesmo grupo de concorrência, sem cancelar", () => {
@@ -355,6 +369,96 @@ check("Fly com código antigo (sem --summary): só enforced/status, nunca o JSON
   assert.doesNotMatch(r.stdout + fs.readFileSync(t.summary, "utf8"), /Segredo|"contract"/);
   const bad = run("diagnose_characters", "dry-run", { FAKE_RC: "1" });
   assert.equal(bad.status, 1);
+});
+
+console.log("tarefas novas (só leitura) e db_push com a flag DB_DEGRADED");
+// Cópia de dev.sqlite íntegra, criada com Prisma, para o restauro em dry-run (sem rede).
+function healthyDb() {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "maint-db-")), "dev.sqlite");
+  const r = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", `import { PrismaClient } from "@prisma/client"; const p = new PrismaClient(); await p.$executeRawUnsafe("CREATE TABLE IF NOT EXISTS probe (x INTEGER)"); await p.$disconnect();`],
+    { cwd: ROOT, encoding: "utf8", env: { ...process.env, DATABASE_URL: `file:${file}` }, timeout: 120000 }
+  );
+  assert.equal(r.status, 0, r.stderr);
+  return file;
+}
+function garbageDb() {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "maint-bad-")), "dev.sqlite");
+  fs.writeFileSync(file, "lixo ".repeat(300));
+  return file;
+}
+check("db_push recusa com a flag presente, em dry-run e em execute: sem db:push nem migrate diff", () => {
+  for (const phase of ["dry-run", "execute"]) {
+    const r = run("db_push", phase, { FAKE_FLAG: "present" });
+    assert.equal(r.status, 1, phase);
+    assert.ok(!ran(r, "db:push") && !ran(r, "migrate diff"), phase);
+    assert.match(r.summaryText, /db:push recusado: flag DB_DEGRADED presente/, phase);
+  }
+});
+check("db_push com a flag ilegível: recusa com código 2, sem db:push", () => {
+  const r = run("db_push", "execute", { FAKE_FLAG: "unknown" });
+  assert.equal(r.status, 2);
+  assert.ok(!ran(r, "db:push"));
+});
+check("db_push com a flag ausente: segue como antes", () => {
+  const r = run("db_push", "execute", { FAKE_FLAG: "absent" });
+  assert.equal(r.status, 0);
+  assert.ok(ran(r, "npm run db:push"));
+});
+check("db_flag_check: ausente → 0; presente → 1; ilegível → 2; o resumo não mostra causa", () => {
+  let r = run("db_flag_check", "dry-run", { FAKE_FLAG: "absent" });
+  assert.equal(r.status, 0);
+  assert.match(r.summaryText, /Flag DB_DEGRADED: \*\*ausente\*\*/);
+  r = run("db_flag_check", "dry-run", { FAKE_FLAG: "present" });
+  assert.equal(r.status, 1);
+  assert.match(r.summaryText, /Flag DB_DEGRADED presente/);
+  r = run("db_flag_check", "dry-run", { FAKE_FLAG: "unknown" });
+  assert.equal(r.status, 2);
+});
+check("logs_recent: sem erros → 0 com contagens; com DbDegradedError → 1 e para a sequência", () => {
+  let r = run("logs_recent", "dry-run", { FAKE_LOGS: "app ok\napp ok" });
+  assert.equal(r.status, 0);
+  assert.match(r.summaryText, /DbDegradedError: \*\*0\*\*/);
+  assert.ok(ran(r, "logs -a alterpop-importer-app --no-tail"));
+  r = run("logs_recent", "dry-run", { FAKE_LOGS: "[prisma] x: DbDegradedError: BD em modo degradado\napp: Modo degradado ativo" });
+  assert.equal(r.status, 1);
+  assert.match(r.summaryText, /DbDegradedError: \*\*1\*\*/);
+  assert.ok(!ran(r, "db:push"));
+});
+check("restore_dry_run: cópia íntegra → integrity ok e código 0; sem flag apagada; sem --execute", () => {
+  const r = run("restore_dry_run", "dry-run", { FAKE_DB: healthyDb() });
+  assert.equal(r.status, 0, r.summaryText);
+  assert.match(r.summaryText, /integrity_check da cópia: \*\*ok\*\*/);
+  assert.ok(ran(r, "sftp get /app/data/dev.sqlite"));
+  assert.ok(!ran(r, "--execute") && !ran(r, "db:push"));
+});
+check("restore_dry_run: cópia corrompida → código 1 com causa; a BD da Fly não é tocada", () => {
+  const r = run("restore_dry_run", "dry-run", { FAKE_DB: garbageDb() });
+  assert.equal(r.status, 1);
+  assert.match(r.summaryText, /não passa integrity_check/);
+  assert.ok(!ran(r, "npm run db:push") && !ran(r, "--execute"));
+});
+check("restore_dry_run: falha ao copiar → código 1 com causa de cópia, sem restauro", () => {
+  const r = run("restore_dry_run", "dry-run");
+  assert.equal(r.status, 1);
+  assert.match(r.summaryText, /não consegui copiar dev\.sqlite/);
+  assert.ok(!ran(r, "restore-db-degraded"));
+});
+check("tarefas novas recusam execute com código 64, sem tocar na Fly", () => {
+  for (const task of SO_LEITURA_NOVA) {
+    const r = run(task, "execute");
+    assert.equal(r.status, 64, task);
+    assert.equal(r.calls.length, 0, task);
+  }
+});
+check("workflow: as tarefas novas não entram no job de escrita (execute)", () => {
+  const job = code.slice(code.indexOf("  execute:"));
+  for (const task of SO_LEITURA_NOVA) assert.doesNotMatch(job, new RegExp(task));
+});
+check("workflow: o restauro de cópia prepara dependências só nessa tarefa", () => {
+  const job = code.slice(code.indexOf("  dry-run:"), code.indexOf("  execute:"));
+  assert.match(job, /if: inputs\.task == 'restore_dry_run'[\s\S]*npm ci/);
 });
 
 console.log("resumo");

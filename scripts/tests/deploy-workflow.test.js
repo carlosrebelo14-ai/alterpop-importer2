@@ -71,12 +71,10 @@ check("skip_deploy salta deploy, npm ci e prisma generate", () => {
     assert.match(step(marker), /if: env\.SKIP_DEPLOY != 'true'/, marker);
   }
 });
-check("catalog:health (com espera por indexação) antes do db:push (que recusa com indexação)", () => {
+check("catalog:health na Fly depois do deploy; nenhum db:push no deploy (Decisão 34: o esquema muda só pelo maintenance)", () => {
   const health = step("catalog_health dry-run");
-  const push = step("db_push execute");
   assert.match(health, /bash scripts\/ci\/maintenance\.sh catalog_health dry-run/);
-  assert.match(push, /bash scripts\/ci\/maintenance\.sh db_push execute/);
-  assert.ok(code.indexOf("catalog_health") < code.indexOf("db_push execute"));
+  assert.doesNotMatch(code, /db_push|db:push/);
   assert.doesNotMatch(step("setup-flyctl"), /\bif:/);
 });
 check("a verificação não importa Prisma nem código da app", () => {
