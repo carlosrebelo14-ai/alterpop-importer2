@@ -49,6 +49,7 @@ export const action = async ({ request }) => {
   let customTagsError = null;
   let requestedSkus = null;
   let skusVazios = false;
+  let skusInvalidos = false;
   let force = false;
   let confirmCount = null;
   let clearLock = false;
@@ -66,12 +67,18 @@ export const action = async ({ request }) => {
     if (Number.isInteger(json.confirmCount)) confirmCount = json.confirmCount;
     if (json.cancel || json.intent === "cancel") isCancel = true;
     customTagsError = rejectCustomTags(json.customTags);
+    if (json.skus !== undefined && !Array.isArray(json.skus)) skusInvalidos = true;
     if (Array.isArray(json.skus)) {
       requestedSkus = json.skus.map(String).filter(Boolean);
       skusVazios = requestedSkus.length === 0;
     }
   } catch {
     /* sem body */
+  }
+
+  // Lote 1 (DBG-03): `skus` que não é lista (string, número, objeto) lia-se como ausente e publicava tudo.
+  if (skusInvalidos && !isCancel) {
+    return Response.json({ ok: false, error: "O campo skus tem de ser uma lista de SKUs." }, { status: 400 });
   }
 
   // A2 (29/09/2026): customTags recusado com erro visível — nunca ignorado em silêncio.

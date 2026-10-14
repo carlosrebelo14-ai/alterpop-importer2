@@ -38,7 +38,7 @@ import {
   canResumeCatalogRebuild,
   readCatalogRebuildStatus,
 } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
-import { loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
+import { loadCurationQueueForPanel } from "../../lib/curation/curationQueue.server.js";
 import { partitionPublishSelection, describeLeftOut } from "../../lib/curation/publishSelection.js";
 import { countSmartRuleDecisions } from "../../lib/importer/curation/smartRules.server.js";
 import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
@@ -113,15 +113,8 @@ export const loader = async ({ request }) => {
   const catalogRebuildStatus = await readCatalogRebuildStatus(session.shop);
   const catalogCanResume = canResumeCatalogRebuild(catalogRebuildStatus);
 
-  // DBG-22: fila corrompida e não recuperável grava a flag DB_DEGRADED e lança. O painel abre
-  // sem itens e o banner (app.jsx) mostra a causa. Nada é escrito.
-  let curationQueue;
-  try {
-    curationQueue = await loadCurationQueue();
-  } catch (err) {
-    if (err?.code !== "DB_DEGRADED") throw err;
-    curationQueue = { version: 1, updatedAt: null, items: [] };
-  }
+  // DBG-22: fila corrompida e não recuperável abre o painel sem itens; o banner (app.jsx) mostra a causa.
+  const { queue: curationQueue } = await loadCurationQueueForPanel();
   const decisions = {};
   const smartFlags = {};
   const reasons = {};
@@ -1523,8 +1516,13 @@ export default function CurationDashboard() {
   );
 
   const openStagingModal = useCallback(async (liveMode = false) => {
-    if (approvedSkus.length === 0) {
-      shopify.toast.show("Nenhum SKU aprovado para sincronizar", { isError: true });
+    if (publishSkus.length === 0) {
+      shopify.toast.show(
+        selectedSkus.length > 0
+          ? `Nenhum dos ${selectedSkus.length} selecionados está APPROVED.`
+          : "Nenhum SKU aprovado para sincronizar",
+        { isError: true }
+      );
       return;
     }
     setStagingLiveMode(liveMode);
@@ -1532,7 +1530,8 @@ export default function CurationDashboard() {
     setStagingLoading(true);
     setStagingSummary(null);
     try {
-      const params = new URLSearchParams({ skus: approvedSkus.join(",") });
+      // Resumo do mesmo conjunto que o botão publica (Lote 1): a seleção, ou todos os APPROVED.
+      const params = new URLSearchParams({ skus: publishSkus.join(",") });
       const res = await fetch(`/api/curation/sync-preview?${params}`, {
         credentials: "same-origin",
       });
@@ -1544,7 +1543,7 @@ export default function CurationDashboard() {
     } finally {
       setStagingLoading(false);
     }
-  }, [approvedSkus, shopify]);
+  }, [publishSkus, selectedSkus.length, shopify]);
 
   const startSyncJob = useCallback(
     (liveMode) => {

@@ -121,8 +121,23 @@ check("motor sem o fallback uniqueSkus = [...requestedSet]", () => {
 });
 
 check("aprovação recusa PUBLISHED: a guarda corre antes de gravar", () => {
-  assert.match(queue, /assertApprovable\(item\);/);
-  assert.match(approveRoute, /err\?\.code === "APPROVE_PUBLISHED"[\s\S]*status: 409/);
+  assert.match(queue, /let item = queue\.items\.find\(\(i\) => i\.sku === sku\);\s*\n\s*\/\/[^\n]*\n\s*assertApprovable\(item\);/);
+  assert.match(approveRoute, /if \(err\?\.code === "APPROVE_PUBLISHED"\) \{\s*\n\s*return Response\.json\(\{ ok: false, error: err\.message \}, \{ status: 409 \}\);/);
+});
+check("aprovação em modo degradado responde 503 com a causa, não 404", () => {
+  assert.match(approveRoute, /if \(err\?\.code === "DB_DEGRADED"\) \{[\s\S]*?status: 503/);
+});
+check("skus que não é lista recusa com 400 (antes lia-se como ausente)", () => {
+  assert.match(route, /skusInvalidos = true/);
+  assert.match(route, /if \(skusInvalidos && !isCancel\)/);
+});
+check("motor falha o job quando recusa SKUs, para não ficar em running", () => {
+  assert.match(engine, /if \(!resolved\.ok\) \{[\s\S]*?await failShopifySyncJob\(shop, resolved\.error\)/);
+});
+check("painel lê a fila por loadCurationQueueForPanel e o resumo usa o mesmo conjunto que publica", () => {
+  const ui = read("app/routes/app._index.jsx");
+  assert.match(ui, /const \{ queue: curationQueue \} = await loadCurationQueueForPanel\(\);/);
+  assert.match(ui, /new URLSearchParams\(\{ skus: publishSkus\.join\(","\) \}\)/);
 });
 
 console.log("assertTransitionAllowed — DBG-11, setter em massa");

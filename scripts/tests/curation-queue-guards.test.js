@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /* eslint-env node */
 /**
- * Lote 1 (Decisão 34), DBG-11 e DBG-22, contra a fila real em ficheiros temporários:
+ * Lote 1 (Decisão 34), DBG-03, DBG-11 e DBG-22, contra a fila real em ficheiros temporários:
  *   - approveProduct e bulkSetQueueStatus recusam PUBLISHED → APPROVED, sem gravar nada;
  *   - PUBLISHED → PENDING continua permitido (é o que os scripts de revert usam);
+ *   - o undo (restoreQueueSnapshots) não devolve um PUBLISHED a APPROVED;
+ *   - o motor de publicação recusa SKUs fora de APPROVED antes de tocar na Shopify e falha o job;
  *   - fila corrompida e não recuperável: backup, flag DB_DEGRADED, leitura recusada e o ficheiro
- *     original fica intacto. Nunca reinício com fila vazia;
+ *     original fica intacto. Nunca reinício com fila vazia. O painel recebe a causa em `blocked`;
  *   - fila corrompida mas recuperável por sanitização: recupera, sem flag.
  * Uso: node scripts/tests/curation-queue-guards.test.js
  */
@@ -13,18 +15,22 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "queue-guards-"));
 process.env.CURATION_DATA_DIR = tmp;
 process.env.DATABASE_URL = `file:${path.join(tmp, "dev.sqlite")}`;
-const cwd = process.cwd();
 process.chdir(tmp);
 
-const q = await import(path.join(cwd, "lib/curation/curationQueue.server.js"));
-const { DbDegradedError, dbDegradedFlagPath } = await import(path.join(cwd, "lib/health/dbDegraded.js"));
+const q = await import(path.join(ROOT, "lib/curation/curationQueue.server.js"));
+const { DbDegradedError, dbDegradedFlagPath } = await import(path.join(ROOT, "lib/health/dbDegraded.js"));
+const engine = await import(path.join(ROOT, "lib/importer/shopify/shopifyApprovedSync.server.js"));
+const { readShopifySyncStatus } = await import(path.join(ROOT, "lib/importer/shopify/shopifySyncJob.server.js"));
 
 const QUEUE = path.join(tmp, "curation-queue.json");
 const FLAG = dbDegradedFlagPath();
+const SHOP = "queue-guards.myshopify.com";
 
 let failures = 0;
 async function check(name, fn) {
@@ -67,7 +73,7 @@ await check("approveProduct continua a aprovar PENDING", async () => {
 });
 
 writeQueue([
-  { sku: "PUB1", status: "PUBLISHED", metadata: {} },
+  { sku: "PUB1", status: "PUBLISHED", shopifyProductId: "gid://shopify/Product/1", metadata: {} },
   { sku: "P2", status: "PENDING", metadata: {} },
 ]);
 
@@ -83,6 +89,39 @@ await check("bulkSetQueueStatus APPROVED com um PUBLISHED recusa o lote inteiro"
 await check("bulkSetQueueStatus PUBLISHED → PENDING continua permitido (revert)", async () => {
   await q.bulkSetQueueStatus(["PUB1"], "PENDING");
   assert.equal(await statusOf("PUB1"), "PENDING");
+});
+
+await check("approveProduct com a flag ativa e fila saudável é recusado, e o ficheiro fica como estava", async () => {
+  writeQueue([{ sku: "P3", status: "PENDING", metadata: {} }]);
+  fs.writeFileSync(FLAG, JSON.stringify({ cause: "teste de escrita", at: new Date().toISOString() }), "utf8");
+  q.invalidateCurationMemoryCache();
+  await assert.rejects(q.approveProduct("P3"), (e) => e.code === "DB_DEGRADED");
+  assert.equal(JSON.parse(fs.readFileSync(QUEUE, "utf8")).items[0].status, "PENDING");
+  clearFlag();
+});
+
+console.log("DBG-11 — o undo não devolve PUBLISHED a APPROVED");
+await check("restoreQueueSnapshots com APPROVED sobre PUBLISHED é ignorado e reportado", async () => {
+  writeQueue([{ sku: "PUB2", status: "PUBLISHED", shopifyProductId: "gid://shopify/Product/2", metadata: {} }]);
+  const r = await q.restoreQueueSnapshots([{ sku: "PUB2", status: "APPROVED", metadata: {} }]);
+  assert.deepEqual(r.skipped, ["PUB2"]);
+  const item = (await q.loadCurationQueue()).items.find((i) => i.sku === "PUB2");
+  assert.equal(item.status, "PUBLISHED");
+  assert.equal(item.shopifyProductId, "gid://shopify/Product/2");
+});
+
+console.log("DBG-03 — o motor recusa SKUs fora de APPROVED antes da Shopify");
+await check("runApprovedShopifySync com SKU PENDING: ok false, rejected, job falha, Shopify não chamada", async () => {
+  clearFlag();
+  writeQueue([
+    { sku: "A1", status: "APPROVED", metadata: {} },
+    { sku: "P9", status: "PENDING", metadata: {} },
+  ]);
+  const res = await engine.runApprovedShopifySync({ shop: SHOP }, { skus: ["A1", "P9"] });
+  assert.equal(res.ok, false);
+  assert.deepEqual(res.rejected, [{ sku: "P9", status: "PENDING" }]);
+  const status = await readShopifySyncStatus(SHOP);
+  assert.equal(status.state, "failed", "o job não pode ficar em running");
 });
 
 console.log("DBG-22 — fila corrompida não reinicia em silêncio");
@@ -101,9 +140,18 @@ await check("fila corrompida e não recuperável: backup, flag, leitura recusada
   assert.equal(fs.readFileSync(QUEUE, "utf8"), corrupt, "o ficheiro original foi alterado");
 });
 
-await check("com a flag ativa, approveProduct é recusado com DB_DEGRADED", async () => {
-  await assert.rejects(q.approveProduct("X"), (e) => e.code === "DB_DEGRADED");
-  assert.equal(fs.readFileSync(QUEUE, "utf8"), "{ isto não é json");
+await check("loadCurationQueueForPanel com a fila degradada: fila vazia e causa em blocked", async () => {
+  const r = await q.loadCurationQueueForPanel();
+  assert.deepEqual(r.queue.items, []);
+  assert.match(r.blocked, /fila de curadoria corrompida/);
+});
+
+await check("loadCurationQueueForPanel com a fila saudável: itens e blocked null", async () => {
+  clearFlag();
+  writeQueue([{ sku: "OK1", status: "PENDING", metadata: {} }]);
+  const r = await q.loadCurationQueueForPanel();
+  assert.equal(r.blocked, null);
+  assert.equal(r.queue.items[0].sku, "OK1");
 });
 
 await check("fila corrompida mas recuperável por sanitização: recupera, sem flag", async () => {
