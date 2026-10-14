@@ -11,6 +11,7 @@
  *
  * Uso: node scripts/tests/sync-staging-summary-read-safety.test.js
  */
+import "./_isolate-curation.js";
 import assert from "node:assert/strict";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { computeSyncStagingSummary } from "../../lib/importer/sync/syncStagingSummary.server.js";
