@@ -24,7 +24,10 @@ process.env.DATABASE_URL = `file:${path.join(tmp, "dev.sqlite")}`;
 // O upsert lê config/ e server/data/ relativos ao cwd: ligo-os ao repo dentro do diretório temporário.
 fs.symlinkSync(path.join(ROOT, "config"), path.join(tmp, "config"));
 fs.mkdirSync(path.join(tmp, "server", "data"), { recursive: true });
-fs.copyFileSync(path.join(ROOT, "server", "data", "taxonomy-map.json"), path.join(tmp, "server", "data", "taxonomy-map.json"));
+for (const f of fs.readdirSync(path.join(ROOT, "server", "data"))) {
+  if (f === "curation-queue.json") continue;
+  fs.copyFileSync(path.join(ROOT, "server", "data", f), path.join(tmp, "server", "data", f));
+}
 process.chdir(tmp);
 
 const q = await import(path.join(ROOT, "lib/curation/curationQueue.server.js"));
@@ -142,6 +145,7 @@ await check("upsert de importação não mexe num PUBLISHED, e o vínculo à Sho
 });
 
 await check("reset: sweep põe PENDING retido, exceto apagamentos falhados (por SKU ou por id)", async () => {
+  clearFlag();
   writeQueue([
     { sku: "D1", status: "PUBLISHED", metadata: { shopifyProductId: "gid://shopify/Product/10" } },
     { sku: "F1", status: "PUBLISHED", metadata: { shopifyProductId: "gid://shopify/Product/11" } },
@@ -163,13 +167,36 @@ await check("reset: sweep põe PENDING retido, exceto apagamentos falhados (por 
   assert.equal(items.find((i) => i.sku === "X9").status, "PUBLISHED");
 });
 
+await check("reset: SYNC_ERROR que nunca chegou à Shopify volta a PENDING sem marca de apagado", async () => {
+  clearFlag();
+  writeQueue([{ sku: "E1", status: "SYNC_ERROR", metadata: { syncError: "x" } }]);
+  const n = await reset.revertAllPublishedInQueue({ deletedInAdmin: true });
+  assert.equal(n, 1);
+  const item = (await q.loadCurationQueue()).items.find((i) => i.sku === "E1");
+  assert.equal(item.status, "PENDING");
+  assert.equal(item.metadata.deletedInAdmin, undefined, "não foi publicado: não é apagado no admin");
+  assert.equal(item.metadata.wasPublished, undefined);
+  assert.equal(item.metadata.syncError, null);
+});
+
 await check("reset: produto apagado com sucesso volta a PENDING retido, nunca a APPROVED", async () => {
+  clearFlag();
   writeQueue([{ sku: "D2", status: "PUBLISHED", metadata: { shopifyProductId: "gid://shopify/Product/20" } }]);
   const n = await reset.revertLocalAfterShopifyReset(["D2"], ["gid://shopify/Product/20"]);
   assert.equal(n, 1);
   const item = (await q.loadCurationQueue()).items.find((i) => i.sku === "D2");
   assert.equal(item.status, "PENDING");
   assert.equal(item.metadata.deletedInAdmin.previousShopifyProductId, "gid://shopify/Product/20");
+});
+
+await check("reset: SKU repetido noutra loja não arrasta um item ligado a outro id", async () => {
+  clearFlag();
+  writeQueue([{ sku: "S-1", status: "PUBLISHED", metadata: { shopifyProductId: "gid://shopify/Product/30" } }]);
+  const n = await reset.revertLocalAfterShopifyReset(["S-1"], ["gid://shopify/Product/31"]);
+  assert.equal(n, 0);
+  const item = (await q.loadCurationQueue()).items.find((i) => i.sku === "S-1");
+  assert.equal(item.status, "PUBLISHED");
+  assert.equal(item.metadata.shopifyProductId, "gid://shopify/Product/30");
 });
 
 await check("fila em falta sem backup e sem catálogo: primeiro arranque, vazia, sem flag", async () => {
@@ -185,21 +212,25 @@ await check("fila em falta sem backup e sem catálogo: primeiro arranque, vazia,
 await check("fila em falta com backup de corrupção no volume: flag e leitura recusada", async () => {
   clearFlag();
   fs.rmSync(QUEUE, { force: true });
-  fs.writeFileSync(path.join(tmp, "curation-queue.json.corrupt-2026-10-01T00-00-00-000Z.json"), "{x", "utf8");
+  const backup = path.join(tmp, "curation-queue.json.corrupt-2026-10-01T00-00-00-000Z.json");
+  fs.writeFileSync(backup, "{x", "utf8");
   q.setCatalogCountReaderForTests(async () => 0);
   q.invalidateCurationMemoryCache();
-  await assert.rejects(q.loadCurationQueue(), (e) => e.code === "DB_DEGRADED");
-  assert.match(JSON.parse(fs.readFileSync(FLAG, "utf8")).cause, /backup de corrupção/);
-  fs.rmSync(path.join(tmp, "curation-queue.json.corrupt-2026-10-01T00-00-00-000Z.json"), { force: true });
+  try {
+    await assert.rejects(q.loadCurationQueue(), (e) => e.code === "DB_DEGRADED");
+    assert.match(JSON.parse(fs.readFileSync(FLAG, "utf8")).cause, /backup de corrupção/);
+  } finally {
+    fs.rmSync(backup, { force: true });
+  }
 });
 
-await check("fila em falta com produtos no catálogo: flag e leitura recusada", async () => {
+await check("fila em falta com produtos no catálogo (um só basta): flag e leitura recusada", async () => {
   clearFlag();
   fs.rmSync(QUEUE, { force: true });
-  q.setCatalogCountReaderForTests(async () => 3);
+  q.setCatalogCountReaderForTests(async () => 1);
   q.invalidateCurationMemoryCache();
   await assert.rejects(q.loadCurationQueue(), (e) => e.code === "DB_DEGRADED");
-  assert.match(JSON.parse(fs.readFileSync(FLAG, "utf8")).cause, /3 produtos no catálogo/);
+  assert.match(JSON.parse(fs.readFileSync(FLAG, "utf8")).cause, /catálogo populado \(1 produto\(s\)\)/);
 });
 
 await check("fila em falta e catálogo ilegível: recusa sem gravar a flag", async () => {
@@ -209,9 +240,12 @@ await check("fila em falta e catálogo ilegível: recusa sem gravar a flag", asy
     throw new Error("tabela ausente");
   });
   q.invalidateCurationMemoryCache();
-  await assert.rejects(q.loadCurationQueue(), (e) => !(e instanceof DbDegradedError) && /não foi possível confirmar/.test(e.message));
-  assert.equal(fs.existsSync(FLAG), false);
-  q.setCatalogCountReaderForTests(async () => 0);
+  try {
+    await assert.rejects(q.loadCurationQueue(), (e) => !(e instanceof DbDegradedError) && /não foi possível confirmar/.test(e.message));
+    assert.equal(fs.existsSync(FLAG), false);
+  } finally {
+    q.setCatalogCountReaderForTests(async () => 0);
+  }
 });
 
 console.log("DBG-22 — fila corrompida não reinicia em silêncio");
