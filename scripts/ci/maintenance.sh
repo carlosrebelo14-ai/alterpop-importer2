@@ -4,6 +4,8 @@
 #   bash scripts/ci/maintenance.sh <tarefa> <fase>
 #
 # tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push
+#         | db_flag_check | logs_recent | restore_dry_run   (estas três só leem; nenhuma aceita execute)
+# db_push recusa-se com a flag DB_DEGRADED presente no volume (Decisão 34), em dry-run e em execute.
 # fase    dry-run  só lê (ou lista o que mudaria)
 #         execute  escreve (só tags_cleanup, character_pages_sync e db_push; nas outras é igual ao dry-run)
 #
@@ -31,11 +33,22 @@ WAIT_MAX_ATTEMPTS="${WAIT_MAX_ATTEMPTS:-$((15 * 60 / (WAIT_STEP > 0 ? WAIT_STEP 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT="$(mktemp)"
 NOTE=""
+CAUSE=""
 WAITED_MIN=0
+DB_BLOCKED=0
+FS=""
+LOGS="$(mktemp)"
+RESTORE_OUT="$(mktemp)"
+LOG_LINES=0; LOG_DBD=0; LOG_DEGR=0
 
 case "$TASK" in
-  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push) ;;
+  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
+esac
+# As tarefas novas só leem: nenhuma aceita execute, nem como no-op.
+case "$TASK" in
+  db_flag_check | logs_recent | restore_dry_run)
+    if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
 case "$PHASE" in
   dry-run | execute) ;;
@@ -76,6 +89,18 @@ wait_for_indexing() {
   done
   WAITED_MIN=$((WAIT_MAX_ATTEMPTS * WAIT_STEP / 60))
   return 1
+}
+
+# flag_state: ABSENT | PRESENT | UNKNOWN. Só lê o volume (a flag DB_DEGRADED, Decisão 34). Nunca escreve.
+DB_FLAG="/app/data/DB_DEGRADED"
+flag_state() {
+  local out rc
+  out="$("$FLYCTL" ssh console -a "$APP" -C "sh -lc 'if [ -e $DB_FLAG ]; then echo FLAG_PRESENT; else echo FLAG_ABSENT; fi'" 2>&1)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then echo UNKNOWN; return; fi
+  if echo "$out" | grep -q "FLAG_PRESENT"; then echo PRESENT
+  elif echo "$out" | grep -q "FLAG_ABSENT"; then echo ABSENT
+  else echo UNKNOWN; fi
 }
 
 RC=0
@@ -153,7 +178,56 @@ case "$TASK" in
       remote "node scripts/catalog/character-pages-sync.js"; RC=$?
     fi
     ;;
+  db_flag_check)
+    DESC="Lê se a flag DB_DEGRADED existe no volume. Só lê. Não mostra a causa: o repositório é público."
+    FS="$(flag_state)"
+    case "$FS" in
+      ABSENT)  RESULT_OVERRIDE="✅ Flag DB_DEGRADED ausente"; RC=0 ;;
+      PRESENT) RESULT_OVERRIDE="⛔ Flag DB_DEGRADED presente"; RC=1
+               CAUSE="a flag DB_DEGRADED existe no volume: a app está em modo degradado e a sequência para. A causa fica no volume (ver com fly ssh; não é publicada)." ;;
+      *)       RESULT_OVERRIDE="❓ Não consegui ler a flag"; RC=2
+               CAUSE="não consegui ler o estado da flag DB_DEGRADED (ssh ou resposta inesperada)." ;;
+    esac
+    ;;
+  logs_recent)
+    DESC="Conta as linhas de erro dos logs recentes da app (DbDegradedError e mensagens de modo degradado). Só lê. Não mostra linhas."
+    "$FLYCTL" logs -a "$APP" --no-tail >"$LOGS" 2>>"$OUT"; RC=$?
+    if [ "$RC" -ne 0 ]; then
+      CAUSE="não consegui ler os logs da Fly."
+    else
+      LOG_LINES="$(wc -l <"$LOGS" | tr -d ' ')"
+      LOG_DBD="$(grep -c 'DbDegradedError' "$LOGS" || true)"
+      LOG_DEGR="$(grep -ci 'modo degradado' "$LOGS" || true)"
+      if [ "${LOG_DBD:-0}" -gt 0 ] || [ "${LOG_DEGR:-0}" -gt 0 ]; then
+        RESULT_OVERRIDE="⛔ Erros de modo degradado nos logs"; RC=1
+        CAUSE="há DbDegradedError ou mensagens de modo degradado nos logs recentes: a sequência para."
+      fi
+    fi
+    ;;
+  restore_dry_run)
+    DESC="Copia dev.sqlite e o WAL (se existir) do volume para uma pasta temporária do runner e corre o restauro sem --execute sobre a cópia. Só lê: a BD da Fly não é tocada."
+    COPY_DIR="$(mktemp -d)"
+    "$FLYCTL" ssh sftp get /app/data/dev.sqlite "$COPY_DIR/dev.sqlite" -a "$APP" >>"$OUT" 2>&1; RC=$?
+    if [ "$RC" -ne 0 ]; then
+      CAUSE="não consegui copiar dev.sqlite do volume (ssh sftp): verificar o token e o acesso ao volume."
+    else
+      "$FLYCTL" ssh sftp get /app/data/dev.sqlite-wal "$COPY_DIR/dev.sqlite-wal" -a "$APP" >>"$OUT" 2>&1 || true
+      DATABASE_URL="file:$COPY_DIR/dev.sqlite" node "$ROOT/scripts/setup/restore-db-degraded.js" >"$RESTORE_OUT" 2>>"$OUT"; RC=$?
+      if [ "$RC" -ne 0 ]; then CAUSE="a cópia não passa integrity_check: o restauro real teria de ser feito antes de limpar a flag."; fi
+    fi
+    rm -rf "$COPY_DIR"
+    ;;
   db_push)
+    DESC="Aplica o esquema Prisma ao SQLite do volume (db:push, sem aceitar perda de dados). Escreve na base de dados. Recusado enquanto a flag DB_DEGRADED existir."
+    FS="$(flag_state)"
+    if [ "$FS" = "PRESENT" ]; then
+      DB_BLOCKED=1; RESULT_OVERRIDE="⛔ db:push recusado: flag DB_DEGRADED presente"; RC=1
+      CAUSE="a flag DB_DEGRADED existe no volume: o db:push recusa-se até a BD ser restaurada (Decisão 34)."
+    elif [ "$FS" != "ABSENT" ]; then
+      DB_BLOCKED=1; RESULT_OVERRIDE="❓ db:push recusado: não consegui ler a flag"; RC=2
+      CAUSE="não consegui ler a flag DB_DEGRADED: o db:push não correu."
+    fi
+    if [ "$DB_BLOCKED" -eq 0 ]; then
     wait_for_indexing
     WRC=$?
     if [ "$EFFECTIVE" = "execute" ]; then
@@ -171,6 +245,7 @@ case "$TASK" in
       if [ "$WRC" -eq 2 ]; then NOTE="Não consegui ler o estado da indexação."; fi
       remote "npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script --exit-code"; RC=$?
       if [ "$RC" -eq 2 ]; then DIFF=true; RC=0; else DIFF=false; fi
+    fi
     fi
     ;;
 esac
@@ -269,7 +344,7 @@ case "$TASK" in
     KEY="$((cr + up + ra + sd)) ações"
     ;;
   db_push)
-    if [ "$EFFECTIVE" = "dry-run" ]; then
+    if [ "$EFFECTIVE" = "dry-run" ] && [ "$DB_BLOCKED" -eq 0 ]; then
       if [ "${DIFF:-false}" = true ]; then
         ct=$(count '^CREATE TABLE'); at=$(count '^ALTER TABLE'); ci=$(count '^CREATE (UNIQUE )?INDEX'); dr=$(count '^DROP ')
         bullets="- O esquema da base **difere** do Prisma: $ct tabelas a criar, $at alterações de tabela, $ci índices a criar, $dr remoções (DROP)."
@@ -280,11 +355,24 @@ case "$TASK" in
       fi
     fi
     ;;
+  db_flag_check)
+    case "$FS" in ABSENT) FS_PT="ausente" ;; PRESENT) FS_PT="presente" ;; *) FS_PT="não lida" ;; esac
+    bullets="- Flag DB_DEGRADED: **$FS_PT**."
+    KEY="flag $FS_PT"
+    ;;
+  logs_recent)
+    bullets="- Linhas lidas: **${LOG_LINES:-0}**. DbDegradedError: **${LOG_DBD:-0}**. Mensagens de modo degradado: **${LOG_DEGR:-0}**. Janela: o que a Fly devolve agora (--no-tail)."
+    KEY="$LOG_DBD DbDegradedError, $LOG_DEGR mensagens de modo degradado"
+    ;;
+  restore_dry_run)
+    if grep -q 'integrity_check: ok' "$RESTORE_OUT" 2>/dev/null; then IC="ok"; elif grep -q 'integrity_check:' "$RESTORE_OUT" 2>/dev/null; then IC="falhou"; else IC="não correu"; fi
+    bullets="- Cópia de dev.sqlite do volume para o runner (temporária, apagada no fim). integrity_check da cópia: **$IC**. Dry-run: nenhuma flag foi apagada e a BD da Fly não foi tocada."
+    KEY="integrity_check da cópia: $IC"
+    ;;
 esac
 
-# Em falha, só uma causa classificada (a saída bruta não é publicada).
-CAUSE=""
-if [ "$RC" -ne 0 ] && [ "$RC" -ne 75 ]; then
+# Em falha, só uma causa classificada (a saída bruta não é publicada). CAUSE pode já vir de uma tarefa.
+if [ "$RC" -ne 0 ] && [ "$RC" -ne 75 ] && [ -z "$CAUSE" ]; then
   if [ "$TASK" = "catalog_health" ] && [ "$(count '^  [✓✗!] ')" -gt 0 ]; then CAUSE="o portão correu e tem verificações vermelhas (ver a lista acima)."
   elif echo "$CLEAN" | grep -qiE 'cannot find module|MODULE_NOT_FOUND'; then CAUSE="o código na Fly ainda não tem este script: falta fazer deploy."
   elif echo "$CLEAN" | grep -qiE 'unauthorized|not authorized|token|forbidden|401|403'; then CAUSE="autorização da Fly ou da Shopify recusada."
@@ -316,5 +404,5 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "result=$RESULT" >>"$GITHUB_OUTPUT"
   echo "key=$(echo "$KEY" | head -1)" >>"$GITHUB_OUTPUT"
 fi
-rm -f "$OUT"
+rm -f "$OUT" "$LOGS" "$RESTORE_OUT"
 exit "$RC"

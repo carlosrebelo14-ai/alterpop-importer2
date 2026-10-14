@@ -32,13 +32,8 @@ async function integrityRows() {
 
 async function main() {
   const state = readDbDegraded();
-  if (!state) {
-    console.log(`[restore] Sem flag DB_DEGRADED em ${dbDegradedFlagPath()}. Nada a fazer.`);
-    return 0;
-  }
 
-  console.log(`[restore] Modo degradado ativo: ${state.cause} (desde ${state.at ?? "data desconhecida"}).`);
-
+  // integrity_check corre sempre, com ou sem flag: é o que a tarefa restore_dry_run usa sobre a cópia.
   let rows;
   try {
     rows = await integrityRows();
@@ -48,7 +43,15 @@ async function main() {
   }
 
   console.log(`[restore] integrity_check: ${rows.join(" | ")}`);
-  if (!(rows.length === 1 && rows[0] === "ok")) {
+  const integra = rows.length === 1 && rows[0] === "ok";
+
+  if (!state) {
+    console.log(`[restore] Sem flag DB_DEGRADED em ${dbDegradedFlagPath()}. Nada a fazer.`);
+    return integra ? 0 : 1;
+  }
+
+  console.log(`[restore] Modo degradado ativo: ${state.cause} (desde ${state.at ?? "data desconhecida"}).`);
+  if (!integra) {
     console.error("[restore] BD ainda não íntegra. Flag mantida.");
     return 1;
   }
