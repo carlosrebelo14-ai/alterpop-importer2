@@ -218,7 +218,8 @@ esac
 # Em falha, só uma causa classificada (a saída bruta não é publicada).
 CAUSE=""
 if [ "$RC" -ne 0 ] && [ "$RC" -ne 75 ]; then
-  if echo "$CLEAN" | grep -qiE 'cannot find module|MODULE_NOT_FOUND'; then CAUSE="o código na Fly ainda não tem este script: falta fazer deploy."
+  if [ "$TASK" = "catalog_health" ] && [ "$(count '^  [✓✗!] ')" -gt 0 ]; then CAUSE="o portão correu e tem verificações vermelhas (ver a lista acima)."
+  elif echo "$CLEAN" | grep -qiE 'cannot find module|MODULE_NOT_FOUND'; then CAUSE="o código na Fly ainda não tem este script: falta fazer deploy."
   elif echo "$CLEAN" | grep -qiE 'unauthorized|not authorized|token|forbidden|401|403'; then CAUSE="autorização da Fly ou da Shopify recusada."
   elif echo "$CLEAN" | grep -qiE 'connect|timeout|timed out|no such host|dial|ssh'; then CAUSE="não consegui ligar à Fly."
   elif echo "$CLEAN" | grep -qiE 'access scope|required access|read_themes|permission'; then CAUSE="falta uma permissão (scope) na Shopify."

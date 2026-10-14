@@ -203,6 +203,8 @@ check("portão vermelho → código 1 e vermelhas listadas no resumo, em portugu
   assert.equal(r.status, 1);
   assert.match(r.summaryText, /Resultado:\*\* ❌ Falhou \(código 1\)/);
   assert.match(r.summaryText, /Vermelhas: V5/);
+  assert.match(r.summaryText, /o portão correu e tem verificações vermelhas/);
+  assert.doesNotMatch(r.summaryText, /não consegui ligar à Fly/);
 });
 check("o tempo de espera por omissão é 15 min (15 sondagens de 60 s)", () => {
   assert.match(sh, /WAIT_STEP="\$\{WAIT_STEP_SECONDS:-60\}"/);
