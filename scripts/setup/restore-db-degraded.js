@@ -1,5 +1,10 @@
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { PrismaClient } from "@prisma/client";
 import { clearDbDegraded, dbDegradedFlagPath, readDbDegraded } from "../../lib/health/dbDegraded.js";
+
+const root = fileURLToPath(new URL("../..", import.meta.url));
 
 /**
  * Saída do modo degradado (Decisão 34, Lote 0). Dry-run por omissão.
@@ -8,7 +13,8 @@ import { clearDbDegraded, dbDegradedFlagPath, readDbDegraded } from "../../lib/h
  *   node scripts/setup/restore-db-degraded.js --execute  apaga a flag só se integrity_check der ok
  *
  * O ficheiro da BD é reposto antes, à mão, com a app parada (snapshot do volume ou backup).
- * Com --execute, a linha de registo em docs/execucoes.md tem de existir antes da corrida.
+ * Com --execute é obrigatório --ref <texto> e esse texto tem de estar em docs/execucoes.md,
+ * registado antes da corrida (Decisão 34, ponto 10). EXECUCOES_PATH aponta outro ficheiro (testes).
  */
 
 const execute = process.argv.includes("--execute");
@@ -50,6 +56,18 @@ async function main() {
   if (!execute) {
     console.log("[restore] Dry-run. Com --execute a flag é apagada. Registar a execução em docs/execucoes.md antes.");
     return 0;
+  }
+
+  const refIndex = process.argv.indexOf("--ref");
+  const ref = refIndex >= 0 ? process.argv[refIndex + 1] : "";
+  if (!ref) {
+    console.error("[restore] --execute exige --ref <texto da entrada em docs/execucoes.md>. Flag mantida.");
+    return 1;
+  }
+  const registry = fs.readFileSync(process.env.EXECUCOES_PATH || path.join(root, "docs/execucoes.md"), "utf8");
+  if (!registry.includes(ref)) {
+    console.error(`[restore] "${ref}" não está em docs/execucoes.md. Registar antes da corrida. Flag mantida.`);
+    return 1;
   }
 
   clearDbDegraded();

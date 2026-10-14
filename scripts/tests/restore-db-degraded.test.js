@@ -29,13 +29,19 @@ function freshDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "restore-degraded-"));
 }
 
-function run(args, dbFile) {
+function run(args, dbFile, extraEnv = {}) {
   return spawnSync(process.execPath, [script, ...args], {
     cwd: root,
-    env: { ...process.env, DATABASE_URL: `file:${dbFile}` },
+    env: { ...process.env, DATABASE_URL: `file:${dbFile}`, ...extraEnv },
     encoding: "utf8",
     timeout: 120000,
   });
+}
+
+function registryWith(ref) {
+  const file = path.join(freshDir(), "execucoes.md");
+  fs.writeFileSync(file, `# Registo\n\n- ${ref}: teste\n`, "utf8");
+  return file;
 }
 
 function makeHealthyDb(dbFile) {
@@ -91,12 +97,34 @@ check("BD íntegra, sem --execute: dry-run, flag mantida", () => {
   assert.ok(fs.existsSync(path.join(dir, "DB_DEGRADED")));
 });
 
-check("BD íntegra, com --execute: flag apagada", () => {
+check("BD íntegra, com --execute sem --ref: recusa, flag mantida", () => {
   const dir = freshDir();
   const db = path.join(dir, "dev.sqlite");
   makeHealthyDb(db);
   fs.writeFileSync(path.join(dir, "DB_DEGRADED"), JSON.stringify({ cause: "teste", at: null }), "utf8");
-  const r = run(["--execute"], db);
+  const r = run(["--execute"], db, { EXECUCOES_PATH: registryWith("RESTORE-1") });
+  assert.equal(r.status, 1, `esperado 1, veio ${r.status}`);
+  assert.match(r.stderr, /exige --ref/);
+  assert.ok(fs.existsSync(path.join(dir, "DB_DEGRADED")));
+});
+
+check("BD íntegra, --ref que não está no registo: recusa, flag mantida", () => {
+  const dir = freshDir();
+  const db = path.join(dir, "dev.sqlite");
+  makeHealthyDb(db);
+  fs.writeFileSync(path.join(dir, "DB_DEGRADED"), JSON.stringify({ cause: "teste", at: null }), "utf8");
+  const r = run(["--execute", "--ref", "RESTORE-2"], db, { EXECUCOES_PATH: registryWith("RESTORE-1") });
+  assert.equal(r.status, 1, `esperado 1, veio ${r.status}`);
+  assert.match(r.stderr, /não está em docs\/execucoes.md/);
+  assert.ok(fs.existsSync(path.join(dir, "DB_DEGRADED")));
+});
+
+check("BD íntegra, com --execute e --ref registado: flag apagada", () => {
+  const dir = freshDir();
+  const db = path.join(dir, "dev.sqlite");
+  makeHealthyDb(db);
+  fs.writeFileSync(path.join(dir, "DB_DEGRADED"), JSON.stringify({ cause: "teste", at: null }), "utf8");
+  const r = run(["--execute", "--ref", "RESTORE-1"], db, { EXECUCOES_PATH: registryWith("RESTORE-1") });
   assert.equal(r.status, 0, r.stderr);
   assert.ok(!fs.existsSync(path.join(dir, "DB_DEGRADED")), "a flag devia ter sido apagada");
 });

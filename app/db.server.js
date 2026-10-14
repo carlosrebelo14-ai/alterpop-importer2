@@ -30,6 +30,7 @@ const baseClient = resolvePrisma();
  * (create, update, delete, upsert e variantes) e as escritas SQL raw.
  */
 const WRITE_MODEL_OPERATION = /^(create|update|delete|upsert)/i;
+const WRITE_SQL = /^\s*(insert|update|delete|replace|create|drop|alter|vacuum|reindex)\b/i;
 const prisma = baseClient.$extends({
   query: {
     $allOperations({ operation, args, query }) {
@@ -42,6 +43,12 @@ const prisma = baseClient.$extends({
     },
     $executeRawUnsafe({ args, query }) {
       assertDbNotDegraded("escrita SQL raw");
+      return query(args);
+    },
+    // $queryRawUnsafe é leitura por desenho, mas aceita SQL de escrita. Bloqueia-se essa forma.
+    $queryRawUnsafe({ args, query }) {
+      const sql = Array.isArray(args) ? args[0] : args;
+      if (WRITE_SQL.test(String(sql ?? ""))) assertDbNotDegraded("escrita SQL via queryRaw");
       return query(args);
     },
   },

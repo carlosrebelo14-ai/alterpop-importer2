@@ -114,6 +114,60 @@ await check("sync de stock recusa com flag antes de chamar a Shopify", async () 
   clearDbDegraded();
 });
 
+console.log("revisão adversarial — escapes fechados");
+const { safePrisma } = await import("../../lib/prisma/prismaSafe.server.js");
+await check("safePrisma propaga DbDegradedError mesmo com fallback (sem fallback silencioso)", async () => {
+  markDbDegraded("teste");
+  await assert.rejects(
+    () => safePrisma("teste-escrita", () => prisma.catalogProduct.create({ data: { shop: "x", sku: "y", title: "z" } }), { fallback: 1 }),
+    DbDegradedError
+  );
+  clearDbDegraded();
+});
+await check("safePrisma com causa que cita SQLite não reentra no ramo de corrupção", async () => {
+  markDbDegraded("database disk image is malformed");
+  const before = fs.readdirSync(tmp).filter((f) => f.includes(".corrupt-")).length;
+  await assert.rejects(
+    () => safePrisma("teste-reentrada", () => prisma.catalogProduct.create({ data: { shop: "x", sku: "y", title: "z" } })),
+    (err) => err instanceof DbDegradedError && !/aninhad/.test(err.message)
+  );
+  const after = fs.readdirSync(tmp).filter((f) => f.includes(".corrupt-")).length;
+  assert.equal(after, before, "a recusa não pode criar cópias do WAL");
+  clearDbDegraded();
+});
+await check("$queryRawUnsafe com SQL de escrita é recusado; SELECT passa", async () => {
+  markDbDegraded("teste");
+  await assert.rejects(() => prisma.$queryRawUnsafe("INSERT INTO probe VALUES (3)"), DbDegradedError);
+  const rows = await prisma.$queryRawUnsafe("SELECT count(*) AS n FROM probe");
+  assert.ok(Array.isArray(rows));
+  clearDbDegraded();
+});
+const publisher = await import("../../lib/importer/shopify/shopifyProductPublisher.server.js");
+await check("publicador de produto recusa antes de chamar a Shopify (cobre scripts diretos)", async () => {
+  markDbDegraded("teste");
+  const client = {
+    graphql: () => {
+      throw new Error("não devia chamar a Shopify");
+    },
+  };
+  await assert.rejects(() => publisher.publishCatalogProductToShopify(client, { sku: "x" }, {}), DbDegradedError);
+  clearDbDegraded();
+});
+await check("entradas de escrita têm guarda antes da primeira ação", () => {
+  const guard = (rel, needle) => {
+    const src = fs.readFileSync(path.join(root, rel), "utf8");
+    const at = src.indexOf(needle);
+    assert.ok(at > 0, `${rel}: guarda em falta`);
+  };
+  guard("lib/importer/jobs/runImport.js", 'assertDbNotDegraded("importação")');
+  guard("lib/importer/catalog/indexingStream.server.js", 'assertDbNotDegraded("purga do catálogo")');
+  guard("lib/importer/catalog/indexingStream.server.js", 'assertDbNotDegraded("reindexação do catálogo")');
+  guard("lib/importer/shopify/publishedReprice.server.js", 'assertDbNotDegraded("aplicar preços aos publicados")');
+  guard("app/routes/api.shopify-reset.jsx", "readDbDegraded()");
+  guard("lib/curation/curationQueue.server.js", 'assertDbNotDegraded("recuperação da fila de curadoria")');
+  guard("lib/curation/curationQueue.server.js", 'assertDbNotDegraded("reinício da fila de curadoria")');
+});
+
 console.log("rotas e painel — ligação ao guarda");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 await check("api.shopify-sync recusa com 503 antes de iniciar o job", () => {
