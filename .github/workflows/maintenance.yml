@@ -1,6 +1,6 @@
 # Manutenção da app na Fly, disparada à mão: Actions → maintenance → Run workflow.
 #
-# task  lista fechada: catalog_health, diagnose_theme, diagnose_characters, tags_cleanup,
+# task  lista fechada: catalog_health, diagnose_theme, diagnose_characters, price_check, tags_cleanup,
 #       character_pages_sync, db_push
 # mode  dry-run (por omissão) ou execute
 #
@@ -38,6 +38,7 @@ on:
           - catalog_health
           - diagnose_theme
           - diagnose_characters
+          - price_check
           - tags_cleanup
           - character_pages_sync
           - db_push

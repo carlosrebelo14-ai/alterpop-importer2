@@ -102,6 +102,24 @@ check("totais: sobem, descem, soma da diferença e contagem por categoria somam 
   assert.equal(s.sumDiff, 2.1); // −0,40 + 2,50
 });
 
+check("fora por preço manual: override da curadoria e preço detetado contam; trancado e sem registo não", () => {
+  const override = classify({ item: item({ overrides: { price: 15.5 } }) });
+  const detected = classify({ live: live(15.5) });
+  const locked = classify({ live: live(14.9, { syncLocked: true }) });
+  const noRecord = classify({ item: item({ lastPriceWrite: null }) });
+  assert.equal(override.ignoreCode, "manualOverride");
+  assert.equal(detected.ignoreCode, "manualDetected");
+  assert.equal(locked.ignoreCode, "locked");
+  assert.equal(noRecord.ignoreCode, "noRecord");
+  const s = summarizeReprice([override, detected, locked, noRecord, classify()]);
+  assert.equal(s.counts.ignored, 4);
+  assert.equal(s.manualExcluded, 2);
+  // as linhas ignoradas trazem preço da loja, preço proposto e diferença, para a tabela dos fora por preço manual
+  assert.equal(override.livePrice, 14.9);
+  assert.equal(override.proposed, 14.5);
+  assert.equal(override.diff, -0.4);
+});
+
 if (failures) {
   console.error(`\n${failures} falha(s)`);
   process.exit(1);

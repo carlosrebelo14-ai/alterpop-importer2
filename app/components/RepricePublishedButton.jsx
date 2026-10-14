@@ -120,6 +120,9 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
   const ex = preview ? preview.rows.filter((r) => r.category === "ignored" || r.category === "failed" || r.category === "notFound") : [];
   const updates = preview ? preview.rows.filter((r) => r.category === "update") : [];
   const sample = preview ? preview.rows.slice(0, 5) : [];
+  // Fora por preço manual: mantêm o preço da loja; mostra-se o que a regra proporia, só para decidir.
+  const manualRows = preview ? preview.rows.filter((r) => r.category === "ignored" && (r.ignoreCode === "manualOverride" || r.ignoreCode === "manualDetected")) : [];
+  const otherEx = ex.filter((r) => !manualRows.includes(r));
 
   const disabled = !summary || summary.error || !(summary.outdated > 0);
   const tip = !summary
@@ -222,7 +225,8 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
                     <Badge tone="warning">{`${preview.totals.downs} descem`}</Badge>
                     <Badge>{`Diferença total ${fmtEurSigned(preview.totals.sumDiff)}`}</Badge>
                     <Badge>{`${preview.totals.counts.conforme} já conformes`}</Badge>
-                    <Badge>{`${preview.totals.counts.ignored} ignorados`}</Badge>
+                    <Badge tone={preview.totals.manualExcluded ? "attention" : undefined}>{`${preview.totals.manualExcluded ?? 0} fora por preço manual`}</Badge>
+                    <Badge>{`${preview.totals.counts.ignored - (preview.totals.manualExcluded ?? 0)} outros ignorados`}</Badge>
                     <Badge>{`${preview.totals.counts.notFound} não encontrados`}</Badge>
                     <Badge tone={preview.totals.counts.failed ? "critical" : undefined}>{`${preview.totals.counts.failed} falhados`}</Badge>
                   </InlineStack>
@@ -268,10 +272,41 @@ export function RepricePublishedButton({ filters, filterSummary, refreshKey, onA
                     </div>
                   )}
 
-                  {ex.length > 0 && (
+                  {manualRows.length > 0 && (
                     <BlockStack gap="100">
-                      <Text as="h3" variant="headingSm">{`Excluídos (${ex.length})`}</Text>
-                      {ex.map((r) => (
+                      <Text as="h3" variant="headingSm">{`Fora por preço manual (${manualRows.length}): ficam como estão`}</Text>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                          <thead>
+                            <tr>
+                              <th style={{ ...th, textAlign: "left", minWidth: 170 }}>Produto</th>
+                              <th style={th}>Preço na loja</th>
+                              <th style={th}>{`Preço ${preview.rule}`}</th>
+                              <th style={th}>Diferença</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {manualRows.map((r) => (
+                              <tr key={r.sku} style={{ borderTop: "1px solid var(--p-color-border, #e1e3e5)" }}>
+                                <td style={tdL}>
+                                  {r.title || r.sku}
+                                  <div style={{ color: "#6d7175", fontSize: 12 }}>{r.sku}</div>
+                                </td>
+                                <td style={td}>{formatEur(r.livePrice)}</td>
+                                <td style={td}>{formatEur(r.proposed)}</td>
+                                <td style={td}>{`${fmtEurSigned(r.diff)} (${fmtPct(r.diffPct)})`}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </BlockStack>
+                  )}
+
+                  {otherEx.length > 0 && (
+                    <BlockStack gap="100">
+                      <Text as="h3" variant="headingSm">{`Excluídos (${otherEx.length})`}</Text>
+                      {otherEx.map((r) => (
                         <Text as="p" key={r.sku} variant="bodySm" tone={r.category === "failed" ? "critical" : "subdued"}>
                           {`${r.sku} — ${r.title || ""} · ${r.reason}`}
                         </Text>

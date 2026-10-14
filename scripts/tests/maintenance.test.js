@@ -40,7 +40,7 @@ check("só workflow_dispatch, só main", () => {
 check("task: lista fechada exata", () => {
   assert.match(
     code,
-    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+mode:/
+    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- price_check\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+mode:/
   );
 });
 check("mode: dry-run por omissão, execute", () => {
@@ -97,6 +97,8 @@ case "$cmd" in
   *"npm run catalog:health"*)
     printf '  ✓ V3  produtos APPROVED = 0\n  ✗ V5  total — esperado 8435450233067, obtido darth-vader\n  ! V11  gid://shopify/Product/123 a 9,99 €\n'; exit "\${FAKE_HEALTH_RC:-0}";;
   *"migrate diff"*) printf 'CREATE TABLE "Segredo" (preco 9,99);\nCREATE UNIQUE INDEX "x" ON "Segredo"(a);\n'; exit "\${FAKE_DIFF_RC:-2}";;
+  *price-check*)
+    printf 'PC: regra_servidor=LEGACY\\nPC: impostos_incluidos=true\\nPC: publicados=57\\nPC: conformes_net=0\\nPC: a_atualizar=50\\nPC: sobem=0\\nPC: descem=50\\nPC: mediana_diff_pct=-17.4\\nPC: banda_ate_1=0\\nPC: banda_1_a_5=2\\nPC: banda_5_a_15=3\\nPC: banda_acima_15=45\\nPC: fora_preco_manual=4\\nPC: manual_override=3\\nPC: manual_detetado=1\\nPC: trancados=0\\nPC: sem_registo=1\\nPC: outros_ignorados=0\\nPC: falhados=1\\nPC: nao_encontrados=1\\n'; exit "\${FAKE_RC:-0}";;
   *tags-cleanup*)
     printf 'produtos lidos: 57 · limpos: 0 · a limpar: 57 (179 tag(s)) · sync_locked de fora: 0\ntags distintas fora da lista: 2\n    57  new-arrival\n    40  Funko\n  star-wars-darth-vader SKU 8435450233067 9,99 €\nreleitura: 57 produto(s) · com tags fora da lista (sem contar sync_locked excluídos): 0\n'; exit "\${FAKE_RC:-0}";;
   *character-pages-sync*) printf '  update     darth-vader  Star Wars  24 produtos\n  create     grogu  Star Wars  7 produtos gid://shopify/Metaobject/1\nalterpop.character escrito em 31 produto(s)\n'; exit "\${FAKE_RC:-0}";;
@@ -172,6 +174,29 @@ check("diagnose_theme corre os dois comandos de leitura; diagnose_characters o c
   assert.match(r.summaryText, /Erros do último ciclo \(sem handles nem GIDs\):\n {2}- escrita: metaobjectUpsert\(…\): Products cannot be blank/);
   assert.doesNotMatch(r.stdout, /frodo|gid:\/\//);
   assert.ok(!ran(r, "--execute"));
+});
+
+check("price_check: só leitura, resumo em português com impostos, regra e contagens", () => {
+  const r = run("price_check", "execute"); // execute não se aplica: é só leitura
+  assert.equal(r.status, 0);
+  assert.ok(ran(r, "node scripts/maintenance/price-check.js"));
+  assert.ok(!r.calls.some((c) => /--execute|db:push|migrate/.test(c)));
+  assert.match(r.summaryText, /Regra do servidor \(PRICE_MODE\): \*\*LEGACY\*\*\. Impostos incluídos nos preços \(taxesIncluded\): \*\*true\*\*/);
+  assert.match(r.summaryText, /Estado coerente de \*\*antes\*\* da troca/);
+  assert.match(r.summaryText, /Publicados lidos: \*\*57\*\*; já conformes com a regra NET: \*\*0\*\*; a atualizar: \*\*50\*\*/);
+  assert.match(r.summaryText, /Ficam fora por preço manual: \*\*4\*\* \(override da curadoria 3, preço detetado 1\)/);
+  assert.match(r.summaryText, /não se aplica a esta tarefa/);
+});
+check("price_check: avisa nos estados intermédios da troca", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pc-"));
+  const bin = path.join(dir, "flyctl");
+  const out = (rule, taxes) => `#!/bin/sh\nprintf 'PC: regra_servidor=${rule}\\nPC: impostos_incluidos=${taxes}\\nPC: publicados=1\\nPC: a_atualizar=0\\nPC: fora_preco_manual=0\\n'\n`;
+  for (const [rule, taxes, rx] of [["NET", "true", /Estado intermédio: regra NET com impostos incluídos/], ["LEGACY", "false", /Estado intermédio: regra antiga/], ["NET", "false", /Estado coerente de \*\*depois\*\*/]]) {
+    fs.writeFileSync(bin, out(rule, taxes), { mode: 0o755 });
+    const summary = path.join(dir, `s-${rule}-${taxes}.md`);
+    spawnSync("bash", [SCRIPT, "price_check", "dry-run"], { cwd: ROOT, encoding: "utf8", env: { PATH: process.env.PATH, FLYCTL: bin, GITHUB_STEP_SUMMARY: summary } });
+    assert.match(fs.readFileSync(summary, "utf8"), rx, `${rule}/${taxes}`);
+  }
 });
 
 console.log("catalog_health — espera pela indexação");
@@ -254,7 +279,7 @@ check("execute com estado ilegível: não corre db:push", () => {
 console.log("repositório público: logs e resumos só com contagens e estados");
 const PROIBIDO = [/8435450233067/, /darth-vader/, /gid:\/\/shopify/, /9,99/, /€/, /star-wars-/, /loja-secreta/, /Segredo/, /"checkedAt"/];
 check("nenhuma tarefa/fase deixa SKU, handle, preço, GID ou JSON completo no log nem no resumo", () => {
-  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters", "tags_cleanup", "character_pages_sync", "db_push"]) {
+  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters", "price_check", "tags_cleanup", "character_pages_sync", "db_push"]) {
     for (const phase of ["dry-run", "execute"]) {
       const r = run(task, phase);
       const visivel = `${r.stdout}\n${r.stderr}\n${r.summaryText}`;

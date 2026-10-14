@@ -3,7 +3,7 @@
 #
 #   bash scripts/ci/maintenance.sh <tarefa> <fase>
 #
-# tarefa  catalog_health | diagnose_theme | diagnose_characters | tags_cleanup | character_pages_sync | db_push
+# tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | tags_cleanup | character_pages_sync | db_push
 # fase    dry-run  só lê (ou lista o que mudaria)
 #         execute  escreve (só tags_cleanup, character_pages_sync e db_push; nas outras é igual ao dry-run)
 #
@@ -34,7 +34,7 @@ NOTE=""
 WAITED_MIN=0
 
 case "$TASK" in
-  catalog_health | diagnose_theme | diagnose_characters | tags_cleanup | character_pages_sync | db_push) ;;
+  catalog_health | diagnose_theme | diagnose_characters | price_check | tags_cleanup | character_pages_sync | db_push) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
 esac
 case "$PHASE" in
@@ -104,6 +104,10 @@ case "$TASK" in
     EB64="$(base64 -w0 "$ROOT/scripts/maintenance/character-cycle-errors.mjs")"
     if [ "$RC" -eq 0 ]; then remote "echo $EB64 | base64 -d | node --input-type=module -"; RC=$?; fi
     if [ "$RC" -eq 0 ]; then remote "node scripts/catalog/character-pages-sync.js"; RC=$?; fi
+    ;;
+  price_check)
+    DESC="Lê na Shopify se os preços incluem imposto (taxesIncluded) e os preços dos publicados, e compara-os com a regra NET. Só lê. Não muda PRICE_MODE nem a loja."
+    remote "node scripts/maintenance/price-check.js"; RC=$?
     ;;
   tags_cleanup)
     if [ "$EFFECTIVE" = "execute" ]; then
@@ -188,6 +192,25 @@ case "$TASK" in
     if [ -n "$errs" ]; then bullets="$bullets"$'\n'"- Erros do último ciclo (sem handles nem GIDs):"$'\n'"$errs"; fi
     bullets="$bullets"$'\n'"- Dry-run: $cr criar, $up atualizar, $ra reativar, $sd rascunho, $er com erro."
     KEY="$((cr + up + ra + sd)) alterações previstas"
+    ;;
+  price_check)
+    pc() { echo "$CLEAN" | grep -E "^PC: $1=" | head -1 | sed -E "s/^PC: $1=//"; }
+    rule="$(pc regra_servidor)"; taxes="$(pc impostos_incluidos)"
+    if [ -z "$rule" ]; then
+      bullets="- Sem leitura: o script não devolveu contagens (código novo ainda sem deploy, ou erro de leitura)."; KEY="sem leitura"
+    else
+      bullets="- Regra do servidor (PRICE_MODE): **$rule**. Impostos incluídos nos preços (taxesIncluded): **$taxes**."
+      case "$rule/$taxes" in
+        LEGACY/true) bullets="$bullets"$'\n'"- Estado coerente de **antes** da troca: regra antiga com IVA incluído." ;;
+        NET/false)   bullets="$bullets"$'\n'"- Estado coerente de **depois** da troca: preços sem IVA, imposto acrescentado ao pagamento." ;;
+        NET/true)    bullets="$bullets"$'\n'"- ⚠️ Estado intermédio: regra NET com impostos incluídos nos preços. Os clientes pagariam sem IVA até virares os impostos para \"não incluídos\"." ;;
+        LEGACY/false) bullets="$bullets"$'\n'"- ⚠️ Estado intermédio: regra antiga (já com IVA) com impostos não incluídos. A loja acrescenta IVA por cima (preços 21 % acima do pretendido) até aplicares a regra NET." ;;
+      esac
+      bullets="$bullets"$'\n'"- Publicados lidos: **$(pc publicados)**; já conformes com a regra NET: **$(pc conformes_net)**; a atualizar: **$(pc a_atualizar)** (sobem $(pc sobem), descem $(pc descem); mediana da diferença $(pc mediana_diff_pct) %)."
+      bullets="$bullets"$'\n'"- Diferença por degrau: até 1 %: $(pc banda_ate_1); 1 a 5 %: $(pc banda_1_a_5); 5 a 15 %: $(pc banda_5_a_15); acima de 15 %: $(pc banda_acima_15)."
+      bullets="$bullets"$'\n'"- Ficam fora por preço manual: **$(pc fora_preco_manual)** (override da curadoria $(pc manual_override), preço detetado $(pc manual_detetado)). Trancados: $(pc trancados); sem registo da última escrita: $(pc sem_registo); outros ignorados: $(pc outros_ignorados); não encontrados: $(pc nao_encontrados); falhados: $(pc falhados)."
+      KEY="regra $rule, impostos incluídos $taxes, $(pc a_atualizar) a atualizar, $(pc fora_preco_manual) fora por preço manual"
+    fi
     ;;
   tags_cleanup)
     lidos=$(first_num 'produtos lidos' '[0-9]+'); limpar=$(echo "$CLEAN" | grep -E 'produtos lidos' | head -1 | grep -oE 'a limpar: [0-9]+ \([0-9]+' | grep -oE '[0-9]+' | paste -sd, -)
