@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { configureSqliteForPrisma } from "../lib/prisma/configureSqlite.server.js";
+import { assertDbNotDegraded } from "../lib/health/dbDegraded.js";
 
 const PRISMA_WATCHDOG_MS = 5 * 60 * 1000;
 
@@ -21,7 +22,30 @@ function resolvePrisma() {
   return client;
 }
 
-const prisma = resolvePrisma();
+const baseClient = resolvePrisma();
+
+/**
+ * Modo degradado (Decisão 34): escritas recusadas com DbDegradedError enquanto a flag
+ * DB_DEGRADED existir. Leituras passam, para o painel mostrar a causa. Cobre os modelos
+ * (create, update, delete, upsert e variantes) e as escritas SQL raw.
+ */
+const WRITE_MODEL_OPERATION = /^(create|update|delete|upsert)/i;
+const prisma = baseClient.$extends({
+  query: {
+    $allOperations({ operation, args, query }) {
+      if (WRITE_MODEL_OPERATION.test(operation)) assertDbNotDegraded(`escrita na BD (${operation})`);
+      return query(args);
+    },
+    $executeRaw({ args, query }) {
+      assertDbNotDegraded("escrita SQL raw");
+      return query(args);
+    },
+    $executeRawUnsafe({ args, query }) {
+      assertDbNotDegraded("escrita SQL raw");
+      return query(args);
+    },
+  },
+});
 
 /**
  * Aplica WAL/busy_timeout na primeira ligação e após reconnect.

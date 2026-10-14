@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { readDbDegraded } from "../../lib/health/dbDegraded.js";
 import {
   isCatalogIndexingRunning,
   startCatalogIndexingWorker,
@@ -149,6 +150,12 @@ export const action = async ({ request }) => {
       (logErr) => console.error("[trigger-sync] persistSyncError falhou:", logErr?.message || logErr)
     );
     settings = getDefaultSettings();
+  }
+  // Modo degradado (Decisão 34): o ciclo inteiro não arranca (indexação, publish, stock).
+  const dbDegraded = readDbDegraded();
+  if (dbDegraded) {
+    console.error(`[trigger-sync] BD em modo degradado (${dbDegraded.cause}) — ciclo não arrancou.`);
+    return Response.json({ ok: false, error: `BD em modo degradado: ${dbDegraded.cause}`, dbDegraded }, { status: 503 });
   }
   const startedAt = new Date().toISOString();
 
