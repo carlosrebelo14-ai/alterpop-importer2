@@ -182,3 +182,43 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 
 **Referência cruzada:** Decisão 31, `lib/importer/shopify/themeContract.server.js`, `scripts/tests/theme-contract.test.js`
 **Sem migração.** Reautorizar a app antes de ativar a guarda.
+
+---
+
+## Decisão 33 — pacote de decisões do debug geral de 14/10/2026
+
+**Data:** 2026-10-14
+**Estado:** fechada pelo Carlos. Os pré-requisitos abaixo estão abertos e não bloqueiam o registo.
+**Origem:** relatório `docs/relatorios/debug-geral-14-10-2026.md`. Verificação contra o repo feita por leitura, sem alterações ao código.
+
+**Decisão:**
+> 1. **DBG-16.** Produto publicado que sai do feed é despublicado e aparece no painel numa lista para o Carlos escolher substituto.
+> 2. **Comandos em produção.** O developer corre `git push`, `bash scripts/deploy.sh`, leituras e dry-runs sozinho. O deploy passa sempre por `scripts/deploy.sh`, com as quatro guardas.
+> 3. **`--execute` em produção** precisa do OK do arquiteto. O Carlos sai deste circuito.
+> 4. **DBG-03** fica P1 e sobe a P0 nos SKUs que o Carlos apagou na loja. O critério P0 não muda.
+> 5. **Lote 0** avança já com DBG-01 e DBG-02 em PRs separados.
+> 6. **DBG-10.** "Blister" sozinho passa a prefixo de formato, sai do título e fica em `alterpop.format` com valor em inglês.
+
+**Substitui:**
+- Briefing 17/09, §1, "Comandos em produção" (`docs/briefings/arranque-character-17-09-2026.md:15`). Ponto 2.
+- `docs/FLY-STAGING.md:7-9` ("Quem corre: o Carlos") e `:19` ("Nunca flyctl deploy à mão"). A mesma regra está em `README.md:65`. Ponto 2.
+- Decisão 21 (`:26` e `:28`), aprovação nominal do Carlos para `--execute`. Ponto 3.
+- OK do Carlos antes de `--execute` em `docs/FLY-STAGING.md:15` e `:71`, `docs/briefings/arranque-character-17-09-2026.md:157`, `docs/PROJECT-TODO.md:211` e `scripts/catalog/curation-mark-deleted.js:12`. Ponto 3.
+- Não substitui: briefing 17/09 `:24` ("Nunca productUpdate"). Fica em vigor até DBG-16 ser implementada. Ver pré-requisitos.
+
+**Pré-requisitos abertos (verificados em 14/10):**
+- **Ponto 1.** A regra "A app nunca despublica" está escrita para coleções em `collectionPublicationReconcileCycle.server.js:12-13`, `collectionPublication.server.js:19` e `scripts/catalog/pre-pilot-verify.js:536`. A substituição vale só para produtos. Não existe mutação de despublicação no repo, e a fila não tem estado "despublicado". O gatilho (3 ciclos ausentes, `skuLifecycle.server.js:48`) não tem guarda contra ausência em massa, só contra SKUs novos (`:114-118`). Falta a lista de substitutos no painel. `app/routes/app.reports.jsx:282-283` diz "nada é despublicado automaticamente ainda", e isso fica falso quando a funcionalidade entrar.
+- **Ponto 1, escrita na loja.** O briefing 17/09 `:24` proíbe `productUpdate`. A despublicação de produto precisa de uma mutação fora desse conjunto, ou de emenda explícita a `:24`. Decidir antes da implementação.
+- **Ponto 2.** Leituras em produção herdam a janela da Decisão 28 (`:98`): nenhuma sessão `fly ssh` com Prisma durante uma corrida de publicação, incluindo a medição em paralelo da secção 6 do relatório. `db:push` não entra neste ponto. É escrita de schema e fica sob a regra de deploy (`README.md:70`). Os environments `production` de `.github/workflows/deploy.yml:10-11` e `maintenance.yml:14, 85-87` têm revisores configurados fora do repo.
+- **Ponto 3.** O `--execute` decide-se só por `args.includes` (`scripts/catalog/tags-cleanup.js:40`, `scripts/catalog/character-pages-sync.js:39`). O OK do arquiteto não tem mecanismo no código nem registo de aprovação. Falta decidir quem é o arquiteto e como o OK fica registado.
+- **Ponto 4.** O marcador `metadata.deletedInAdmin` existe, mas nenhum caminho de publicação o lê. Um SKU PUBLISHED sem produto na Shopify não tem o marcador (caso PR6, `docs/PROJECT-TODO.md:214`). Falta decidir o que conta como "apagado na loja". A escalada para P0 é exceção ao critério de severidade do briefing (corromper dados ou derrubar a app). Fica registada aqui. Os produtos apagados e os PENDING daí resultantes não são defeito. O publish deles é (relatório, secção 5).
+- **Ponto 5.** DBG-02, como escrito no relatório ("arranque aborta com erro"), repete o crash-loop da Decisão 13 com o `&&` do `Dockerfile:36`. O arranque não pode sair com erro. Retirar `prisma db push` de `lib/prisma/prismaSafe.server.js:85`, que a Decisão 13 proíbe em runtime. O estado degradado de DBG-01 não pode ser um fallback silencioso (`prismaSafe.server.js:38-44`, Decisão 30). Não há teste para o ramo de corrupção nem runbook de restauro no repo. "Suíte local verde" quer dizer as suítes de `.github/workflows/tests.yml:33-43`, não as 71 de `scripts/tests`.
+- **Ponto 6.** `Blister` não está no vocabulário de 11 valores de `alterpop.format` decidido a 29/09 (`lib/importer/catalog/formatExtractor.server.js:23-37`, travado por `scripts/tests/format-extractor.test.js:35` e por `lib/importer/catalog/formatBackfillPlan.js:7`). Acrescentá-lo obriga a alterar essa decisão. O invariante de títulos distinguíveis só é garantido por `resolveTitleCollisions` (`titleCleaner.server.js:293`), e nenhum caminho de escrita o usa. Tem de ser ligado ao ingest (`catalogProducts.server.js:56`) e ao `title-clean-dryrun --execute` (`scripts/catalog/title-clean-dryrun.js:178`) antes de qualquer escrita. Produtos já publicados com "Blister 4 figures" (FUNKO, hoje "Vinyl Figure") passam por backfill de `alterpop.format`, que cai na regra de `--execute`. `stripFormatPrefix` entra na camada 2 da franquia (`franchiseResolver.server.js:289`). O dry-run tem de medir mudanças de franquia e de line, não só títulos (`scripts/catalog/title-prefix-restore-dryrun.js`).
+
+**Pendentes de registo:**
+- Decisão 13 (schema muda só por passo manual de deploy, nunca no arranque nem em runtime). Vive só em comentários de `Dockerfile:25-29` e `prisma/schema.prisma:112-117`. Registar.
+- Tarefa 32 (linha 12 deste ficheiro) diz que `FORMAT_PREFIXES` ficou com `Assorted` e `Latino`. O averbamento de 14/09 (`franchiseResolver.server.js:28-43`) reverteu isso em código, sem registo. Corrigir a linha 12.
+- `docs/PLANO-normalizacao-franquias.md:434-436` ("vocabulário fechado") e `lib/importer/shopify/franchiseMetafieldDefinition.js:100` (descrição de `alterpop.format`) estão desatualizados. Atualizar com o ponto 6.
+- Scripts com texto "aplicar só depois do OK do Carlos" (`scripts/catalog/curation-mark-deleted.js:12`, `price-reconcile-dry-run.js:6` e `:127`, `last-price-write-backfill.js:13`, `price-reconcile-apply.js:7`). Atualizar com o ponto 3.
+
+**Referência cruzada:** Decisões 13, 21, 28, 30 e 32, relatório `docs/relatorios/debug-geral-14-10-2026.md`, briefing `docs/briefings/arranque-character-17-09-2026.md`.

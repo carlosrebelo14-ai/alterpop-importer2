@@ -12,7 +12,7 @@ Texto de abertura para um chat novo de developer. App `alterpop-importer2`. Emit
 | Loja | `jyr17t-wr.myshopify.com`, plano Basic, só em inglês |
 | Produção | Fly, app `alterpop-importer-app`, SQLite em `/app/data/dev.sqlite` |
 | Sessão Shopify | `FileSessionStorage`. Scripts carregam a sessão com `loadOfflineSessionForShop`. A tabela Prisma `Session` está vazia e não serve |
-| Comandos em produção | O Carlos corre `flyctl deploy` e `flyctl ssh console` no terminal dele. O developer prepara o comando e espera pelo resultado |
+| Comandos em produção | O Carlos corre `flyctl deploy` e `flyctl ssh console` no terminal dele. O developer prepara o comando e espera pelo resultado. **Substituído em 14/10/2026 (Decisão 33, ponto 2):** o developer corre `git push`, `bash scripts/deploy.sh`, leituras e dry-runs sozinho. |
 | Schema | Alterações com `npm run db:push` manual via `fly ssh console`. Nunca no arranque do contentor |
 | Documentos do projeto | `claude/briefing-backend-17-09-2026.md` (com as adendas), `claude/resposta-app-briefing-16-09-2026.md`, `claude/briefing-frontend-16-09-2026.md` |
 
