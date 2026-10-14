@@ -264,6 +264,14 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 > 15. **DBG-21 (novo).** Entra no Lote 2. O reconciliador marca `deletedInAdmin` quando o produto falta na Shopify e devolve o item a PENDING pela regra de 09/10.
 > 16. **Decisão 13.** Registada acima, porque o Lote 0 depende dela.
 
+**Pendentes abertos da revisão adversarial do Lote 0 (14/10)**
+- `db:push` e `migrate deploy` correm por CLI e não passam pelas guardas da app. Decidir se o restauro exige a flag limpa antes de qualquer `db:push`.
+- Scripts operacionais com mutações Shopify que não tocam na BD (`scripts/catalog/shopify-products-purge.js`, `price-reconcile-apply.js`, entre outros) não têm guarda própria. Decidir se entram.
+- `app/routes/wishlist.jsx` escreve metafields de cliente na Shopify. Fora da lista da Decisão 34. Decidir.
+- `resetCorruptedQueueToEmpty` (`lib/curation/curationQueue.server.js`, anterior a este lote) substitui a fila por uma vazia quando o JSON não recupera, com backup. A app continua sem aviso. Achado novo, proposto como DBG-22, P1.
+- Com o JSON da fila corrompido em modo degradado, a leitura da fila falha à vista. Confirmar que é o comportamento pretendido.
+- Falha ao gravar a flag no arranque sai com código 1, para não arrancar com escritas abertas. A alternativa é arrancar sem flag. Confirmar.
+
 **Documentação pendente**
 - `docs/FLY-STAGING.md`, `README.md:65`, a linha 157 do briefing 17/09 e os textos dos scripts que pedem OK do Carlos vão num PR só de documentação. Esse PR não bloqueia o Lote 0.
 
