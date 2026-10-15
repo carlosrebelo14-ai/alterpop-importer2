@@ -282,3 +282,65 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 4. Passar ao Lote 1.
 
 **Referência cruzada:** Decisões 13, 28, 30, 33; relatório `docs/relatorios/debug-geral-14-10-2026.md`.
+
+---
+
+## Decisão 35 — respostas do arquiteto ao plano do PR 2b
+
+**Data:** 2026-10-15
+**Estado:** fechada pelo arquiteto. Implementação nos PRs 2b-1, 2b-2 e 2b-3.
+**Origem:** plano `docs/planos/plano-2b.md` (secção 11) e relatório `docs/relatorios/debug-geral-14-10-2026.md` (secção 9, DBG-37 a DBG-39).
+
+**Já aceites, confirmadas aqui:** D1 (IPC, o principal é o único escritor), D2 (decisão humana ganha, com `statusChangedAt`), D6 (o worker não muda estado de APPROVED, PUBLISHED nem SYNC_ERROR), D30 (o `|| true` do WAL sai como DBG-37), D31 (a Decisão 34 mantém-se: leituras passam em modo degradado) e DBG-25 com as três condições do plano.
+
+**Escritores e indexação**
+
+1. D3. Reset e purga elite recusam com 409 enquanto houver indexação. As escritas de fila deles passam pelo escritor único.
+2. D4. Sem bloqueio na UI. A correção é o PR 2b-1.
+3. D7. Scripts que escrevem a fila recusam se houver indexação ou publicação em curso. O risco residual fica aceite, porque são manuais e raros.
+
+**Estados da fila**
+
+4. D9. Reconciliador automático por ciclo, com prova por `product(id)` e aborto acima de 5 %. Arranca só a reportar. Passa a escrever depois de uma semana de relatórios coerentes, com OK do arquiteto.
+5. D10. Uma aprovação nova limpa `deletedInAdmin` e permite publicar.
+6. D11. SYNC_ERROR só sai pelas três transições manuais da Decisão 29. Marcação de apagados, migração, reset e revert deixam-no como está e listam-no no relatório.
+7. D12. A aprovação em massa de apagados fica como está. A confirmação mostra quantos apagados vão na seleção.
+8. D13. PUBLISHED sem `shopifyProductId` recebe a marca só se a pesquisa por SKU der vazio em dois ciclos seguidos.
+9. D15. Regra de 09/10: um item marcado `deletedInAdmin` fica em PENDING, nunca em APPROVED. Volta a APPROVED só por aprovação humana nova.
+10. D44. O caminho de `revertAllPublishedInQueue` que põe SYNC_ERROR em PENDING sai. O reset deixa SYNC_ERROR intacto e lista-o no relatório.
+
+**Restauro**
+
+11. D18. O ponto 4 da Decisão 34 passa a exigir que a fila lê sem erro.
+12. D19. Fila sanitizável recusa.
+13. D20. Fila em falta recusa, salvo primeiro arranque com catálogo vazio, como no bootstrap.
+14. D21. A fila faz parte do snapshot. O restauro repõe os dois e compara contagens.
+15. D22. O dry-run recusa com fila corrompida. A verificação corre também sem flag. O restauro recusa com indexação ou publicação em curso.
+16. D23. `db:push` exige flag limpa. A leitura da fila em modo degradado falha à vista.
+17. D24. `restore_dry_run` copia também `curation-queue.json` e aponta `CURATION_DATA_DIR` para a cópia.
+18. D25. `restore_dry_run` lê o estado real da flag, com UNKNOWN em RC=2.
+19. D26. Cópia por `VACUUM INTO` na máquina, fora de corridas de publicação. O developer confirma que a ferramenta existe na imagem.
+20. D27. `restore_dry_run` espera pela indexação, como `db_push`.
+21. D28. Flag sintética na cópia.
+22. D29. Ramo degradado que não corre é RC=1. O ponto de injeção fica aceite.
+23. D33. Reinício da máquina obrigatório no fim do restauro, dentro do mesmo OK.
+
+**Reset**
+
+24. D35. Para na primeira falha de gravação local.
+25. D36. A guarda fica dentro de `runShopifyCatalogReset`.
+26. D37. Loja vazia corre a varredura só se a segunda leitura confirmar zero produtos.
+27. D38. Três falhas seguidas abortam.
+28. D39. Batimento com expiração automática ao fim de 10 minutos sem sinal.
+29. D40. Gravação por produto.
+30. D42. O ciclo agendado salta a publicação enquanto houver reset em curso, e regista o salto.
+
+**Decisões do developer, aceites**
+
+D5, D8, D14, D16, D17, D32, D41, D43 e D46, como ficaram na secção 11 do plano.
+
+**Registo**
+
+A regra de não correr o reset em produção mantém-se até o PR 2b-3 estar em produção.
+
+**Referência cruzada:** Decisões 13, 28, 30, 33 e 34; plano `docs/planos/plano-2b.md`; relatório `docs/relatorios/debug-geral-14-10-2026.md`.
