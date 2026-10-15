@@ -12,8 +12,12 @@ import "dotenv/config";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
 import { startCatalogCleanupInBackground } from "../../lib/importer/catalog/catalogRebuild.server.js";
 import { readCatalogRebuildStatus } from "../../lib/importer/catalog/catalogRebuild.server.js";
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const CONFIRM_WORD = "APAGAR";
+
+// D7 (Decisão 35): a purga escreve a fila pelo worker. Recusa com indexação ou publicação em curso.
+recusarSeAtividadeApp("catalog-purge-reindex");
 
 const shop = process.env.SHOP;
 if (!shop) {

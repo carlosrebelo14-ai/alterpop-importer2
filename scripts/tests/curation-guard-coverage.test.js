@@ -43,6 +43,9 @@ const ESCRITAS_EXTRA = [
   "executeReprice",
   "recordPriceWrite",
   "publishCatalogProductToShopify",
+  "startCatalogCleanupInBackground",
+  "startCatalogRebuildInBackground",
+  "startCatalogIndexingWorker",
 ];
 
 /** @param {string} dir @param {(caminho: string) => boolean} aceita */

@@ -134,6 +134,33 @@ check("linha JSON sem marca de tempo válida: entra na contagem, não na janela"
   assert.equal(r.JANELA_INICIO, "-");
 });
 
+// Decisão 6: cada lote de fila regista a duração (lote-fila). O resumo dá a contagem e o máximo.
+const LOTES_FILA = [
+  jsonLinha(T(20, 0), "[indexacao] lote-fila duracao_ms=120 itens=250"),
+  jsonLinha(T(20, 1), "[indexacao] lote-fila duracao_ms=880 itens=250"),
+  jsonLinha(T(20, 2), "[indexacao] lote-fila duracao_ms=340 itens=12"),
+];
+
+check("lotes de fila: contagem e máximo observado, em JSON", () => {
+  const r = resumirLogs(LOTES_FILA.join("\n"));
+  assert.equal(r.FILA_LOTES, 3);
+  assert.equal(r.FILA_LOTE_MAX_MS, 880, "o máximo, não o último nem a média");
+});
+
+check("lotes de fila: texto simples também conta", () => {
+  const r = resumirLogs(`${T(9, 0)} [indexacao] lote-fila duracao_ms=55 itens=3`);
+  assert.equal(r.FILA_LOTES, 1);
+  assert.equal(r.FILA_LOTE_MAX_MS, 55);
+});
+
+check("lotes de fila: zero lotes dá 0 e '-', sem exceção", () => {
+  for (const texto of [LOG_JSON, ""]) {
+    const r = resumirLogs(texto);
+    assert.equal(r.FILA_LOTES, 0);
+    assert.equal(r.FILA_LOTE_MAX_MS, "-");
+  }
+});
+
 check("tsValido aceita ISO e epoch em milissegundos, rejeita o resto", () => {
   assert.equal(tsValido(T(1, 0)), T(1, 0));
   assert.equal(tsValido(0), "1970-01-01T00:00:00.000Z");
@@ -175,6 +202,7 @@ check("contrato: as marcas que o resumo lê são as que a app escreve", () => {
     "[indexacao] fim causa=${causa} estado=falhou duracao_s=",
     "[indexacao] fim causa=${info.causa} estado=parada duracao_s=",
     "[indexacao] worker terminou sem concluir (code=",
+    "[indexacao] lote-fila duracao_ms=",
   ]) {
     assert.ok(indexacao.includes(marca), `falta no indexingStream: ${marca}`);
   }

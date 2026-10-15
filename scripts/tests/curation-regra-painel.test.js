@@ -3,7 +3,7 @@
 /**
  * Lote 2b-1, Decisão 3 do arquiteto (D6). Regras de painel e decisões humanas.
  *
- * - Uma regra de painel (server/data/rules.json, criada em app._index.jsx) só age sobre um item
+ * - Uma regra de painel (server/data/rules.json, criada pelo painel via POST /api/smart-rules) só age sobre um item
  *   PENDING sem statusChangedAt. Um item com decisão humana não volta a APPROVED nem a REJECTED
  *   por regra (caso H1, H1s, H2).
  * - Um item já decidido por regra de painel só muda enquanto for PENDING sem decisão humana (H7).

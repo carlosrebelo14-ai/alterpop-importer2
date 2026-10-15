@@ -453,6 +453,21 @@ check("logs_recent: marcas de indexação, reinício e recusa → 0 com aviso; c
   assert.match(r.summaryText, /Último fim de indexação: causa \*\*painel\*\*, estado \*\*concluida\*\*, duração \*\*2400\*\* s/);
   assert.doesNotMatch(r.summaryText, /25000|escrita na fila/, "nem contagens internas nem texto de linha");
 });
+check("logs_recent: lotes de fila → linha com o lote mais lento e a contagem", () => {
+  const linhas = [
+    '{"timestamp":"2026-10-14T20:00:00Z","message":"[indexacao] lote-fila duracao_ms=120 itens=250"}',
+    '{"timestamp":"2026-10-14T20:00:05Z","message":"[indexacao] lote-fila duracao_ms=1534 itens=250"}',
+    '{"timestamp":"2026-10-14T20:00:09Z","message":"[indexacao] lote-fila duracao_ms=410 itens=40"}',
+  ].join("\\n");
+  const r = run("logs_recent", "dry-run", { FAKE_LOGS: linhas });
+  assert.equal(r.status, 0);
+  assert.match(r.summaryText, /Lote de fila mais lento: \*\*1534\*\* ms, em \*\*3\*\* lotes\./);
+});
+check("logs_recent: sem lotes de fila → a linha existe, com '-' e 0, sem erro", () => {
+  const r = run("logs_recent", "dry-run", { FAKE_LOGS: "app ok" });
+  assert.equal(r.status, 0);
+  assert.match(r.summaryText, /Lote de fila mais lento: \*\*-\*\* ms, em \*\*0\*\* lotes\./);
+});
 check("restore_dry_run: cópia íntegra → integrity ok e código 0; sem flag apagada; sem --execute", () => {
   const r = run("restore_dry_run", "dry-run", { FAKE_DB: healthyDb() });
   assert.equal(r.status, 0, r.summaryText);
