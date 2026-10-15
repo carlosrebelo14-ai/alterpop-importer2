@@ -11,6 +11,11 @@
  * não cai em silêncio.
  *
  * Todo o escritor chama recusarSeAtividadeApp( (lib/curation/atividadeApp.js) antes de escrever.
+ * A chamada só conta se for instrução. Tem de começar a linha, fora de comentários, sem if, else,
+ * && || ou ternário na mesma linha, fora de blocos condicionais (if, else, catch, ciclos, switch),
+ * e antes de qualquer chamada de escrita. Uma escrita numa função declarada antes só passa se essa
+ * função for chamada depois da guarda. Um escritor que usa import() com .then falha
+ * com mensagem, porque a ordem não se verifica assim.
  * Vale também em dry-run. scripts/tests/ fica de fora: são testes, não scripts de produção.
  *
  * Uso: node scripts/tests/curation-guard-coverage.test.js
@@ -19,6 +24,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { fecho, semComentarios } from "./_sem-comentarios.js";
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCRIPTS = path.join(RAIZ, "scripts");
@@ -111,6 +117,105 @@ function importacoes(texto) {
   return { nomes, namespaces };
 }
 
+/** Linha que começa por chamada à guarda. Só esta forma conta como instrução. */
+const LINHA_DA_GUARDA = new RegExp(`^[ \\t]*${GUARDA}\\s*\\(`, "gm");
+/** Condição na mesma linha da chamada, como if, else, && ou || ou ternário. */
+const CONDICAO_NA_LINHA = /\b(if|else)\b|&&|\|\||\s\?\s/;
+/** Cabeçalho de bloco que torna a chamada opcional ou repetida. */
+const CABECALHO_CONDICIONAL = /\b(if|else|catch|while|for|switch)\b|&&|\|\||\s\?\s/;
+
+/**
+ * Verdadeiro se a posição está dentro de um bloco cujo cabeçalho é condicional. Percorre os blocos
+ * de fora para dentro, a partir da posição, e lê o texto de cada cabeçalho até ao ; { ou } anterior.
+ * @param {string} codigo
+ * @param {number} pos
+ */
+function emBlocoCondicional(codigo, pos) {
+  let profundidade = 0;
+  for (let i = pos - 1; i >= 0; i -= 1) {
+    const c = codigo[i];
+    if (c === "}") {
+      profundidade += 1;
+    } else if (c === "{") {
+      if (profundidade > 0) {
+        profundidade -= 1;
+      } else {
+        let j = i - 1;
+        while (j >= 0 && !";{}".includes(codigo[j])) j -= 1;
+        if (CABECALHO_CONDICIONAL.test(codigo.slice(j + 1, i))) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Analisa a guarda de um script. Devolve { ok, motivo }.
+ * @param {string} texto conteúdo do ficheiro
+ * @param {Set<string>} usados nomes de escrita que o ficheiro usa (ex.: "nome" ou "ns.nome")
+ */
+function analisarGuarda(texto, usados) {
+  const codigo = semComentarios(texto);
+  if (/\bimport\s*\([^)]*\)\s*\.\s*then\b/.test(codigo)) {
+    return { ok: false, motivo: "usa import() com .then, e a ordem da guarda não se verifica assim. Usa await." };
+  }
+  const chamadas = [...codigo.matchAll(LINHA_DA_GUARDA)];
+  if (chamadas.length === 0) {
+    return { ok: false, motivo: `sem chamada a ${GUARDA}( como instrução, fora de comentários` };
+  }
+  for (const m of chamadas) {
+    const fim = codigo.indexOf("\n", m.index);
+    const linha = codigo.slice(m.index, fim === -1 ? codigo.length : fim);
+    if (CONDICAO_NA_LINHA.test(linha)) {
+      return { ok: false, motivo: "chamada na mesma linha de if, else, && ou ternário" };
+    }
+    if (emBlocoCondicional(codigo, m.index)) {
+      return { ok: false, motivo: "chamada dentro de bloco condicional (if, else, catch, ciclo ou switch)" };
+    }
+  }
+  const guarda = chamadas[0].index;
+  const escritas = [];
+  for (const usado of usados) {
+    const nome = usado.split(".").pop();
+    for (const m of codigo.matchAll(new RegExp(`(?<!function\\s+)\\b${nome}\\s*\\(`, "g"))) escritas.push(m.index);
+  }
+  const funcoes = declaracoesDeFuncao(codigo);
+  for (const w of escritas) {
+    if (w > guarda) continue;
+    const funcao = funcaoQueContem(funcoes, w);
+    if (!funcao) return { ok: false, motivo: "escrita antes da guarda, fora de qualquer função" };
+    if (funcaoQueContem(funcoes, guarda) === funcao) {
+      return { ok: false, motivo: `escrita antes da guarda, dentro de ${funcao.nome}` };
+    }
+    // A função que escreve só passa se nunca for chamada antes da guarda.
+    const chamadasAntes = [...codigo.matchAll(new RegExp(`(?<!function\\s+)\\b${funcao.nome}\\s*\\(`, "g"))]
+      .map((m) => m.index)
+      .filter((p) => p < guarda && !(p > funcao.abre && p < funcao.fim));
+    if (chamadasAntes.length > 0) {
+      return { ok: false, motivo: `${funcao.nome} escreve e é chamada antes da guarda` };
+    }
+  }
+  return { ok: true, motivo: "" };
+}
+
+/** Declarações de função do código, com o intervalo do corpo (posições no código sem comentários). */
+function declaracoesDeFuncao(codigo) {
+  return [...codigo.matchAll(/\bfunction\s+(\w+)\s*\(/g)].map((m) => {
+    const abreParametros = m.index + m[0].length - 1;
+    const abre = codigo.indexOf("{", fecho(codigo, abreParametros, "(", ")"));
+    return { nome: m[1], abre, fim: fecho(codigo, abre, "{", "}") };
+  });
+}
+
+/** Função mais interna que contém a posição, ou null. */
+function funcaoQueContem(funcoes, pos) {
+  let escolhida = null;
+  for (const f of funcoes) {
+    if (pos > f.abre && pos < f.fim && (!escolhida || f.abre > escolhida.abre)) escolhida = f;
+  }
+  return escolhida;
+}
+
 const escritasDaFila = escritasRemotas();
 const escritas = new Set([...escritasDaFila, ...ESCRITAS_EXTRA]);
 const exportados = nomesExportados();
@@ -132,7 +237,7 @@ for (const ficheiro of ficheiros) {
   escritores.push({
     ficheiro: path.relative(RAIZ, ficheiro),
     usados: [...usados].sort(),
-    guarda: new RegExp(`\\b${GUARDA}\\s*\\(`).test(texto),
+    guarda: analisarGuarda(texto, usados),
   });
 }
 
@@ -163,9 +268,58 @@ check("a varredura encontra os escritores conhecidos (sanidade)", () => {
   }
 });
 
-check(`todos os escritores chamam ${GUARDA}( antes de escrever (${escritores.length} escritores)`, () => {
-  const sem = escritores.filter((e) => !e.guarda).map((e) => `${e.ficheiro} (${e.usados.join(", ")})`);
+check(`todos os escritores chamam ${GUARDA}( como instrução, antes de escrever (${escritores.length} escritores)`, () => {
+  const sem = escritores
+    .filter((e) => !e.guarda.ok)
+    .map((e) => `${e.ficheiro} (${e.usados.join(", ")}): ${e.guarda.motivo}`);
   assert.deepEqual(sem, [], `sem a guarda de atividade:\n        ${sem.join("\n        ")}`);
+});
+
+// Casos sintéticos do analisador. Fixam as regras, para uma mutação ao analisador ficar vermelha aqui.
+const USADOS_TESTE = new Set(["gravar"]);
+
+check("analisador: guarda como instrução antes da escrita passa", () => {
+  const texto = 'import { recusarSeAtividadeApp } from "x";\nasync function main() {\n  recusarSeAtividadeApp("s");\n  await gravar(1);\n}\n';
+  const r = analisarGuarda(texto, USADOS_TESTE);
+  assert.equal(r.ok, true, r.motivo);
+});
+
+check("analisador: guarda só em comentário falha (G2)", () => {
+  const texto = 'async function main() {\n  // recusarSeAtividadeApp("s");\n  /* recusarSeAtividadeApp("s"); */\n  await gravar(1);\n}\n';
+  assert.equal(analisarGuarda(texto, USADOS_TESTE).ok, false);
+});
+
+check("analisador: guarda dentro de if (false) falha (G3)", () => {
+  const texto = 'async function main() {\n  if (false) {\n    recusarSeAtividadeApp("s");\n  }\n  await gravar(1);\n}\n';
+  assert.equal(analisarGuarda(texto, USADOS_TESTE).ok, false);
+});
+
+check("analisador: guarda com && ou ternário na mesma linha falha", () => {
+  const texto = 'async function main() {\n  recusarSeAtividadeApp("s") && ok();\n  await gravar(1);\n}\n';
+  assert.equal(analisarGuarda(texto, USADOS_TESTE).ok, false);
+});
+
+check("analisador: guarda depois da primeira escrita falha", () => {
+  const texto = 'async function main() {\n  await gravar(1);\n  recusarSeAtividadeApp("s");\n}\n';
+  assert.equal(analisarGuarda(texto, USADOS_TESTE).ok, false);
+});
+
+check("analisador: escrita numa função chamada só depois da guarda passa", () => {
+  const texto = 'async function gravarTudo() {\n  await gravar(1);\n}\nasync function main() {\n  recusarSeAtividadeApp("s");\n  await gravarTudo();\n}\nmain();\n';
+  const r = analisarGuarda(texto, USADOS_TESTE);
+  assert.equal(r.ok, true, r.motivo);
+});
+
+check("analisador: função com escrita chamada antes da guarda falha", () => {
+  const texto = 'async function gravarTudo() {\n  await gravar(1);\n}\nasync function main() {\n  await gravarTudo();\n  recusarSeAtividadeApp("s");\n}\n';
+  assert.equal(analisarGuarda(texto, USADOS_TESTE).ok, false);
+});
+
+check("analisador: import() com .then falha com mensagem clara", () => {
+  const texto = 'const m = import("x").then(() => {});\nrecusarSeAtividadeApp("s");\nawait gravar(1);\n';
+  const r = analisarGuarda(texto, USADOS_TESTE);
+  assert.equal(r.ok, false);
+  assert.match(r.motivo, /\.then/);
 });
 
 if (falhas) {

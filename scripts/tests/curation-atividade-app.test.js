@@ -62,6 +62,19 @@ await check("marcador com processo vivo conta como atividade em curso", () => {
   assert.equal(atividadeAppEmCurso({ dir: tmp }), null, "retirar o marcador tem de o apagar");
 });
 
+await check("duas marcações do mesmo tipo e pid: retirar a primeira não apaga a segunda", () => {
+  limpar();
+  const retirarPrimeira = marcarAtividadeApp({ tipo: "publicacao", pid: process.pid, dir: tmp });
+  const retirarSegunda = marcarAtividadeApp({ tipo: "publicacao", pid: process.pid, dir: tmp });
+  const marcadores = fs.readdirSync(tmp).filter((n) => n.startsWith("catalog-busy-"));
+  assert.equal(marcadores.length, 2, "cada marcação tem o seu ficheiro");
+  retirarPrimeira();
+  const ativa = atividadeAppEmCurso({ dir: tmp });
+  assert.equal(ativa?.tipo, "publicacao", "a segunda marcação continua ativa depois de retirar a primeira");
+  retirarSegunda();
+  assert.equal(atividadeAppEmCurso({ dir: tmp }), null, "retirar a segunda deixa a fila livre");
+});
+
 await check("marcador de processo morto é sobra de crash e não bloqueia", () => {
   limpar();
   const pid = pidMorto();

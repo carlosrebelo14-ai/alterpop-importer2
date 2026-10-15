@@ -13,6 +13,9 @@
  *   função real do handler, não só estadoDoProgressoDoWorker. O estado nunca traz checkpoint (C7).
  * - tratarProgressoDoWorker (indexingStream.server.js) é o case `progress` com dependências falsas, sem fork.
  *   A escrita que ele pede não leva checkpoint (C8 e C9).
+ * - Progresso sem indexed (C10): não atualiza a memória nem pede escrita, com null ou sem o campo.
+ * - Estático (C11): onCheckpoint só é chamado dentro de confirmarJanelaDaFila, depois do await do flush.
+ *   Os sítios de chamada de syncCatalogWithProgress passam todos por essa função.
  *
  * Sem CSV, SQLite nem Prisma reais. O flush é falso e o ack é controlado pelo teste.
  *
@@ -21,8 +24,10 @@
 import "./_isolate-curation.js";
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { fecho, semComentarios } from "./_sem-comentarios.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, "..", "..");
@@ -194,6 +199,72 @@ async function main() {
     assert.deepEqual(registo.memoria, []);
     assert.deepEqual(registo.escritas, []);
     assert.equal(novo, estadoAtual);
+  });
+
+  await caso("C10 progresso sem indexed (null ou ausente) é ignorado: não atualiza a memória nem pede escrita", async () => {
+    for (const msg of [
+      { phase: "streaming", indexed: null, scanned: 10 },
+      { phase: "streaming", scanned: 10 },
+    ]) {
+      assert.deepEqual(indexacao.decidirAtualizacaoDeProgresso(msg), { atualizar: false, estado: null });
+      const estadoAtual = { state: "running", indexing: true, totalRows: 500, scanned: 500 };
+      const { deps, registo } = depsDoProgresso({ estadoAtual });
+      const novo = indexacao.tratarProgressoDoWorker(msg, deps);
+      assert.deepEqual(registo.memoria, [], "sem indexed, a memória não se atualiza");
+      assert.deepEqual(registo.escritas, [], "sem indexed, não se pede escrita");
+      assert.equal(novo, estadoAtual, "o estado devolvido é o atual");
+      assert.equal(novo.totalRows, 500, "totalRows não pode ficar null");
+    }
+  });
+
+  await caso("C11 estático: onCheckpoint só é chamado dentro de confirmarJanelaDaFila, depois do await do flush", async () => {
+    const codigo = semComentarios(
+      fs.readFileSync(path.join(REPO, "lib/importer/catalog/syncCatalogWithProgress.server.js"), "utf8")
+    );
+    const linhaDe = (pos) => codigo.slice(0, pos).split("\n").length;
+
+    const inicio = codigo.search(/export\s+async\s+function\s+confirmarJanelaDaFila\s*\(/);
+    assert.ok(inicio >= 0, "confirmarJanelaDaFila não está definida em syncCatalogWithProgress.server.js");
+    const fimParametros = fecho(codigo, codigo.indexOf("(", inicio), "(", ")");
+    const abreCorpo = codigo.indexOf("{", fimParametros);
+    const fimDefinicao = fecho(codigo, abreCorpo, "{", "}");
+    const corpo = codigo.slice(abreCorpo, fimDefinicao + 1);
+
+    const posFlush = corpo.search(/await\s+flush\s*\(/);
+    const posCheckpoint = corpo.search(/\bonCheckpoint\s*\??\.?\s*\(/);
+    assert.ok(posFlush >= 0, "a função auxiliar tem de fazer await do flush");
+    assert.ok(posCheckpoint >= 0, "a função auxiliar tem de chamar onCheckpoint");
+    assert.ok(posFlush < posCheckpoint, "onCheckpoint tem de vir depois do await do flush");
+
+    const dentroDaDefinicao = (pos) => pos >= inicio && pos <= fimDefinicao;
+    // Argumentos de cada sítio que chama a função auxiliar. Lá dentro, onCheckpoint só pode ser
+    // passado como valor, nunca chamado.
+    const argumentos = [...codigo.matchAll(/\bconfirmarJanelaDaFila\s*\(/g)]
+      .filter((m) => !dentroDaDefinicao(m.index))
+      .map((m) => {
+        const abre = m.index + m[0].length - 1;
+        return [abre, fecho(codigo, abre, "(", ")")];
+      });
+    assert.ok(argumentos.length >= 2, `os sítios de chamada têm de usar confirmarJanelaDaFila (encontrados ${argumentos.length})`);
+    const dentroDeChamada = (pos) => argumentos.some(([a, f]) => pos > a && pos < f);
+
+    const chamadasFora = [...codigo.matchAll(/\bonCheckpoint\s*\??\.?\s*\(/g)]
+      .map((m) => m.index)
+      .filter((pos) => !dentroDaDefinicao(pos));
+    assert.deepEqual(
+      chamadasFora.map((pos) => `linha ${linhaDe(pos)}`),
+      [],
+      "onCheckpoint é chamado fora da função auxiliar"
+    );
+
+    const palavraFora = [...codigo.matchAll(/\bonCheckpoint\b/g)]
+      .map((m) => m.index)
+      .filter((pos) => !dentroDaDefinicao(pos) && !dentroDeChamada(pos));
+    assert.deepEqual(
+      palavraFora.map((pos) => `linha ${linhaDe(pos)}`),
+      [],
+      "onCheckpoint aparece fora dos argumentos de confirmarJanelaDaFila"
+    );
   });
 
   if (falhas) {

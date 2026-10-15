@@ -358,7 +358,7 @@ async function casoC() {
   escreverFila([item("S"), item("OUTRO")]);
   const porta = atrasarPrimeiraEscritaDaFila();
   try {
-    // O lote (sem lock, saveFile por omissão) carrega a fila e fica parado antes de gravar.
+    // O lote (com lock, saveFile por omissão, via mutateCurationQueue) carrega a fila e fica parado antes de gravar.
     const pLote = q.upsertCurationQueueBatchFromRecords([registo("S")], {});
     pLote.catch(() => {});
     if (!(await dentroDe(porta.entrou, 5000))) {
