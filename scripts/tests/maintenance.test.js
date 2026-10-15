@@ -94,7 +94,9 @@ fi
 if [ "$1" = "logs" ]; then echo "logs $*" >> "$FAKE_LOG"; printf '%b\\n' "$FAKE_LOGS"; exit "\${FAKE_LOGS_RC:-0}"; fi
 if [ "$1" = "ssh" ] && [ "$2" = "sftp" ]; then
   echo "sftp $*" >> "$FAKE_LOG"
-  case "$4" in *-wal) exit 1;; esac
+  case "$4" in
+    *-wal) if [ "$FAKE_WAL" = "present" ] && [ -z "$FAKE_WAL_FAIL" ]; then : > "$5"; exit 0; fi; exit 1;;
+  esac
   if [ -n "$FAKE_DB" ]; then cp "$FAKE_DB" "$5"; exit 0; fi
   exit 1
 fi
@@ -106,6 +108,12 @@ case "$cmd" in
       present) echo FLAG_PRESENT; exit 0;;
       unknown) echo "ssh: falhou"; exit 1;;
       *) echo FLAG_ABSENT; exit 0;;
+    esac;;
+  *dev.sqlite-wal*)
+    case "$FAKE_WAL" in
+      present) echo WAL_PRESENT; exit 0;;
+      unknown) echo "ssh: falhou"; exit 1;;
+      *) echo WAL_ABSENT; exit 0;;
     esac;;
   *base64*)
     b=$(echo "$cmd" | cut -d' ' -f7)
@@ -463,6 +471,34 @@ check("restore_dry_run: falha ao copiar → código 1 com causa de cópia, sem r
   assert.equal(r.status, 1);
   assert.match(r.summaryText, /não consegui copiar dev\.sqlite/);
   assert.ok(!ran(r, "restore-db-degraded"));
+});
+check("DBG-37: WAL ausente no volume → 'sem WAL', integrity ok, código 0", () => {
+  const r = run("restore_dry_run", "dry-run", { FAKE_DB: healthyDb(), FAKE_WAL: "absent" });
+  assert.equal(r.status, 0, r.summaryText);
+  assert.match(r.summaryText, /WAL: \*\*sem WAL no volume\*\*/);
+  assert.match(r.summaryText, /integrity_check da cópia: \*\*ok\*\*/);
+  assert.ok(!ran(r, "sftp get /app/data/dev.sqlite-wal"), "o WAL só se pede quando existe");
+});
+check("DBG-37: WAL presente e copiado → código 0, 'copiado', integrity ok", () => {
+  const r = run("restore_dry_run", "dry-run", { FAKE_DB: healthyDb(), FAKE_WAL: "present" });
+  assert.equal(r.status, 0, r.summaryText);
+  assert.match(r.summaryText, /WAL: \*\*copiado\*\*/);
+  assert.match(r.summaryText, /integrity_check da cópia: \*\*ok\*\*/);
+  assert.ok(ran(r, "sftp get /app/data/dev.sqlite-wal"));
+});
+check("DBG-37: WAL presente e cópia do WAL falha → código 1 com causa de WAL, sem integrity ok", () => {
+  const r = run("restore_dry_run", "dry-run", { FAKE_DB: healthyDb(), FAKE_WAL: "present", FAKE_WAL_FAIL: "1" });
+  assert.equal(r.status, 1, r.summaryText);
+  assert.match(r.summaryText, /o WAL existe no volume e não consegui copiá-lo/);
+  assert.match(r.summaryText, /WAL: \*\*existe, cópia falhou\*\*/);
+  assert.match(r.summaryText, /integrity_check da cópia: \*\*não correu\*\*/);
+  assert.doesNotMatch(r.summaryText, /integrity_check da cópia: \*\*ok\*\*/);
+});
+check("DBG-37: estado do WAL ilegível → código 2, sem restauro sobre a cópia", () => {
+  const r = run("restore_dry_run", "dry-run", { FAKE_DB: healthyDb(), FAKE_WAL: "unknown" });
+  assert.equal(r.status, 2, r.summaryText);
+  assert.match(r.summaryText, /não consegui ler se o WAL existe/);
+  assert.match(r.summaryText, /integrity_check da cópia: \*\*não correu\*\*/);
 });
 check("tarefas novas recusam execute com código 64, sem tocar na Fly", () => {
   for (const task of SO_LEITURA_NOVA) {
