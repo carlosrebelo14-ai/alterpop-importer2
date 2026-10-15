@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { configureSqliteForPrisma } from "../lib/prisma/configureSqlite.server.js";
+import { garantirPragmasSqlite, marcarNovaLigacaoSqlite } from "../lib/prisma/configureSqlite.server.js";
 import { assertDbNotDegraded } from "../lib/health/dbDegraded.js";
 
 const PRISMA_WATCHDOG_MS = 5 * 60 * 1000;
@@ -25,6 +25,18 @@ function resolvePrisma() {
 const baseClient = resolvePrisma();
 
 /**
+ * PRAGMAs antes de cada operação, quando a época de ligação mudou (DBG-15). Usa o cliente base:
+ * as PRAGMAs passariam de novo pelos hooks deste cliente.
+ */
+async function assegurarPragmas() {
+  try {
+    await garantirPragmasSqlite(baseClient);
+  } catch (err) {
+    console.error(`[prisma] Falha ao configurar PRAGMAs SQLite: ${err?.message || err}`);
+  }
+}
+
+/**
  * Modo degradado (Decisão 34): escritas recusadas com DbDegradedError enquanto a flag
  * DB_DEGRADED existir. Leituras passam, para o painel mostrar a causa. Cobre os modelos
  * (create, update, delete, upsert e variantes) e as escritas SQL raw.
@@ -33,43 +45,53 @@ const WRITE_MODEL_OPERATION = /^(create|update|delete|upsert)/i;
 const WRITE_SQL = /^\s*(insert|update|delete|replace|create|drop|alter|vacuum|reindex)\b/i;
 const prisma = baseClient.$extends({
   query: {
-    $allOperations({ operation, args, query }) {
+    async $allOperations({ operation, args, query }) {
       if (WRITE_MODEL_OPERATION.test(operation)) assertDbNotDegraded(`escrita na BD (${operation})`);
+      await assegurarPragmas();
       return query(args);
     },
-    $executeRaw({ args, query }) {
-      assertDbNotDegraded("escrita SQL raw");
+    async $queryRaw({ args, query }) {
+      await assegurarPragmas();
       return query(args);
     },
-    $executeRawUnsafe({ args, query }) {
+    async $executeRaw({ args, query }) {
       assertDbNotDegraded("escrita SQL raw");
+      await assegurarPragmas();
+      return query(args);
+    },
+    async $executeRawUnsafe({ args, query }) {
+      assertDbNotDegraded("escrita SQL raw");
+      await assegurarPragmas();
       return query(args);
     },
     // $queryRawUnsafe é leitura por desenho, mas aceita SQL de escrita. Bloqueia-se essa forma.
-    $queryRawUnsafe({ args, query }) {
+    async $queryRawUnsafe({ args, query }) {
       const sql = Array.isArray(args) ? args[0] : args;
       if (WRITE_SQL.test(String(sql ?? ""))) assertDbNotDegraded("escrita SQL via queryRaw");
+      await assegurarPragmas();
       return query(args);
     },
   },
 });
 
-/**
- * Aplica WAL/busy_timeout na primeira ligação e após reconnect.
- */
-async function bootstrapSqlitePragmas(client) {
-  try {
-    await configureSqliteForPrisma(client);
-    if (!global.__alterpopSqlitePragmasLogged) {
-      global.__alterpopSqlitePragmasLogged = true;
-      console.log("[prisma] SQLite WAL + busy_timeout activos");
-    }
-  } catch (err) {
-    console.error(`[prisma] Falha ao configurar PRAGMAs SQLite: ${err?.message || err}`);
+/** Primeira aplicação, ao carregar o módulo. Depois, cada operação confirma a época. */
+void assegurarPragmas().then(() => {
+  if (!global.__alterpopSqlitePragmasLogged) {
+    global.__alterpopSqlitePragmasLogged = true;
+    console.log("[prisma] SQLite WAL + busy_timeout activos");
   }
-}
+});
 
-void bootstrapSqlitePragmas(prisma);
+/**
+ * Fecha e reabre o cliente. A época sobe antes da próxima query, para que essa query volte a
+ * aplicar as PRAGMAs (DBG-15: antes, só a reconexão do watchdog as aplicava, e uma ligação
+ * reaberta por query implícita ficava sem WAL nem busy_timeout).
+ */
+export async function reconectarPrisma() {
+  await prisma.$disconnect();
+  marcarNovaLigacaoSqlite();
+  await prisma.$connect();
+}
 
 /**
  * Watchdog de ligação (não substitui ping HTTP externo a /api/health).
@@ -85,9 +107,7 @@ function startPrismaConnectionWatchdog() {
     } catch (err) {
       console.error(`[prisma] watchdog falhou: ${err?.message || err}`);
       try {
-        await prisma.$disconnect();
-        await prisma.$connect();
-        await configureSqliteForPrisma(prisma);
+        await reconectarPrisma();
         console.log("[prisma] ligação restabelecida (watchdog)");
       } catch (reconnectErr) {
         console.error(`[prisma] reconnect falhou: ${reconnectErr?.message || reconnectErr}`);

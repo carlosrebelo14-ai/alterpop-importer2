@@ -39,7 +39,7 @@ DB_BLOCKED=0
 FS=""
 LOGS="$(mktemp)"
 RESTORE_OUT="$(mktemp)"
-LOG_LINES=0; LOG_DBD=0; LOG_DEGR=0
+LOG_SUM=""
 
 case "$TASK" in
   catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run) ;;
@@ -102,6 +102,11 @@ flag_state() {
   elif echo "$out" | grep -q "FLAG_ABSENT"; then echo ABSENT
   else echo UNKNOWN; fi
 }
+
+# kv <chave>: valor de uma linha CHAVE=valor do resumo de logs (scripts/maintenance/logs-summary.mjs).
+kv() { echo "$LOG_SUM" | grep -E "^$1=" | head -1 | cut -d= -f2-; }
+# kn <chave>: como kv, mas 0 quando a chave não existe (para comparar com -gt).
+kn() { local v; v="$(kv "$1")"; echo "${v:-0}"; }
 
 RC=0
 KEY=""
@@ -190,17 +195,22 @@ case "$TASK" in
     esac
     ;;
   logs_recent)
-    DESC="Conta as linhas de erro dos logs recentes da app (DbDegradedError e mensagens de modo degradado). Só lê. Não mostra linhas."
-    "$FLYCTL" logs -a "$APP" --no-tail >"$LOGS" 2>>"$OUT"; RC=$?
+    # flyctl logs (referência oficial): --no-tail devolve o buffer; --json, uma entrada por linha.
+    # Não há flag de número de linhas nem de janela temporal: a janela é a que o buffer cobre, e o
+    # resumo mostra essa janela. As linhas em bruto ficam no ficheiro temporário e não são publicadas.
+    DESC="Conta sinais dos logs recentes da app: modo degradado, escritas recusadas, BD bloqueada, reinícios do worker e início, fim e causa da indexação. Só lê. Não mostra linhas."
+    "$FLYCTL" logs -a "$APP" --no-tail --json >"$LOGS" 2>>"$OUT"; RC=$?
     if [ "$RC" -ne 0 ]; then
       CAUSE="não consegui ler os logs da Fly."
     else
-      LOG_LINES="$(wc -l <"$LOGS" | tr -d ' ')"
-      LOG_DBD="$(grep -c 'DbDegradedError' "$LOGS" || true)"
-      LOG_DEGR="$(grep -ci 'modo degradado' "$LOGS" || true)"
-      if [ "${LOG_DBD:-0}" -gt 0 ] || [ "${LOG_DEGR:-0}" -gt 0 ]; then
+      LOG_SUM="$(node "$ROOT/scripts/maintenance/logs-summary.mjs" "$LOGS" 2>>"$OUT")"; RC=$?
+      if [ "$RC" -ne 0 ]; then
+        CAUSE="não consegui resumir os logs (scripts/maintenance/logs-summary.mjs)."
+      elif [ "$(kn DBD)" -gt 0 ] || [ "$(kn MODO_DEGRADADO)" -gt 0 ]; then
         RESULT_OVERRIDE="⛔ Erros de modo degradado nos logs"; RC=1
         CAUSE="há DbDegradedError ou mensagens de modo degradado nos logs recentes: a sequência para."
+      elif [ "$(kn REINICIOS)" -gt 0 ] || [ "$(kn DB_LOCKED)" -gt 0 ] || [ "$(kn RECUSAS)" -gt 0 ]; then
+        RESULT_OVERRIDE="⚠️ Sinais nos logs (ver contagens)"
       fi
     fi
     ;;
@@ -361,8 +371,21 @@ case "$TASK" in
     KEY="flag $FS_PT"
     ;;
   logs_recent)
-    bullets="- Linhas lidas: **${LOG_LINES:-0}**. DbDegradedError: **${LOG_DBD:-0}**. Mensagens de modo degradado: **${LOG_DEGR:-0}**. Janela: o que a Fly devolve agora (--no-tail)."
-    KEY="$LOG_DBD DbDegradedError, $LOG_DEGR mensagens de modo degradado"
+    if [ -z "$LOG_SUM" ]; then
+      bullets=""; KEY="sem leitura"
+    else
+      bullets="- Linhas lidas: **$(kn LINHAS)**. Janela coberta pelo que a Fly devolve: de $(kv JANELA_INICIO) a $(kv JANELA_FIM)."
+      bullets="$bullets"$'\n'"- DbDegradedError: **$(kn DBD)**. Mensagens de modo degradado: **$(kn MODO_DEGRADADO)**. Escritas recusadas: **$(kn RECUSAS)**, das quais na fila de curadoria: **$(kn RECUSAS_FILA)**. \`database is locked\`: **$(kn DB_LOCKED)**."
+      bullets="$bullets"$'\n'"- Indexação: **$(kn INDEX_INICIOS)** início(s), por causa: painel $(kn INDEX_CAUSA_PAINEL), ciclo $(kn INDEX_CAUSA_CICLO), script $(kn INDEX_CAUSA_SCRIPT), não registada $(kn INDEX_CAUSA_DESCONHECIDA). Fins: **$(kn INDEX_CONCLUIDAS)** concluída(s), **$(kn INDEX_FALHADAS)** falhada(s), **$(kn INDEX_PARADAS)** parada(s)."
+      bullets="$bullets"$'\n'"- Reinícios do worker (saiu sem concluir): **$(kn REINICIOS)**."
+      if [ "$(kv INDEX_ULTIMA_CAUSA)" != "-" ] && [ -n "$(kv INDEX_ULTIMA_CAUSA)" ]; then
+        bullets="$bullets"$'\n'"- Último fim de indexação: causa **$(kv INDEX_ULTIMA_CAUSA)**, estado **$(kv INDEX_ULTIMA_ESTADO)**, duração **$(kv INDEX_ULTIMA_DURACAO_S)** s, às $(kv INDEX_ULTIMO_FIM_TS)."
+      fi
+      if [ "$(kn INDEX_A_DECORRER)" -eq 1 ]; then
+        bullets="$bullets"$'\n'"- ⚠️ Indexação a decorrer desde $(kv INDEX_ULTIMO_INICIO_TS) (início sem fim nas linhas lidas)."
+      fi
+      KEY="$(kn DBD) DbDegradedError, $(kn RECUSAS) recusas, $(kn REINICIOS) reinícios do worker"
+    fi
     ;;
   restore_dry_run)
     if grep -q 'integrity_check: ok' "$RESTORE_OUT" 2>/dev/null; then IC="ok"; elif grep -q 'integrity_check:' "$RESTORE_OUT" 2>/dev/null; then IC="falhou"; else IC="não correu"; fi

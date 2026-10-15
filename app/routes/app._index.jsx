@@ -208,11 +208,12 @@ export const action = async ({ request }) => {
       !purge && !forceFull && canResumeCatalogRebuild(fileStatus);
 
     if (purge) {
-      startCatalogCleanupInBackground(session.shop, settings);
+      startCatalogCleanupInBackground(session.shop, settings, { causa: "painel" });
     } else {
       startCatalogRebuildInBackground(session.shop, settings, {
         resume: willResume,
         forceFull,
+        causa: "painel",
       });
     }
     return {
