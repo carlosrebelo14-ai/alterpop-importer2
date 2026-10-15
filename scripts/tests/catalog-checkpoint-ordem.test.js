@@ -9,6 +9,8 @@
  * - estadoDoProgressoDoWorker (catalogRebuildStatus.server.js): um evento de progresso não traz
  *   checkpoint. O progresso vai à frente do flush e não pode ser ponto de retoma (C4).
  * - canResumeCatalogRebuild e pontoDeRetoma: a retoma só usa checkpointScanned, nunca scanned (C5, C6).
+ * - decidirAtualizacaoDeProgresso (indexingStream.server.js): a função pura do evento `progress`. Executa a
+ *   função real do handler, não só estadoDoProgressoDoWorker. O estado nunca traz checkpoint (C7).
  *
  * Sem CSV, SQLite nem Prisma reais. O flush é falso e o ack é controlado pelo teste.
  *
@@ -26,6 +28,7 @@ const modulo = (rel) => import(pathToFileURL(path.join(REPO, rel)).href);
 
 const sync = await modulo("lib/importer/catalog/syncCatalogWithProgress.server.js");
 const estado = await modulo("lib/importer/catalog/catalogRebuildStatus.server.js");
+const indexacao = await modulo("lib/importer/catalog/indexingStream.server.js");
 
 const esperar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -118,6 +121,17 @@ async function main() {
     assert.equal(estado.pontoDeRetoma({ checkpointScanned: null, scanned: 2000 }), 0);
     assert.equal(estado.pontoDeRetoma({ checkpointScanned: 1500, scanned: 2000 }), 1500);
     assert.equal(estado.pontoDeRetoma(null), 0);
+  });
+
+  await caso("C7 função pura do progresso: o evento do worker não traz checkpoint, nem no estado nem na decisão", async () => {
+    const decisao = indexacao.decidirAtualizacaoDeProgresso({ phase: "streaming", indexed: 2000, scanned: 2000, checkpointScanned: 1500 });
+    assert.equal(decisao.atualizar, true);
+    assert.equal("checkpointScanned" in decisao.estado, false);
+    assert.equal("checkpointIndexed" in decisao.estado, false);
+    assert.equal(decisao.estado.scanned, 2000);
+    assert.equal(decisao.estado.state, "running");
+    // Sem indexed, o progresso não atualiza a memória (é o mesmo que o handler fazia com `msg.indexed != null`).
+    assert.deepEqual(indexacao.decidirAtualizacaoDeProgresso({ phase: "streaming", scanned: 2000 }), { atualizar: false, estado: null });
   });
 
   if (falhas) {
