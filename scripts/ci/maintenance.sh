@@ -103,6 +103,18 @@ flag_state() {
   else echo UNKNOWN; fi
 }
 
+# wal_state: PRESENT | ABSENT | UNKNOWN. Só lê o volume: se o WAL do SQLite existe (DBG-37).
+WAL_PATH="/app/data/dev.sqlite-wal"
+wal_state() {
+  local out rc
+  out="$("$FLYCTL" ssh console -a "$APP" -C "sh -lc 'if [ -e $WAL_PATH ]; then echo WAL_PRESENT; else echo WAL_ABSENT; fi'" 2>&1)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then echo UNKNOWN; return; fi
+  if echo "$out" | grep -q "WAL_PRESENT"; then echo PRESENT
+  elif echo "$out" | grep -q "WAL_ABSENT"; then echo ABSENT
+  else echo UNKNOWN; fi
+}
+
 # kv <chave>: valor de uma linha CHAVE=valor do resumo de logs (scripts/maintenance/logs-summary.mjs).
 kv() { echo "$LOG_SUM" | grep -E "^$1=" | head -1 | cut -d= -f2-; }
 # kn <chave>: como kv, mas 0 quando a chave não existe (para comparar com -gt).
@@ -215,15 +227,33 @@ case "$TASK" in
     fi
     ;;
   restore_dry_run)
-    DESC="Copia dev.sqlite e o WAL (se existir) do volume para uma pasta temporária do runner e corre o restauro sem --execute sobre a cópia. Só lê: a BD da Fly não é tocada."
+    DESC="Copia dev.sqlite e o WAL (se existir) do volume para uma pasta temporária do runner e corre o restauro sem --execute sobre a cópia. Se o WAL existe e não se copia, a tarefa falha. Só lê: a BD da Fly não é tocada."
     COPY_DIR="$(mktemp -d)"
     "$FLYCTL" ssh sftp get /app/data/dev.sqlite "$COPY_DIR/dev.sqlite" -a "$APP" >>"$OUT" 2>&1; RC=$?
     if [ "$RC" -ne 0 ]; then
       CAUSE="não consegui copiar dev.sqlite do volume (ssh sftp): verificar o token e o acesso ao volume."
     else
-      "$FLYCTL" ssh sftp get /app/data/dev.sqlite-wal "$COPY_DIR/dev.sqlite-wal" -a "$APP" >>"$OUT" 2>&1 || true
-      DATABASE_URL="file:$COPY_DIR/dev.sqlite" node "$ROOT/scripts/setup/restore-db-degraded.js" >"$RESTORE_OUT" 2>>"$OUT"; RC=$?
-      if [ "$RC" -ne 0 ]; then CAUSE="a cópia não passa integrity_check: o restauro real teria de ser feito antes de limpar a flag."; fi
+      # DBG-37: sem `|| true`. Um WAL que existe e não se copia faz a tarefa falhar, porque a cópia
+      # do ficheiro principal sozinha não reflete as transações pendentes.
+      WAL_ST="$(wal_state)"
+      case "$WAL_ST" in
+        ABSENT) WAL_NOTE="sem WAL no volume" ;;
+        PRESENT)
+          "$FLYCTL" ssh sftp get /app/data/dev.sqlite-wal "$COPY_DIR/dev.sqlite-wal" -a "$APP" >>"$OUT" 2>&1; WRC=$?
+          if [ "$WRC" -eq 0 ]; then
+            WAL_NOTE="copiado"
+          else
+            RC=1; WAL_NOTE="existe, cópia falhou"
+            CAUSE="o WAL existe no volume e não consegui copiá-lo: a cópia do ficheiro principal não reflete a BD. O integrity_check não corre."
+          fi ;;
+        *)
+          RC=2; WAL_NOTE="estado desconhecido"
+          CAUSE="não consegui ler se o WAL existe no volume: a cópia não corre." ;;
+      esac
+      if [ "$RC" -eq 0 ]; then
+        DATABASE_URL="file:$COPY_DIR/dev.sqlite" node "$ROOT/scripts/setup/restore-db-degraded.js" >"$RESTORE_OUT" 2>>"$OUT"; RC=$?
+        if [ "$RC" -ne 0 ]; then CAUSE="a cópia não passa integrity_check: o restauro real teria de ser feito antes de limpar a flag."; fi
+      fi
     fi
     rm -rf "$COPY_DIR"
     ;;
@@ -389,7 +419,7 @@ case "$TASK" in
     ;;
   restore_dry_run)
     if grep -q 'integrity_check: ok' "$RESTORE_OUT" 2>/dev/null; then IC="ok"; elif grep -q 'integrity_check:' "$RESTORE_OUT" 2>/dev/null; then IC="falhou"; else IC="não correu"; fi
-    bullets="- Cópia de dev.sqlite do volume para o runner (temporária, apagada no fim). integrity_check da cópia: **$IC**. Dry-run: nenhuma flag foi apagada e a BD da Fly não foi tocada."
+    bullets="- Cópia de dev.sqlite do volume para o runner (temporária, apagada no fim). integrity_check da cópia: **$IC**. WAL: **${WAL_NOTE:-não verificado}**. Dry-run: nenhuma flag foi apagada e a BD da Fly não foi tocada."
     KEY="integrity_check da cópia: $IC"
     ;;
 esac
