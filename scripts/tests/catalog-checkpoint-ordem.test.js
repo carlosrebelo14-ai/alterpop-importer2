@@ -11,6 +11,8 @@
  * - canResumeCatalogRebuild e pontoDeRetoma: a retoma só usa checkpointScanned, nunca scanned (C5, C6).
  * - decidirAtualizacaoDeProgresso (indexingStream.server.js): a função pura do evento `progress`. Executa a
  *   função real do handler, não só estadoDoProgressoDoWorker. O estado nunca traz checkpoint (C7).
+ * - tratarProgressoDoWorker (indexingStream.server.js) é o case `progress` com dependências falsas, sem fork.
+ *   A escrita que ele pede não leva checkpoint (C8 e C9).
  *
  * Sem CSV, SQLite nem Prisma reais. O flush é falso e o ack é controlado pelo teste.
  *
@@ -31,6 +33,27 @@ const estado = await modulo("lib/importer/catalog/catalogRebuildStatus.server.js
 const indexacao = await modulo("lib/importer/catalog/indexingStream.server.js");
 
 const esperar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const LOJA = "loja-teste";
+
+/** Dependências falsas de tratarProgressoDoWorker. Regista cada chamada para o teste ver o que saiu. */
+function depsDoProgresso({ estadoAtual = null } = {}) {
+  const registo = { emitidos: [], memoria: [], escritas: [] };
+  const deps = {
+    shop: LOJA,
+    estadoAtual,
+    emitir: (shop, evento) => {
+      registo.emitidos.push({ shop, evento });
+    },
+    setInMemoryStatus: (shop, status) => {
+      registo.memoria.push({ shop, status });
+    },
+    writeCatalogRebuildStatus: async (shop, status) => {
+      registo.escritas.push({ shop, status });
+    },
+  };
+  return { deps, registo };
+}
 
 let falhas = 0;
 async function caso(nome, fn) {
@@ -132,6 +155,45 @@ async function main() {
     assert.equal(decisao.estado.state, "running");
     // Sem indexed, o progresso não atualiza a memória (é o mesmo que o handler fazia com `msg.indexed != null`).
     assert.deepEqual(indexacao.decidirAtualizacaoDeProgresso({ phase: "streaming", scanned: 2000 }), { atualizar: false, estado: null });
+  });
+
+  await caso("C8 tratamento do progresso: a escrita não leva checkpoint e o estado devolvido junta o estado atual", async () => {
+    const { deps, registo } = depsDoProgresso({
+      estadoAtual: { state: "running", indexing: true, resumedFrom: 1500, scanned: 1500, totalRows: 1500 },
+    });
+    const novo = indexacao.tratarProgressoDoWorker({ phase: "streaming", indexed: 2000, scanned: 2000 }, deps);
+
+    assert.deepEqual(registo.emitidos, [
+      { shop: LOJA, evento: { type: "progress", phase: "streaming", indexed: 2000, scanned: 2000 } },
+    ]);
+    assert.equal(registo.escritas.length, 1);
+    const escrita = registo.escritas[0];
+    assert.equal("checkpointScanned" in escrita.status, false);
+    assert.equal("checkpointIndexed" in escrita.status, false);
+    assert.deepEqual(escrita.status, {});
+    assert.equal(registo.memoria.length, 1);
+    assert.equal("checkpointScanned" in registo.memoria[0].status, false);
+    assert.equal("checkpointIndexed" in registo.memoria[0].status, false);
+    assert.deepEqual(novo, {
+      state: "running",
+      indexing: true,
+      resumedFrom: 1500,
+      scanned: 2000,
+      totalRows: 2000,
+      phase: "streaming",
+    });
+  });
+
+  await caso("C9 progresso sem indexed: emite o evento, mas não atualiza a memória nem pede escrita", async () => {
+    const estadoAtual = { state: "running", indexing: true, scanned: 5 };
+    const { deps, registo } = depsDoProgresso({ estadoAtual });
+    const novo = indexacao.tratarProgressoDoWorker({ phase: "resuming", scanned: 10 }, deps);
+
+    assert.equal(registo.emitidos.length, 1);
+    assert.equal(registo.emitidos[0].evento.type, "progress");
+    assert.deepEqual(registo.memoria, []);
+    assert.deepEqual(registo.escritas, []);
+    assert.equal(novo, estadoAtual);
   });
 
   if (falhas) {
