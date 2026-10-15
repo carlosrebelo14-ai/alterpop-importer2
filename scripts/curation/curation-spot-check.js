@@ -34,6 +34,7 @@ import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient
 import { assertLiveImportAllowed } from "../../lib/importer/jobs/dryRunGuard.js";
 import prisma from "../../app/db.server.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.join(__dirname, "..", "..");
@@ -487,6 +488,7 @@ async function executeSpotCases(cases, dryRun) {
 }
 
 async function main() {
+  recusarSeAtividadeApp("curation-spot-check");
   const dryRun = config.import.dryRun;
 
   logCor("╔══════════════════════════════════════════════════════════╗", cor.ciano);

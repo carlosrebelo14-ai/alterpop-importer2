@@ -24,6 +24,7 @@
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { publishCatalogProductToShopify } from "../../lib/importer/shopify/shopifyProductPublisher.server.js";
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const args = process.argv.slice(2);
 const KEEP = args.includes("--keep");
@@ -86,6 +87,7 @@ const PRODUCT_DELETE = `
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
 
 async function main() {
+  recusarSeAtividadeApp("line-publish-verify");
   const session = await loadOfflineSessionForShop(SHOP);
   const client = createShopifyClientFromSession(session);
 

@@ -43,6 +43,7 @@ import {
   printReconcileSummary,
 } from "../../lib/importer/pricing/priceReconcile.server.js";
 import { fetchLiveVariantsBySku, diagnoseMissingLive } from "../../lib/importer/shopify/liveVariantsBySku.server.js";
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
 const DRY_RUN = process.env.DRY_RUN !== "false";
@@ -115,6 +116,7 @@ async function catalogReadiness() {
 }
 
 async function main() {
+  recusarSeAtividadeApp("price-reconcile-apply");
   console.log(`=== price-reconcile-apply (${SHOP}) · ${DRY_RUN ? "DRY-RUN — nada é escrito" : "ESCRITA REAL"} ===\n`);
 
   const readiness = await catalogReadiness();

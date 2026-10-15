@@ -20,6 +20,9 @@
  *      (Decisão 29, caminho em lote). E-lote grava em disco. E-fila-externa devolve a fila em memória.
  *   F  Decisão 35, D2: decisão humana (desfazer para PENDING) gravada depois da leitura do worker
  *      não é revertida pelo flush do worker (AUTO_APPROVE calculado sobre a leitura antiga).
+ *   G  Reset Shopify (reverterTodosPublicados, ramo sem apagado). S PUBLISHED com id volta a PENDING
+ *      em disco. Uma cópia lida antes do reset não repõe PUBLISHED nem o id. G-sem-id faz o mesmo para
+ *      um SYNC_ERROR sem id no reset com apagado (ramo que nunca chegou à Shopify).
  *
  * Decisão 35, D1: o filho não escreve a fila. Cada escrita segue ao pai por IPC e o pai atende-a com
  * handleCurationWriteMessage (função de produção). O filho só avança quando o pai confirma.
@@ -46,8 +49,10 @@ const QUEUE_PATH = path.join(DATA_DIR, "curation-queue.json");
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CHILD_PATH = path.join(HERE, "_curation-queue-fork-child.mjs");
 const QUEUE_MODULE = pathToFileURL(path.join(HERE, "..", "..", "lib", "curation", "curationQueue.server.js")).href;
+const RESET_MODULE = pathToFileURL(path.join(HERE, "..", "..", "lib", "importer", "shopify", "shopifyReset.server.js")).href;
 
 const q = await import(QUEUE_MODULE);
+const reset = await import(RESET_MODULE);
 
 const AGORA = new Date().toISOString();
 const ANTIGO = "2026-10-01T00:00:00.000Z";
@@ -434,6 +439,45 @@ async function casoF() {
   assert.equal(f1.title_en, "Título novo", "os campos de catálogo do worker têm de chegar ao disco");
 }
 
+// ---------------------------------------------------------------------------
+// G: reset Shopify (D2). Cópia lida antes do reset não repõe o estado antigo depois do reset
+// ---------------------------------------------------------------------------
+async function casoG() {
+  escreverFila([item("S", "PUBLISHED", { shopifyProductId: "gid://shopify/Product/501", publishedAt: ANTIGO })]);
+  // Leitura do worker: anterior ao reset. Cópia (clone) do item PUBLISHED com o id da Shopify.
+  const lidoEm = Date.now();
+  const copiaDoPai = structuredClone((await q.loadCurationQueue()).items.find((i) => i.sku === "S"));
+  assert.equal(copiaDoPai.status, "PUBLISHED", "pré-condição: a cópia tem de estar PUBLISHED");
+
+  // Reset Shopify, ramo sem apagado (targetStatus PENDING). S volta a PENDING, sem id, em disco.
+  const revertidos = await reset.revertAllPublishedInQueue({ targetStatus: "PENDING" });
+  assert.equal(revertidos, 1, "o reset tem de reverter S");
+  assert.equal(itemDoDisco("S").status, "PENDING", "pré-condição: o reset põe S em PENDING em disco");
+
+  // Flush da cópia antiga, lida antes do reset. Não pode repor PUBLISHED nem o id da Shopify.
+  q.invalidateCurationMemoryCache();
+  await q.flushCurationQueueItems([copiaDoPai], { readAt: lidoEm });
+  const apos = itemDoDisco("S");
+  assert.equal(apos.status, "PENDING", "o flush com a cópia PUBLISHED repôs PUBLISHED depois do reset");
+  assert.equal(apos.metadata.shopifyProductId, null, "o flush repôs o id da Shopify que o reset limpou");
+}
+
+async function casoGSemId() {
+  escreverFila([item("Z", "SYNC_ERROR", { syncError: "erro de teste", syncErrorAt: AGORA })]);
+  const lidoEm = Date.now();
+  const copiaDoPai = structuredClone((await q.loadCurationQueue()).items.find((i) => i.sku === "Z"));
+  assert.equal(copiaDoPai.status, "SYNC_ERROR", "pré-condição: a cópia tem de estar em SYNC_ERROR");
+
+  // Reset com apagado. SYNC_ERROR sem id nunca chegou à Shopify e volta a PENDING, sem marca de apagado.
+  const revertidos = await reset.revertAllPublishedInQueue({ deletedInAdmin: true });
+  assert.equal(revertidos, 1, "o reset tem de reverter Z");
+  assert.equal(itemDoDisco("Z").status, "PENDING", "pré-condição: o reset põe Z em PENDING em disco");
+
+  q.invalidateCurationMemoryCache();
+  await q.flushCurationQueueItems([copiaDoPai], { readAt: lidoEm });
+  assert.equal(itemDoDisco("Z").status, "PENDING", "o flush com a cópia SYNC_ERROR repôs SYNC_ERROR depois do reset");
+}
+
 async function main() {
   await caso("A", "dois forks, 200 PENDING, 100 aprovações e 100 novos (3 rondas)", casoA);
   await caso("B", "flush do pai com cópia PENDING depois de um fork aprovar S", casoB);
@@ -460,6 +504,8 @@ async function main() {
       })
   );
   await caso("F", "decisão humana depois da leitura do worker não é revertida pelo flush (D2)", casoF);
+  await caso("G", "reset sem apagado: cópia PUBLISHED lida antes do reset não repõe PUBLISHED nem o id", casoG);
+  await caso("G-sem-id", "reset com apagado: cópia SYNC_ERROR sem id lida antes do reset não repõe SYNC_ERROR", casoGSemId);
   await caso("E-lote", "upsert em lote sobre SYNC_ERROR mantém o estado e o erro (fila em disco)", () => casoE("lote"));
   await caso("E-fila-externa", "upsert em lote sobre SYNC_ERROR mantém o estado (fila externa, sem gravar)", () => casoE("externa"));
 

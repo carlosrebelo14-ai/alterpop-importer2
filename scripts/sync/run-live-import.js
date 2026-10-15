@@ -9,6 +9,7 @@ import { loadShopSettings } from "../../lib/importer/settings.server.js";
 import { assertLiveImportAllowed } from "../../lib/importer/jobs/dryRunGuard.js";
 import { getDefaultConfig } from "../../lib/importer/config.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const envLimit = parseInt(process.env.SYNC_LIMIT || "3", 10);
 const limit = parseInt(process.argv[2] || String(envLimit), 10);
@@ -24,6 +25,7 @@ async function loadSession() {
 }
 
 async function main() {
+  recusarSeAtividadeApp("run-live-import");
   assertLiveImportAllowed(false);
 
   const cfg = getDefaultConfig();
