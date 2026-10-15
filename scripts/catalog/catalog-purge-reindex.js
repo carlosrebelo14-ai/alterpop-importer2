@@ -37,7 +37,7 @@ if (process.env.CONFIRM !== CONFIRM_WORD) {
 const settings = await loadShopSettings(shop);
 
 console.log(`[catalog-purge] Loja: ${shop}`);
-const result = await startCatalogCleanupInBackground(shop, settings);
+const result = await startCatalogCleanupInBackground(shop, settings, { causa: "script" });
 
 try {
   await result;

@@ -97,8 +97,10 @@ import {
   avaliarQueda,
   carregarEstado,
   gravarReferencia,
+  gravarSemEstado,
   maxDe,
 } from "../../lib/health/gateState.server.js";
+import { avaliarSemEstado, registarSemEstado } from "../../lib/health/semEstado.js";
 import { planUniverseCollections } from "../../lib/importer/shopify/universeCollections.server.js";
 import { loadLiveDriftCycleState, MAX_AUTO_RECONCILE } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
 import { loadNewArrivalsCycleState, NEW_ARRIVAL_DAYS } from "../../lib/importer/shopify/newArrivals.server.js";
@@ -277,6 +279,17 @@ function info(id, label, value) {
   console.log(`  · ${id}  ${label} — ${value}`);
 }
 
+/** DBG-06: ciclo sem estado é aviso; passadas 24 h desde a primeira ausência, vermelho.
+ *  Antes era `info` (nível pass): o portão ficava verde sem nenhum ciclo ter corrido. */
+function semEstadoDoCiclo(id, label, esperado, desdeIso) {
+  const { vermelho, horas } = avaliarSemEstado(desdeIso, Date.now());
+  if (vermelho) {
+    check(id, `${label} — sem estado há ${horas.toFixed(0)} h (desde ${desdeIso})`, esperado, "sem estado", false);
+  } else {
+    warn(id, label, esperado, "sem estado — trigger-sync ainda não correu com esta versão", false);
+  }
+}
+
 
 /** V5 — queda acentuada face à referência. Crescimento nunca é vermelho. */
 const V5_QUEDA_MAX_PCT = 10;
@@ -337,6 +350,16 @@ async function main() {
   }
 
   const state = await carregarEstado(STATE_PATH);
+
+  // DBG-06 — instante em que cada ciclo (V13, V14, V15, V17) deixou de ter estado. Gravado no
+  // fim, mesmo em corrida vermelha (gravarSemEstado não toca em referências).
+  const agoraIso = new Date().toISOString();
+  let semEstadoMapa = state?.semEstadoDesde || {};
+  /** Regista a presença do ciclo e devolve o instante da primeira ausência (null se há estado). */
+  const registaCiclo = (id, temEstado) => {
+    semEstadoMapa = registarSemEstado(semEstadoMapa, id, temEstado, agoraIso);
+    return semEstadoMapa[id] ?? null;
+  };
 
   // V3 — aprovados por publicar: mede a IDADE, não a contagem (ADENDA 3). A contagem
   // aparece sempre; publicação manual não é razão para deixar de olhar para a fila.
@@ -505,8 +528,9 @@ async function main() {
   // aviso, porque significa que ninguém corrigiu nada e a loja ficou com a lista toda
   // por resolver.
   const v13State = await loadLiveDriftCycleState();
+  const v13Desde = registaCiclo("V13", v13State != null);
   if (!v13State) {
-    info("V13", "live-drift por ciclo", "sem estado — trigger-sync ainda não correu com esta versão");
+    semEstadoDoCiclo("V13", "live-drift por ciclo", "estado gravado pelo trigger-sync", v13Desde);
   } else if (v13State.status === "green") {
     check("V13", `live-drift por ciclo (${v13State.ranAt})`, "0 produtos em drift", "0", true);
   } else if (v13State.status === "yellow") {
@@ -538,8 +562,9 @@ async function main() {
   // userErrors, scope em falta ou publicationId inválido — fail de verdade, porque
   // significa que a publicação ficou saltada no ciclo inteiro.
   const v14State = await loadCollectionPublicationCycleState();
+  const v14Desde = registaCiclo("V14", v14State != null);
   if (!v14State) {
-    info("V14", "publicação de coleções por ciclo", "sem estado — trigger-sync ainda não correu com esta versão");
+    semEstadoDoCiclo("V14", "publicação de coleções por ciclo", "estado gravado pelo trigger-sync", v14Desde);
   } else if (v14State.status === "green") {
     check("V14", `publicação de coleções por ciclo (${v14State.ranAt})`, "todas open publicadas, nenhuma closed publicada", "ok", true);
   } else if (v14State.status === "yellow") {
@@ -569,8 +594,9 @@ async function main() {
   // first_published_at, data no futuro, data alterada desde o ciclo anterior, erro de
   // escrita ou definição em falta.
   const v15State = await loadNewArrivalsCycleState();
+  const v15Desde = registaCiclo("V15", v15State != null);
   if (!v15State) {
-    info("V15", "novidades por ciclo", "sem estado — trigger-sync ainda não correu com esta versão");
+    semEstadoDoCiclo("V15", "novidades por ciclo", "estado gravado pelo trigger-sync", v15Desde);
   } else if (v15State.status === "green") {
     check("V15", `novidades por ciclo (${v15State.ranAt}, ${NEW_ARRIVAL_DAYS}d)`, "sem expirações nem anomalias", `${v15State.trueCount} em Novidades`, true);
   } else if (v15State.status === "yellow") {
@@ -630,9 +656,10 @@ async function main() {
   // A função isLifecycleReportSuspect() já sabe distinguir modo semente (que reporta 0
   // por desenho) de um relatório genuíno acima do limiar; aqui só se liga ao portão.
   const lifecycleReport = await getLatestLifecycleReport(SHOP);
+  const v17Desde = registaCiclo("V17", lifecycleReport != null);
   const catalogSizeForLifecycle = await prisma.catalogProduct.count({ where: { shop: SHOP } });
   if (!lifecycleReport) {
-    info("V17", "CatalogSkuTracking — última corrida do ciclo de vida", "sem relatório ainda");
+    semEstadoDoCiclo("V17", "CatalogSkuTracking — última corrida do ciclo de vida", "relatório do ciclo de vida", v17Desde);
   } else if (
     isLifecycleReportSuspect({
       newSkuCount: lifecycleReport.newSkuCount,
@@ -740,6 +767,8 @@ async function main() {
     horizonteN: HORIZONTE_N,
     aceitarNovaBase: ACEITAR_BASE,
   });
+  // Depois de gravarReferencia: esta relê o ficheiro, que a referência acabou de escrever.
+  await gravarSemEstado(STATE_PATH, semEstadoMapa);
   if (baseReiniciada) {
     console.log(
       `  (--aceitar-base: base nova em ${totalProducts} / ${racio.toFixed(1)}%, histórico reiniciado.` +

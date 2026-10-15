@@ -420,11 +420,30 @@ check("logs_recent: sem erros → 0 com contagens; com DbDegradedError → 1 e p
   let r = run("logs_recent", "dry-run", { FAKE_LOGS: "app ok\napp ok" });
   assert.equal(r.status, 0);
   assert.match(r.summaryText, /DbDegradedError: \*\*0\*\*/);
-  assert.ok(ran(r, "logs -a alterpop-importer-app --no-tail"));
+  assert.ok(ran(r, "logs -a alterpop-importer-app --no-tail --json"), "flyctl logs com --json, sem flags inventadas");
+  assert.doesNotMatch(r.summaryText, /app ok/, "o texto das linhas nunca sai no resumo");
   r = run("logs_recent", "dry-run", { FAKE_LOGS: "[prisma] x: DbDegradedError: BD em modo degradado\napp: Modo degradado ativo" });
   assert.equal(r.status, 1);
   assert.match(r.summaryText, /DbDegradedError: \*\*1\*\*/);
   assert.ok(!ran(r, "db:push"));
+});
+check("logs_recent: marcas de indexação, reinício e recusa → 0 com aviso; causa e duração do último fim", () => {
+  const linhas = [
+    '{"timestamp":"2026-10-14T20:00:00Z","message":"[indexacao] inicio causa=ciclo modo=completa"}',
+    '{"timestamp":"2026-10-14T20:30:00Z","message":"[indexacao] worker terminou sem concluir (code=null signal=SIGKILL)"}',
+    '{"timestamp":"2026-10-14T20:31:00Z","message":"[indexacao] fim causa=ciclo estado=falhou duracao_s=1860"}',
+    '{"timestamp":"2026-10-14T21:00:00Z","message":"[indexacao] inicio causa=painel modo=retoma"}',
+    '{"timestamp":"2026-10-14T21:05:00Z","message":"[dbDegraded] recusado: escrita na fila de curadoria"}',
+    '{"timestamp":"2026-10-14T21:40:00Z","message":"[indexacao] fim causa=painel estado=concluida duracao_s=2400 indexados=25000"}',
+  ].join("\\n");
+  const r = run("logs_recent", "dry-run", { FAKE_LOGS: linhas });
+  assert.equal(r.status, 0, "sinais de reinício e recusa são aviso, não vermelho");
+  assert.match(r.summaryText, /Resultado:\*\* ⚠️ Sinais nos logs/);
+  assert.match(r.summaryText, /Reinícios do worker \(saiu sem concluir\): \*\*1\*\*/);
+  assert.match(r.summaryText, /Escritas recusadas: \*\*1\*\*, das quais na fila de curadoria: \*\*1\*\*/);
+  assert.match(r.summaryText, /Indexação: \*\*2\*\* início\(s\), por causa: painel 1, ciclo 1/);
+  assert.match(r.summaryText, /Último fim de indexação: causa \*\*painel\*\*, estado \*\*concluida\*\*, duração \*\*2400\*\* s/);
+  assert.doesNotMatch(r.summaryText, /25000|escrita na fila/, "nem contagens internas nem texto de linha");
 });
 check("restore_dry_run: cópia íntegra → integrity ok e código 0; sem flag apagada; sem --execute", () => {
   const r = run("restore_dry_run", "dry-run", { FAKE_DB: healthyDb() });

@@ -170,7 +170,7 @@ export const action = async ({ request }) => {
     try {
       console.log(`[trigger-sync] ciclo iniciado @ ${startedAt}`);
       if (!settingsError) {
-        await startCatalogIndexingWorker(shop, settings, { runPurge: false, resume: false });
+        await startCatalogIndexingWorker(shop, settings, { runPurge: false, resume: false, causa: "ciclo" });
 
         const deadline = Date.now() + INDEXING_TIMEOUT_MS;
         while (isCatalogIndexingRunning(shop)) {
@@ -242,7 +242,17 @@ export const action = async ({ request }) => {
             });
           }
         } catch (err) {
+          // DBG-09: a falha de leitura do catálogo (ou de outra etapa do ciclo de stock) tem de
+          // contar como falha no registo de sync, não só no console. Sem SKU, o rótulo entre
+          // parênteses é o que persistSyncError aceita.
           console.error("[trigger-sync] sync de stock de publicados falhou:", err?.message || err);
+          await persistSyncError({
+            shop,
+            sku: "(stock de publicados)",
+            reason: `Ciclo de stock interrompido: ${err?.message || err}`,
+          }).catch((logErr) => {
+            console.error("[trigger-sync] persistSyncError falhou (stock):", logErr?.message || logErr);
+          });
         }
       }
 
