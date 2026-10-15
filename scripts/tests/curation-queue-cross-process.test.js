@@ -14,10 +14,15 @@
  *   C  upsertCurationQueueBatchFromRecords(lote, {}) concorrente com approveProduct. A janela entre o
  *      load e o rename alarga-se com um atraso na escrita do ficheiro temporário. O atraso é um
  *      patch de fs.promises.writeFile neste teste. Não há ponto de injeção em produção.
- *   D  Um fork faz setManualOverride (D-setManualOverride) ou bulkSetMarginPct (D-bulkSetMarginPct)
- *      enquanto o pai faz flush de overrides antigos. Espera o override mais recente.
+ *   D  Um fork faz setManualOverride (D-setManualOverride) ou bulkSetMarginPct (D-bulkSetMarginPct).
+ *      Depois, o pai faz flush de uma cópia com os overrides antigos. Espera o override mais recente.
  *   E  upsertCurationQueueBatchFromRecords sobre um item em SYNC_ERROR não muda o estado
  *      (Decisão 29, caminho em lote). E-lote grava em disco. E-fila-externa devolve a fila em memória.
+ *   F  Decisão 35, D2: decisão humana (desfazer para PENDING) gravada depois da leitura do worker
+ *      não é revertida pelo flush do worker (AUTO_APPROVE calculado sobre a leitura antiga).
+ *
+ * Decisão 35, D1: o filho não escreve a fila. Cada escrita segue ao pai por IPC e o pai atende-a com
+ * handleCurationWriteMessage (função de produção). O filho só avança quando o pai confirma.
  *
  * Resultado por caso: "passa"; "falha" (AssertionError, defeito no código atual); "erro_harness"
  * (qualquer outra exceção: timeout, filho que caiu, erro do próprio teste). Um timeout nunca conta
@@ -174,8 +179,14 @@ function startChild(payload, { waitGo = false } = {}) {
       resolve({ code, signal });
     });
   });
+  // Decisão 35 (D1): as escritas do filho chegam aqui e são atendidas pelo pai com a função de
+  // produção. O filho só recebe a resposta depois de a fila confirmar (ack por IPC).
+  let pedidosRecebidos = 0;
   child.on("message", (mensagem) => {
-    if (mensagem?.type === "ready") resolverReady();
+    if (mensagem?.type === "curation-write") {
+      pedidosRecebidos += 1;
+      q.handleCurationWriteMessage(mensagem, (resposta) => child.send(resposta, () => {}));
+    } else if (mensagem?.type === "ready") resolverReady();
     else if (mensagem?.type === "done") resolverDone();
     else if (mensagem?.type === "error") {
       const erro = new HarnessError(`filho falhou: ${mensagem.message}`);
@@ -189,6 +200,7 @@ function startChild(payload, { waitGo = false } = {}) {
     ready,
     done,
     exited,
+    pedidosRecebidos: () => pedidosRecebidos,
     go: () => child.send({ type: "go" }),
   };
 }
@@ -262,13 +274,15 @@ async function casoA() {
     }
 
     // Worker (fork): flush de 100 itens novos sobre o mesmo ficheiro, enquanto o pai está parado.
+    // Com escritor único o pedido chega ao pai e espera pelo lock: nada é gravado antes do avanço.
     filho = startChild({ op: "flush-lote", items: novos, pauseMs: 3 });
     filho.done.catch(() => {});
-    const gravadosAntesDoAvanco = await waitUntil(
-      () => lerFilaDoDisco().filter((i) => i.sku.startsWith("N")).length === 100,
-      5000
-    );
-    console.log(`      100 novos no disco antes de o pai avançar: ${gravadosAntesDoAvanco}`);
+    // Janela: espera que o worker envie os 100 lotes, ou 4 s. Com escritor único o worker fica preso
+    // no primeiro pedido até o pai avançar, e a janela esgota-se. Se a aprovação não tiver lock, os
+    // lotes escritos dentro da janela são apagados pela escrita atrasada do pai: é o que o caso apanha.
+    await waitUntil(() => filho.pedidosRecebidos() >= novos.length, 4000);
+    const novosAntesDoAvanco = lerFilaDoDisco().filter((i) => i.sku.startsWith("N")).length;
+    console.log(`      pedidos do worker recebidos antes de o pai avançar: ${filho.pedidosRecebidos()}; novos no disco: ${novosAntesDoAvanco}`);
 
     // Só agora o pai avança e grava a sua cópia. Com um escritor único, esta espera não cruza o pai.
     porta.release();
@@ -298,7 +312,8 @@ async function casoA() {
 // ---------------------------------------------------------------------------
 async function casoB() {
   escreverFila([item("S"), item("OUTRO")]);
-  const copiaDoPai = (await q.loadCurationQueue()).items.find((i) => i.sku === "S");
+  // Cópia (snapshot) do pai. Um clone: com IPC o fork corre no processo do pai e alteraria a própria cache.
+  const copiaDoPai = structuredClone((await q.loadCurationQueue()).items.find((i) => i.sku === "S"));
   assert.equal(copiaDoPai.status, "PENDING", "a cópia do pai tem de começar em PENDING");
 
   const filho = startChild({ op: "approveProduct", sku: "S" });
@@ -370,29 +385,16 @@ async function casoC() {
 // ---------------------------------------------------------------------------
 // D: o pai faz flush de overrides antigos enquanto um fork escreve um override novo
 // ---------------------------------------------------------------------------
-async function casoD({ nome, operacaoDoFilho, predicado, verificar }) {
+async function casoD({ nome, operacaoDoFilho, verificar }) {
   escreverFila([item("P", "PENDING", { overrides: { price: 10 }, overridesUpdatedAt: ANTIGO })]);
-  const copiaComOverridesAntigos = (await q.loadCurationQueue()).items.find((i) => i.sku === "P");
-  const porta = atrasarPrimeiraEscritaDaFila();
-  let filho;
-  try {
-    const pFlush = q.flushCurationQueueItems([copiaComOverridesAntigos]);
-    pFlush.catch(() => {});
-    if (!(await dentroDe(porta.entrou, 5000))) {
-      throw new HarnessError("o flush do pai não chegou à escrita da fila em 5 s");
-    }
-    filho = startChild(operacaoDoFilho);
-    const gravadoPeloFilho = await waitUntil(() => predicado(itemDoDisco("P")), 15000);
-    console.log(`      intercalação antes do release: override do fork gravado=${gravadoPeloFilho} (${nome})`);
-    porta.release();
-    await comPrazo(pFlush, 20000, "flush do pai");
-    await comPrazo(filho.done, 20000, "override no fork");
-    await comPrazo(filho.exited, 20000, "saída do fork");
-    verificar(itemDoDisco("P"));
-  } finally {
-    porta.release();
-    porta.restaurar();
-  }
+  // Cópia que o pai carregou antes do override novo (clone, pelo mesmo motivo que em B).
+  const copiaComOverridesAntigos = structuredClone((await q.loadCurationQueue()).items.find((i) => i.sku === "P"));
+  // Override novo escrito por outro processo (fork), confirmado antes de a cópia antiga ser gravada.
+  const filho = startChild(operacaoDoFilho);
+  await comPrazo(filho.done, 20000, `${nome} no fork`);
+  await comPrazo(filho.exited, 20000, "saída do fork");
+  await q.flushCurationQueueItems([copiaComOverridesAntigos]);
+  verificar(itemDoDisco("P"));
 }
 
 // ---------------------------------------------------------------------------
@@ -413,6 +415,25 @@ async function casoE(via) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// F: decisão humana depois da leitura do worker não é revertida (D2)
+// ---------------------------------------------------------------------------
+async function casoF() {
+  escreverFila([item("F1")]);
+  // Leitura do worker: anterior à decisão humana abaixo.
+  const lidoEm = Date.now();
+  await sleep(5);
+  // Decisão humana que desfaz para PENDING (estado não protegido): fica com statusChangedAt.
+  await q.restoreQueueSnapshots([{ sku: "F1", status: "PENDING", shopifyStatus: "DRAFT", metadata: { vendor: "TESTVENDOR" } }]);
+  assert.equal(itemDoDisco("F1").status, "PENDING", "pré-condição: a decisão humana tem de ter ficado gravada");
+  // O worker, com a leitura de antes da decisão, calculou APPROVED por regra automática e tem um título novo.
+  const calculado = { ...item("F1", "APPROVED", { smartRule: true, smartAction: "AUTO_APPROVE", approvedAt: AGORA }), title_en: "Título novo" };
+  await q.flushCurationQueueItems([calculado], { readAt: lidoEm });
+  const f1 = itemDoDisco("F1");
+  assert.equal(f1.status, "PENDING", "a decisão humana posterior à leitura do worker não pode ser revertida por AUTO_APPROVE");
+  assert.equal(f1.title_en, "Título novo", "os campos de catálogo do worker têm de chegar ao disco");
+}
+
 async function main() {
   await caso("A", "dois forks, 200 PENDING, 100 aprovações e 100 novos (3 rondas)", casoA);
   await caso("B", "flush do pai com cópia PENDING depois de um fork aprovar S", casoB);
@@ -425,7 +446,6 @@ async function main() {
       casoD({
         nome: "setManualOverride",
         operacaoDoFilho: { op: "setManualOverride", sku: "P", overrides: { price: 20 }, meta: { by: "filho", reason: "teste D" } },
-        predicado: (entrada) => entrada?.metadata?.overrides?.price === 20,
         verificar: (entrada) => assert.equal(entrada.metadata.overrides.price, 20, "o override de preço mais recente (20) foi reposto para 10 pelo flush antigo"),
       })
   );
@@ -436,10 +456,10 @@ async function main() {
       casoD({
         nome: "bulkSetMarginPct",
         operacaoDoFilho: { op: "bulkSetMarginPct", skus: ["P"], marginPct: 25 },
-        predicado: (entrada) => entrada?.metadata?.overrides?.marginPct === 25,
         verificar: (entrada) => assert.equal(entrada.metadata.overrides?.marginPct, 25, "a margem mais recente (25) desapareceu com o flush antigo"),
       })
   );
+  await caso("F", "decisão humana depois da leitura do worker não é revertida pelo flush (D2)", casoF);
   await caso("E-lote", "upsert em lote sobre SYNC_ERROR mantém o estado e o erro (fila em disco)", () => casoE("lote"));
   await caso("E-fila-externa", "upsert em lote sobre SYNC_ERROR mantém o estado (fila externa, sem gravar)", () => casoE("externa"));
 

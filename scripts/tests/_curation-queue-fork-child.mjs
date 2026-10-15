@@ -15,6 +15,9 @@ process.env.CURATION_DATA_DIR = payload.dataDir;
 process.env.DATABASE_URL = payload.databaseUrl;
 
 const q = await import(payload.queueModule);
+// Decisão 35 (D1): este filho não escreve a fila. Cada escrita segue ao pai por IPC, e o pai
+// atende-a com handleCurationWriteMessage (ver curation-queue-cross-process.test.js).
+q.usarEscritorDoPrincipal(process);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

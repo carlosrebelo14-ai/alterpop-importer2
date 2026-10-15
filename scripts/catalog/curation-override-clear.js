@@ -13,7 +13,8 @@
  *   node scripts/catalog/curation-override-clear.js --sku 0030506556343 --field title
  *   node scripts/catalog/curation-override-clear.js --sku 0030506556343 --field title --execute
  */
-import { loadCurationQueue, saveCurationQueue, invalidateCurationMemoryCache } from "../../lib/curation/curationQueue.server.js";
+import { loadCurationQueue, mutateCurationQueue, invalidateCurationMemoryCache } from "../../lib/curation/curationQueue.server.js";
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const args = process.argv.slice(2);
 const EXECUTE = args.includes("--execute");
@@ -22,6 +23,7 @@ const SKU = valOf("--sku");
 const FIELD = valOf("--field"); // "title" | "price" | "category" | "all"
 
 async function main() {
+  recusarSeAtividadeApp("curation-override-clear");
   if (!SKU || !FIELD) {
     console.error("uso: node scripts/catalog/curation-override-clear.js --sku <sku> --field <title|price|category|all> [--execute]");
     process.exit(1);
@@ -61,13 +63,17 @@ async function main() {
     return;
   }
 
-  item.metadata = {
-    ...item.metadata,
-    overrides: nextOverrides,
-    overridesUpdatedAt: new Date().toISOString(),
-  };
-
-  await saveCurationQueue(queue);
+  // Decisão 35 (D3/D7): a escrita passa pelo lock da fila, sobre a fila lida de novo.
+  await mutateCurationQueue((fila) => {
+    const alvo = fila.items.find((i) => i.sku === SKU);
+    if (!alvo) throw new Error(`SKU ${SKU} deixou de existir na fila. Nada foi gravado.`);
+    alvo.metadata = {
+      ...alvo.metadata,
+      overrides: nextOverrides,
+      overridesUpdatedAt: new Date().toISOString(),
+    };
+    return { gravar: true, valor: undefined };
+  });
   invalidateCurationMemoryCache();
   console.log(`\n✓ override "${FIELD}" removido de ${SKU}.`);
 }

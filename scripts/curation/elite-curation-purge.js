@@ -8,12 +8,14 @@
  */
 import "dotenv/config";
 import { purgeEliteCatalog, readElitePurgeLog } from "../../lib/importer/curation/eliteCuration.server.js";
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const shop = process.env.SHOP || "alterpop-store.myshopify.com";
 
 console.log(`[elite-purge] Loja: ${shop}`);
 console.log("[elite-purge] Regras: marcas premium + preço mínimo 15€ net");
 
+recusarSeAtividadeApp("elite-curation-purge");
 const result = await purgeEliteCatalog(shop);
 
 console.log(result.message);

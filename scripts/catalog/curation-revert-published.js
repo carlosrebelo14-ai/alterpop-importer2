@@ -22,6 +22,8 @@ import { loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { revertAllPublishedInQueue } from "../../lib/importer/shopify/shopifyReset.server.js";
 import { deactivateAllSyncErrors } from "../../lib/importer/sync/syncErrorLog.server.js";
 
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
+
 const args = process.argv.slice(2);
 const EXECUTE = args.includes("--execute");
 const TARGET =
@@ -34,6 +36,7 @@ const SHOP =
   "jyr17t-wr.myshopify.com";
 
 async function main() {
+  recusarSeAtividadeApp("curation-revert-published");
   const queue = await loadCurationQueue();
   const items = queue.items || [];
   const byStatus = {};

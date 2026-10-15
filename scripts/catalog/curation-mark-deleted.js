@@ -24,6 +24,8 @@ import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient
 import { fetchLiveVariantsBySku } from "../../lib/importer/shopify/liveVariantsBySku.server.js";
 import { planDeletedMigration } from "../../lib/curation/deletedMigration.js";
 
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
+
 const EXECUTE = process.argv.includes("--execute");
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
 const ERRORS_PATH = path.join(process.cwd(), "results", "errors.json");
@@ -46,6 +48,7 @@ function appendErrors(entries) {
 const errorEntry = (codigo, sku, mensagem) => ({ operacao: "curation-mark-deleted", codigo, mensagem, timestamp: new Date().toISOString(), contexto: { sku } });
 
 async function main() {
+  recusarSeAtividadeApp("curation-mark-deleted");
   console.log(`=== curation-mark-deleted (${SHOP})${EXECUTE ? " · EXECUTE" : " · DRY-RUN — nada é escrito"} ===\n`);
   if (EXECUTE) {
     const st = await readCatalogRebuildStatus(SHOP);

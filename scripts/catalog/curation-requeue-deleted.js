@@ -35,6 +35,8 @@ import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionF
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { fetchLiveVariantsBySku } from "../../lib/importer/shopify/liveVariantsBySku.server.js";
 
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
+
 const args = process.argv.slice(2);
 const EXECUTE = args.includes("--execute");
 const toArg = args.indexOf("--to") >= 0 ? String(args[args.indexOf("--to") + 1] || "").toUpperCase() : null;
@@ -75,6 +77,7 @@ async function indexingRunning() {
 }
 
 async function main() {
+  recusarSeAtividadeApp("curation-requeue-deleted");
   console.log(`=== curation-requeue-deleted (${SHOP})${EXECUTE ? "" : " · DRY-RUN"} ===\n`);
   if (toArg && toArg !== "PENDING") {
     console.error("PARADO: o único destino é PENDING — um produto apagado no admin só volta com aprovação nova do Carlos (--to approved já não existe).");

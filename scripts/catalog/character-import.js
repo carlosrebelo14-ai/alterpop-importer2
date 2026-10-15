@@ -65,6 +65,8 @@ import {
   formatScopeLine,
 } from "../../lib/importer/catalog/characterImportSelect.js";
 
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const KNOWN_FLAGS = new Set(["--input", "--cap-p1", "--cap-p2", "--both", "--only-universe", "--out", "--execute", "--from-csv", "--confirm-count", "--verify", "--preflight", "--shop"]);
@@ -494,6 +496,7 @@ async function runPreflight() {
 // ───────────────────────── main ─────────────────────────
 
 async function main() {
+  recusarSeAtividadeApp("character-import");
   checkArgs();
   if (PREFLIGHT) return runPreflight();
   if (EXECUTE) return runExecute();
