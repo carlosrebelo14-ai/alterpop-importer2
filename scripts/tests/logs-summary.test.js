@@ -80,6 +80,17 @@ check("JSON: último fim e duração; corrida ainda aberta é detetada", () => {
   assert.equal(r.INDEX_ULTIMA_DURACAO_S, "2400");
   assert.equal(r.INDEX_A_DECORRER, 1, "o arranque do script às 22:00 não tem fim nas linhas");
   assert.equal(r.INDEX_ULTIMO_INICIO_TS, T(22, 0));
+  assert.equal(r.INDEX_ULTIMO_FIM_TS, T(21, 40), "a hora do último fim sai do próprio fim");
+});
+
+check("último fim sem marca de tempo própria herda a última marca vista antes dele (DBG-40)", () => {
+  const texto = [
+    jsonLinha(T(23, 0), "[indexacao] inicio causa=ciclo modo=completa"),
+    JSON.stringify({ level: "info", message: "[indexacao] fim causa=ciclo estado=concluida duracao_s=51", instance: "abc" }),
+  ].join("\n");
+  const r = resumirLogs(texto);
+  assert.equal(r.INDEX_ULTIMA_ESTADO, "concluida");
+  assert.equal(r.INDEX_ULTIMO_FIM_TS, T(23, 0), "o resumo não pode mostrar '-' quando há marca anterior");
 });
 
 check("janela: primeira e última marca de tempo das linhas lidas", () => {

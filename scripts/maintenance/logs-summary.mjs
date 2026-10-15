@@ -71,20 +71,24 @@ export function resumirLogs(texto) {
   let ultimoInicio = null;
   let ultimoFim = null;
   let aDecorrer = false;
+  // Uma linha sem marca própria (DBG-40) herda a última marca vista antes dela, na ordem do ficheiro.
+  let tsAnterior = null;
 
   for (const e of entradas) {
+    const ts = e.ts ?? tsAnterior;
+    if (e.ts) tsAnterior = e.ts;
     const ini = e.linha.match(INICIO_RE);
     if (ini) {
       inicios += 1;
       porCausa[CAUSAS.includes(ini[1]) ? ini[1] : "desconhecida"] += 1;
-      ultimoInicio = { causa: ini[1], ts: e.ts };
+      ultimoInicio = { causa: ini[1], ts };
       aDecorrer = true;
       continue;
     }
     const fim = e.linha.match(FIM_RE);
     if (fim) {
       if (fim[2] in porEstado) porEstado[fim[2]] += 1;
-      ultimoFim = { causa: fim[1], estado: fim[2], duracao: fim[3], ts: e.ts };
+      ultimoFim = { causa: fim[1], estado: fim[2], duracao: fim[3], ts };
       aDecorrer = false;
     }
   }
