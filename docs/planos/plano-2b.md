@@ -445,31 +445,31 @@ O developer decide tudo o que não muda transições de estado, dados em produç
 | Decisão | Tipo | Quem decide | Estado |
 |---|---|---|---|
 | D1, D2, D6, D30 | estado / arquitetura | arquiteto | decidido |
-| D3 reset e purga na mesma fila | reset | arquiteto | pendente |
-| D4 bloquear UI de aprovação durante indexação | UI que muda estado | arquiteto | pendente |
+| D3 reset e purga na mesma fila | reset | arquiteto | decidido na Decisão 35 |
+| D4 bloquear UI de aprovação durante indexação | UI que muda estado | arquiteto | decidido na Decisão 35 |
 | D5 checkpoint só depois de confirmação | técnico | developer | sim |
-| D7 scripts fora da app que escrevem a fila | escrita da fila | arquiteto | pendente |
+| D7 scripts fora da app que escrevem a fila | escrita da fila | arquiteto | decidido na Decisão 35 |
 | D8 prioridade de DBG-04 | etiqueta | developer | P1 |
-| D9 reconciliador como ciclo automático | escrita de estado | arquiteto | pendente |
-| D10 aprovação limpa `deletedInAdmin` | estado | arquiteto | pendente |
-| D11 transições de SYNC_ERROR | estado | arquiteto | pendente |
-| D12 aprovação em massa de apagados | estado | arquiteto | pendente |
-| D13 PUBLISHED sem `shopifyProductId` | estado | arquiteto | pendente |
+| D9 reconciliador como ciclo automático | escrita de estado | arquiteto | decidido na Decisão 35 |
+| D10 aprovação limpa `deletedInAdmin` | estado | arquiteto | decidido na Decisão 35 |
+| D11 transições de SYNC_ERROR | estado | arquiteto | decidido na Decisão 35 |
+| D12 aprovação em massa de apagados | estado | arquiteto | decidido na Decisão 35 |
+| D13 PUBLISHED sem `shopifyProductId` | estado | arquiteto | decidido na Decisão 35 |
 | D14 limiar de 5 % | técnico | developer | 5 % (Decisão 34, ponto 8) |
-| D15 escrever a regra de 09/10 em `docs/decisoes.md` | regra | arquiteto | pendente |
+| D15 escrever a regra de 09/10 em `docs/decisoes.md` | regra | arquiteto | decidido na Decisão 35 |
 | D16 publicador com duplicado | severidade | developer | DBG-39, P0 suspeito |
 | D17 guarda da Decisão 28 na publicação agendada | técnico | developer | sim |
-| D18 a D24 e D26 a D29 | restauro | arquiteto | pendente |
-| D25 e D28 | restauro (leitura da flag e cópia sintética) | arquiteto | pendente |
+| D18 a D24 e D26 a D29 | restauro | arquiteto | decidido na Decisão 35 |
+| D25 e D28 | restauro (leitura da flag e cópia sintética) | arquiteto | decidido na Decisão 35 |
 | D31 Decisão 34: leituras passam em modo degradado | política | arquiteto | decidido: mantém |
 | D32 severidade de DBG-38 | severidade | developer | P2 |
-| D33 reinício depois do restauro | restauro | arquiteto | pendente |
+| D33 reinício depois do restauro | restauro | arquiteto | decidido na Decisão 35 |
 | D34 fila corrompida com flag recusa leitura | leitura | arquiteto | decidido pela condição (c) de DBG-25 |
-| D35 a D40 | reset | arquiteto | pendente |
+| D35 a D40 | reset | arquiteto | decidido na Decisão 35 |
 | D41 testes sem mudar código | técnico | developer | sim, no primeiro passo |
-| D42 guarda de reset no ciclo agendado | reset | arquiteto | pendente |
+| D42 guarda de reset no ciclo agendado | reset | arquiteto | decidido na Decisão 35 |
 | D43 Decisão 28 na publicação agendada | técnico | developer | sim |
-| D44 `revertAllPublishedInQueue` e SYNC_ERROR | estado | arquiteto | pendente |
+| D44 `revertAllPublishedInQueue` e SYNC_ERROR | estado | arquiteto | decidido na Decisão 35 |
 | D45 execuções de produção | produção | arquiteto | aplica-se a regra existente |
 | D46 IDs | nomeação | developer | DBG-37, DBG-38, DBG-39 |
 
@@ -484,3 +484,7 @@ O developer decide tudo o que não muda transições de estado, dados em produç
 | `claude/lote2-2b-3` | DBG-30, com o teste do laço do reset | D35 a D44 |
 
 Cada PR: testes antes das correções, mutação em cada teste, revisão adversarial, CI verde, merge com head SHA lido do GitHub, deploy depois do merge, e verificações pós-deploy (`db_flag_check`, `catalog_health`, `logs_recent`). O deploy de cada PR fica à espera da aprovação do Carlos.
+
+### Atualização de 15/10 (segunda resposta do arquiteto)
+
+As decisões que estavam pendentes na tabela acima foram fechadas e estão na Decisão 35 de `docs/decisoes.md`. Esta tabela fica como registo histórico do que foi perguntado.
