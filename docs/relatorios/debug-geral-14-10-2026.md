@@ -103,7 +103,7 @@ Lote 0 (DBG-01, DBG-02) fechado: em produção no SHA `d1a205b`. O Carlos confir
 
 Lote 1 (DBG-03, DBG-11, DBG-22) em produção no SHA `58a99fe`. Portão de catálogo verde na repetição. Ver secção 10.
 
-Lote 2: PR 2a em produção (DBG-06, DBG-09 e DBG-15 parcial, secção 11). PR 2b em três PRs: 2b-1 DBG-04; 2b-2 DBG-21, DBG-23, DBG-25 e DBG-26; 2b-3 DBG-30. DBG-37 (WAL) em PR próprio, antes do 2b. DBG-05, DBG-16, painel e scripts em PR 2c. Depois do lote 2, o portão passa a verificar os defeitos de forma automática, pelo método B18.
+Lote 2: PR 2a em produção (DBG-06, DBG-09 e DBG-15 parcial, secção 11). DBG-37 em produção no SHA `a9930c9` (secção 11). PR 2b em três PRs: 2b-1 DBG-04 (com DBG-40); 2b-2 DBG-21, DBG-23, DBG-25 e DBG-26; 2b-3 DBG-30. DBG-05, DBG-16, painel e scripts em PR 2c. Depois do lote 2, o portão passa a verificar os defeitos de forma automática, pelo método B18.
 
 Regra de processo até o PR 2b-3: ninguém corre o reset da Shopify em produção enquanto o laço de apagamento não tiver teste (DBG-30). Não é guarda técnica.
 
@@ -126,6 +126,7 @@ Origem: revisão adversarial do Lote 1 (dois ciclos, commits `98105b7` e `fc04a0
 | DBG-37 | P2 | Lote 2 | Mapa do 2b (15/10/2026) | `scripts/ci/maintenance.sh`, tarefa `restore_dry_run`: a cópia do WAL corre com `|| true`. Se falhar, o `integrity_check` diz ok sobre o ficheiro principal, sem as transações pendentes. É um falso ok antes de um restauro real. Não escreve nada na Fly. | Falha de cópia do WAL faz a tarefa falhar com mensagem explícita. WAL ausente aparece separado de falha de cópia. Teste com `flyctl` falso para os dois casos, em PR próprio, antes do 2b. |
 | DBG-38 | P2 | Lote 2 | Mapa do 2b (15/10/2026), causa de DBG-25 | Escrita da fila recusada em modo degradado deixa a alteração na cópia em memória, e a cópia continua a ser lida depois de a flag sair. | Invalidar a cache depois de qualquer escrita falhada (PR 2b-2, junto com DBG-25). Teste de `curation-queue-guards.test.js`, casos (a) a (c). |
 | DBG-39 | P0 (suspeito) | Lote 2 | Mapa do 2b (15/10/2026), publicador | `shopifyProductPublisher.server.js:322-354` e `resolveSku.js:69-74`: uma leitura falhada durante a publicação de um SKU já existente pode criar produto novo na Shopify, em duplicado. `ProductImporter.js:532-536` tem o mesmo risco. | Verificar na loja se já há duplicados (leitura, sem escrita). Corrigir em DBG-21 parte A. A severidade fica suspensa até a verificação. |
+| DBG-40 | P3 | Lote 2 (PR 2b-1) | Verificação pós-deploy do DBG-37, 15/10 | No resumo do `logs_recent`, o último fim de indexação mostra "às -". O fim traz causa, estado e duração, mas a hora não chega ao resumo. Observado na execução `38749758496`, com uma indexação de `ciclo` de 51 s. | A hora do último fim aparece no resumo. Teste em `scripts/tests/logs-summary.test.js` que falha hoje. |
 
 Dívida (sem data de lote):
 
@@ -135,6 +136,8 @@ Dívida (sem data de lote):
 | DBG-34 | P3 | Dívida | Revisão dos commits novos, achado 4 | `recentErrors` do reset guarda só 50 falhas. `failed` tem o total, mas a lista perde as restantes sem aviso. | Guardar todas, ou devolver o total com a lista truncada e um aviso. |
 | DBG-35 | P3 | Dívida | Revisão do Lote 1 (`markDbDegraded`) | Se gravar a flag falhar depois do backup, cada leitura seguinte grava outro backup. | Falha ao gravar a flag lança com a causa, sem novo backup a cada leitura. |
 | DBG-36 | P3 | Dívida | Revisão do Lote 1 (testes) | O caso de upsert não reproduz o título que voltava a APPROVED por regra AUTO_APPROVE. O assert cobre só PUBLISHED. | Caso com regra AUTO_APPROVE real, com `rules.json` no fixture. |
+| DBG-41 | P2 | Dívida | Verificação pós-deploy do DBG-37, 15/10 | `npm ci` reporta 75 vulnerabilidades (1 baixa, 9 moderadas, 63 altas, 2 críticas). Não há triagem com `npm audit --omit=dev`, por isso não se sabe o que chega à produção. | Triagem com `npm audit --omit=dev` antes do Lote 3. Separar o que é de produção do que é de desenvolvimento. |
+| DBG-42 | P3 | Dívida | Verificação pós-deploy do DBG-37, 15/10 | As actions `actions/checkout@v4` e `actions/setup-node@v4` correm em Node 20 forçado para Node 24, segundo o aviso dos runners. | Atualizar para versões que correm em Node 24 nativo, com a CI verde. |
 
 ## 10. Verificação pós-deploy do Lote 1 (SHA `58a99fe`)
 
@@ -167,7 +170,21 @@ Verificação pós-deploy:
 | `catalog_health` | [38716080255](https://github.com/carlosrebelo14-ai/alterpop-importer2/actions/runs/38716080255) | 16 verdes, 0 vermelhas, 0 avisos. |
 | `logs_recent` | [38716387091](https://github.com/carlosrebelo14-ai/alterpop-importer2/actions/runs/38716387091) | 3100 linhas, de 09:22:13Z a 09:54:24Z. 0 `DbDegradedError`, 0 recusas, 0 `database is locked`, 0 reinícios do worker, 0 indexações. |
 
-A janela de 3100 linhas cobre o deploy, mas nenhuma indexação correu depois dele. Os marcadores `[indexacao]` ainda não foram observados em produção.
+A janela de 3100 linhas cobre o deploy. Na execução de 14/10 a 15/10, uma indexação concluída (causa `ciclo`, 51 s) foi observada. O marcador de início não está na janela. O resumo ainda mostra "às -" (DBG-40). Os marcadores `[indexacao]` estão parcialmente observados em produção.
+
+### DBG-37 em produção (SHA `a9930c9`)
+
+As quatro execuções correram no `main` em `224c758`. Esse commit só acrescenta documentação a `a9930c9`, por isso o código verificado é o mesmo.
+
+| Verificação | Execução | Resultado |
+|---|---|---|
+| Deploy `a9930c9` | [38739332525](https://github.com/carlosrebelo14-ai/alterpop-importer2/actions/runs/38739332525) | `success`, concluído às 14:08:45Z. Aprovado pelo Carlos. |
+| `db_flag_check` | [38749459063](https://github.com/carlosrebelo14-ai/alterpop-importer2/actions/runs/38749459063) | Flag `DB_DEGRADED` ausente. |
+| `catalog_health` | [38749608714](https://github.com/carlosrebelo14-ai/alterpop-importer2/actions/runs/38749608714) | 16 verdes, 0 vermelhas, 0 avisos. |
+| `logs_recent` | [38749758496](https://github.com/carlosrebelo14-ai/alterpop-importer2/actions/runs/38749758496) | 3100 linhas, de 13:48:14Z a 14:15:19Z. 0 `DbDegradedError`, 0 recusas, 0 `database is locked`, 0 reinícios do worker. Uma indexação concluída: causa `ciclo`, 51 s. |
+| `restore_dry_run` | [38749860706](https://github.com/carlosrebelo14-ai/alterpop-importer2/actions/runs/38749860706) | `integrity_check` da cópia ok. WAL copiado. |
+
+DBG-37 fica fechado em produção no SHA `a9930c9`.
 
 
 ---
