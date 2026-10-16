@@ -21,7 +21,7 @@ if (process.argv.slice(2).includes("--execute")) {
 
 // Imports dinâmicos de propósito: o .env e o Prisma só carregam depois da recusa acima.
 await import("dotenv/config");
-const { purgeEliteCatalog } = await import("../../lib/importer/curation/eliteCuration.server.js");
+const { purgeEliteCatalog, leiturasDoCatalogoSemEfeitos, lerFilaSemEfeitos } = await import("../../lib/importer/curation/eliteCuration.server.js");
 const { recusarSeAtividadeApp } = await import("../../lib/curation/atividadeApp.js");
 
 const shop = process.env.SHOP || process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
@@ -30,7 +30,10 @@ console.log(`[elite-purge] Loja: ${shop}`);
 console.log("[elite-purge] Dry-run: nada é escrito.");
 
 recusarSeAtividadeApp("elite-curation-purge");
-const resultado = await purgeEliteCatalog(shop, { executar: false });
+const resultado = await purgeEliteCatalog(shop, {
+  executar: false,
+  dependencias: { ...leiturasDoCatalogoSemEfeitos(), lerFila: lerFilaSemEfeitos },
+});
 
 console.log(resultado.message);
 if (Object.keys(resultado.byReason || {}).length) {

@@ -67,7 +67,7 @@ function entrada(sku, status, metadata = {}) {
  * sob o lock, como uma decisão humana que chega entre a leitura e a escrita. `falharFila` faz a
  * escrita da fila falhar.
  */
-function falsas({ linhas = [], fila = [], falharFila = false, concorrente = null, apagarNada = false } = {}) {
+function falsas({ linhas = [], fila = [], falharFila = false, concorrente = null } = {}) {
   const registo = [];
   let filaAtual = { version: 1, items: JSON.parse(JSON.stringify(fila)) };
   let catalogo = linhas.slice();
@@ -83,7 +83,7 @@ function falsas({ linhas = [], fila = [], falharFila = false, concorrente = null
     },
     async apagarLote({ skus }) {
       registo.push(["apagar", skus.slice()]);
-      if (!apagarNada) catalogo = catalogo.filter((l) => !skus.includes(l.sku));
+      catalogo = catalogo.filter((l) => !skus.includes(l.sku));
     },
     async lerFila() {
       return JSON.parse(JSON.stringify(filaAtual));
@@ -303,7 +303,7 @@ function casoRotaBloqueiaExecucao() {
   const bloqueio = codigo.indexOf("status: 409");
   assert.ok(bloqueio > 0, "a rota tem de responder 409");
   assert.match(codigo, /\[elite-purge\]/, "o 409 tem a marca [elite-purge]");
-  const chamada = codigo.indexOf("purgeEliteCatalog(session.shop, { executar: false })");
+  const chamada = codigo.search(/purgeEliteCatalog\(session\.shop,\s*\{\s*executar:\s*false\b/);
   assert.ok(chamada > bloqueio, "a purga só corre em dry-run, depois do bloqueio");
   assert.doesNotMatch(codigo, /purgeEliteCatalog\([^)]*executar:\s*true/, "a rota nunca passa executar: true à purga");
 }
@@ -337,7 +337,7 @@ function casoCliSemEscrita() {
   for (const termo of ["apagarLote", "mutarFila", "mutateCurationQueue", "deleteMany", "escreverLog", "writeFile"]) {
     assert.doesNotMatch(codigo, new RegExp(termo), `a CLI não pode chamar ${termo}`);
   }
-  assert.match(codigo, /purgeEliteCatalog\(shop, \{ executar: false \}\)/, "a CLI corre em dry-run");
+  assert.match(codigo, /purgeEliteCatalog\(shop, \{\s*executar: false/, "a CLI corre em dry-run");
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +347,14 @@ function casoExportacoes() {
   for (const nome of ["purgeEliteCatalog", "avaliarPurgaDeEntrada", "aplicarPurgaNaFila", "readElitePurgeLog"]) {
     assert.equal(typeof E[nome], "function", `${nome} tem de estar exportada`);
   }
+}
+
+// DBG-124: a origem reset tem precedência sobre a marca de decisão humana. Um reset com statusChangedAt é reset.
+function casoResetComMarcaEhReset() {
+  const item = { ...entrada("x", "PENDING", { origem: "reset" }), statusChangedAt: "2026-10-01T00:00:00.000Z" };
+  const { pode, motivo } = E.avaliarPurgaDeEntrada(item);
+  assert.equal(pode, false);
+  assert.equal(motivo, "reset", "o motivo tem de ser reset, não decisão humana");
 }
 
 async function main() {
@@ -365,6 +373,7 @@ async function main() {
   await caso("T12 CLI com --execute: código 1, nada lido nem criado", casoCliExecutarRecusado);
   await caso("T13 CLI sem escrita, e dry-run por omissão", casoCliSemEscrita);
   await caso("T14 funções da purga exportadas", casoExportacoes);
+  await caso("T16 DBG-124: reset com statusChangedAt é motivo reset", casoResetComMarcaEhReset);
 
   console.log("\nRESUMO");
   for (const r of resultados) console.log(`  ${r.resultado.padEnd(6)} ${r.nome}`);

@@ -26,7 +26,7 @@ const YML = path.join(ROOT, ".github/workflows/maintenance.yml");
 const TAREFA = path.join(ROOT, "scripts/maintenance/elite-purge-dry-run.mjs");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "epd-"));
 
-const { formatarResumoEpd, executar } = await import(pathToFileURL(TAREFA).href);
+const { formatarResumoEpd, executar, caminhoDaBd } = await import(pathToFileURL(TAREFA).href);
 const E = await import(pathToFileURL(path.join(ROOT, "lib/importer/curation/eliteCuration.server.js")).href);
 
 let failures = 0;
@@ -287,6 +287,12 @@ await check("o job de escrita (production) só aceita as quatro tarefas de escri
   assert.ok(linhaExecute, "condição do job execute em falta");
   assert.doesNotMatch(linhaExecute, /elite_purge_dry_run/);
   assert.match(linhaExecute, /\["volume_snapshot","tags_cleanup","character_pages_sync","db_push"\]/);
+});
+
+console.log("(e) guarda da BD");
+await check("caminhoDaBd: absoluto fica igual; relativo resolve-se a partir de prisma/, como o Prisma", () => {
+  assert.equal(caminhoDaBd({ DATABASE_URL: "file:/app/data/dev.sqlite" }), "/app/data/dev.sqlite");
+  assert.equal(caminhoDaBd({ DATABASE_URL: "file:./dev.sqlite" }), path.join(ROOT, "prisma", "dev.sqlite"));
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });

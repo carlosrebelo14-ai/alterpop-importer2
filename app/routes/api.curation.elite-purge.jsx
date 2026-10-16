@@ -1,5 +1,5 @@
 import { authenticateAdmin } from "../utils/authenticate.server";
-import { purgeEliteCatalog } from "../../lib/importer/curation/eliteCuration.server.js";
+import { purgeEliteCatalog, lerFilaSemEfeitos } from "../../lib/importer/curation/eliteCuration.server.js";
 
 /**
  * POST /api/curation/elite-purge
@@ -32,9 +32,13 @@ export const action = async ({ request }) => {
   }
 
   try {
-    const resumo = await purgeEliteCatalog(session.shop, { executar: false });
+    const resumo = await purgeEliteCatalog(session.shop, { executar: false, dependencias: { lerFila: lerFilaSemEfeitos } });
     return Response.json({ ok: true, ...resumo });
   } catch (err) {
+    // Modo degradado (Decisão 34): 503 com a causa, como approve e reject (DBG-115).
+    if (err?.code === "DB_DEGRADED") {
+      return Response.json({ ok: false, error: err.message, dbDegraded: err.state ?? null }, { status: 503 });
+    }
     return Response.json({ ok: false, error: err?.message || String(err) }, { status: 500 });
   }
 };

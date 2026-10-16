@@ -167,6 +167,28 @@ await check("P3 BD em falta: erro bd_em_falta antes de ligar, e nenhum ficheiro 
   assert.equal(fs.existsSync(path.join(dir, "DB_DEGRADED")), false);
 });
 
+await check("P4 leituras por omissão (a rota) numa BD corrompida marcam DB_DEGRADED e lançam DB_DEGRADED", () => {
+  const dir = fs.mkdtempSync(path.join(tmp, "rota-"));
+  escreverFila(dir);
+  fs.writeFileSync(path.join(dir, "dev.sqlite"), crypto.randomBytes(8192));
+  const modulo = pathToFileURL(path.join(RAIZ, "lib", "importer", "curation", "eliteCuration.server.js")).href;
+  const script = `const { purgeEliteCatalog } = await import(${JSON.stringify(modulo)}); try { await purgeEliteCatalog("prova.test", { executar: false, dependencias: { lerFila: async () => ({ version: 1, items: [] }) } }); console.log("sem erro"); } catch (e) { console.log("codigo=" + e.code); }`;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: RAIZ, encoding: "utf8", timeout: 120_000, env: ambiente(dir) });
+  assert.match(r.stdout, /codigo=DB_DEGRADED/, `saída: ${r.stdout}\n${r.stderr}`);
+  assert.equal(fs.existsSync(path.join(dir, "DB_DEGRADED")), true, "a leitura por omissão marca a flag numa corrupção (Decisão 34)");
+});
+
+await check("P5 a fila lida sem efeitos (a rota de dry-run) numa fila corrompida não grava backup nem flag (DBG-125)", () => {
+  const dir = fs.mkdtempSync(path.join(tmp, "fila-"));
+  fs.writeFileSync(path.join(dir, "curation-queue.json"), "{ partido");
+  const modulo = pathToFileURL(path.join(RAIZ, "lib", "importer", "curation", "eliteCuration.server.js")).href;
+  const script = `const { lerFilaSemEfeitos } = await import(${JSON.stringify(modulo)}); try { await lerFilaSemEfeitos(); console.log("sem erro"); } catch (e) { console.log("codigo=" + (e.code || e.name)); }`;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: RAIZ, encoding: "utf8", timeout: 120_000, env: ambiente(dir) });
+  assert.match(r.stdout, /codigo=SyntaxError/, `saída: ${r.stdout}\n${r.stderr}`);
+  const extras = fs.readdirSync(dir).filter((n) => n.includes("corrupt") || n === "DB_DEGRADED");
+  assert.deepEqual(extras, [], "a leitura sem efeitos não cria backup nem flag");
+});
+
 fs.rmSync(tmp, { recursive: true, force: true });
 if (falhas) {
   console.error(`\nelite-purge-dry-run-prova: ${falhas} verificação(ões) falharam`);

@@ -289,11 +289,29 @@ function casoRotasTraduzemTimeoutPara503() {
 // DBG-110: o timeout depois do override não pode dizer que nada foi escrito. A linha diz o que ficou gravado.
 function casoImportEditsDizOverrideGravado() {
   const codigo = semComentarios(fs.readFileSync(path.join(REPO, "app/routes/api.products.import-edits.jsx"), "utf8"));
-  const override = codigo.indexOf("setManualOverride(sku, overrides");
-  const gravou = codigo.indexOf("gravou = true;");
-  assert.ok(override > 0 && gravou > override, "gravou só se marca depois do override");
+  // DBG-126: gravou = true vem logo depois do await do override, e não num finally nem noutro sítio.
+  assert.match(codigo, /setManualOverride\(sku, overrides[^\n]*\)\);\s*\n\s*gravou = true;/, "gravou = true vem logo depois do await do override");
   assert.match(codigo, /filaOcupada && gravou/, "o motivo do timeout distingue o override já gravado");
   assert.ok(codigo.includes("o override foi gravado, a aprovação ou a rejeição não"), "a mensagem diz o que ficou gravado");
+}
+
+// DBG-115: a rota da purga responde 503 em modo degradado, como approve e reject.
+function casoElitePurgeRotaMapeiaDbDegraded() {
+  const codigo = semComentarios(fs.readFileSync(path.join(REPO, "app/routes/api.curation.elite-purge.jsx"), "utf8"));
+  const ramo = codigo.indexOf('err?.code === "DB_DEGRADED"');
+  assert.ok(ramo > 0, "a rota tem de tratar DB_DEGRADED");
+  const resposta = codigo.slice(ramo, codigo.indexOf(");", ramo));
+  assert.match(resposta, /status:\s*503/, "o ramo DB_DEGRADED responde 503");
+}
+
+// DBG-125: a rota de dry-run lê a fila sem efeitos. A leitura por omissão grava backup e a flag numa fila corrompida.
+function casoElitePurgeRotaLeFilaSemEfeitos() {
+  const codigo = semComentarios(fs.readFileSync(path.join(REPO, "app/routes/api.curation.elite-purge.jsx"), "utf8"));
+  assert.match(
+    codigo,
+    /purgeEliteCatalog\(session\.shop,\s*\{\s*executar:\s*false,\s*dependencias:\s*\{\s*lerFila:\s*lerFilaSemEfeitos\s*\}\s*\}\)/,
+    "a rota de dry-run passa lerFilaSemEfeitos"
+  );
 }
 
 async function main() {
@@ -309,6 +327,8 @@ async function main() {
   await caso("R1 recuperação com timeout de lock não grava DB_DEGRADED e não reescreve a fila", casoRecuperacaoNaoDegradaComTimeout);
   await caso("R2 bulk e undo traduzem o timeout para 503 fila ocupada", casoRotasTraduzemTimeoutPara503);
   await caso("S2 import-edits: timeout depois do override diz que o override foi gravado (DBG-110)", casoImportEditsDizOverrideGravado);
+  await caso("S3 rota da purga: DB_DEGRADED responde 503 (DBG-115)", casoElitePurgeRotaMapeiaDbDegraded);
+  await caso("S4 rota da purga: dry-run lê a fila sem efeitos (DBG-125)", casoElitePurgeRotaLeFilaSemEfeitos);
 
   console.log("\nRESUMO");
   for (const r of resultados) console.log(`  ${r.resultado.padEnd(6)} ${r.nome}`);
