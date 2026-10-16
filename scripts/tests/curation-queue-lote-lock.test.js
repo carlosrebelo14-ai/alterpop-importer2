@@ -19,6 +19,7 @@ import "./_isolate-curation.js";
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -181,10 +182,112 @@ function casoScriptsTemLoteComLock() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// L4 (DBG-46A): importação em fluxo, uma escrita da fila por lote (não por registo)
+// ---------------------------------------------------------------------------
+async function casoImportacaoUmaEscritaPorLote() {
+  const N = 120;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lote-escrita-csv-"));
+  const csv = path.join(dir, "feed.csv");
+  const cabecalho = "referencia;nombre;categoria_principal;marca;precio_neto;precio_bruto;precio_distribuidores;stock_disponible;hay_stock;peso;id_producto;url_imagen_principal;url_imagen_principal_grande;disponibilidad;tipo_promocion;descripcion;ean;peso_kg";
+  fs.writeFileSync(csv, [cabecalho, ...Array.from({ length: N }, (_, i) => linhaCsv(i + 1))].join("\n"), "utf8");
+  const anterior = process.env.OCIOSTOCK_CSV_PATH;
+  process.env.OCIOSTOCK_CSV_PATH = csv;
+  escreverFila([]);
+  const job = {
+    resultsDir: path.join(dir, "results"),
+    metrics: {},
+    recordSkipped() {},
+    recordValidationSkipped() {},
+    recordBatchComplete() {},
+    recordError() {},
+  };
+  const renomear = fsp.rename;
+  let escritasDaFila = 0;
+  fsp.rename = async (origem, destino) => {
+    if (path.resolve(String(destino)) === path.resolve(QUEUE_PATH)) escritasDaFila += 1;
+    return renomear(origem, destino);
+  };
+  try {
+    await runStreamImport({
+      job,
+      syncProducts: false,
+      syncInventory: false,
+      settings: { translateToEnglish: false, autoGlossaryTranslation: false, titleApiFallback: false },
+      validationOpts: { syncPrices: false },
+    });
+    const { LOTE_DA_FILA } = await import(pathToFileURL(path.join(HERE, "..", "..", "lib", "importer", "core", "streamImport.js")).href);
+    const loteMaximo = Math.ceil(N / LOTE_DA_FILA);
+    assert.ok(escritasDaFila >= 1, "a importação tem de escrever na fila");
+    assert.ok(escritasDaFila <= loteMaximo, `escritas da fila: ${escritasDaFila} para ${N} registos (máximo ${loteMaximo}, uma por lote)`);
+    const doDisco = JSON.parse(fs.readFileSync(QUEUE_PATH, "utf8")).items;
+    assert.equal(doDisco.length, N, `registos na fila: ${doDisco.length} de ${N}`);
+  } finally {
+    fsp.rename = renomear;
+    if (anterior === undefined) delete process.env.OCIOSTOCK_CSV_PATH;
+    else process.env.OCIOSTOCK_CSV_PATH = anterior;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// L5 (DBG-46A): o lote dá o mesmo estado da fila que o registo a registo
+// ---------------------------------------------------------------------------
+function registoDeTeste(sku) {
+  return {
+    sku,
+    title: `Produto ${sku}`,
+    category: "Juguetes",
+    categoryMain: "Juguetes",
+    brand: "TESTMARCA",
+    price: 10,
+    priceNet: 10,
+    _source: { title: `Producto ${sku}` },
+  };
+}
+
+function itemDeDecisaoHumana(sku, status) {
+  return { ...item(sku, status), statusChangedAt: AGORA, metadata: { ...item(sku, status).metadata, origem: "humano", approvedAt: AGORA } };
+}
+
+/** Troca as datas (que mudam a cada execução) por um marcador, para comparar só o conteúdo. */
+function semDatas(valor) {
+  return JSON.parse(JSON.stringify(valor, (_, v) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v) ? "<data>" : v)));
+}
+
+async function estadoDaFilaAposRegistos(inicial, registos, via) {
+  escreverFila(JSON.parse(JSON.stringify(inicial)));
+  const copias = JSON.parse(JSON.stringify(registos));
+  if (via === "um a um") {
+    for (const registo of copias) await q.upsertCurationQueueFromRecord(registo);
+  } else {
+    await q.upsertCurationQueueBatchFromRecords(copias);
+  }
+  const doDisco = JSON.parse(fs.readFileSync(QUEUE_PATH, "utf8")).items;
+  return semDatas(doDisco.sort((a, b) => a.sku.localeCompare(b.sku)));
+}
+
+async function casoLoteIgualAoRegistoARegisto() {
+  const inicial = [
+    item("L5-PEN"),
+    itemDeDecisaoHumana("L5-APR", "APPROVED"),
+    item("L5-SYN", "SYNC_ERROR"),
+    item("L5-PUB", "PUBLISHED"),
+    item("L5-REJ", "REJECTED"),
+  ];
+  const registos = ["L5-NOVO-1", "L5-NOVO-2", "L5-PEN", "L5-APR", "L5-SYN", "L5-PUB", "L5-REJ"].map(registoDeTeste);
+  const umAUm = await estadoDaFilaAposRegistos(inicial, registos, "um a um");
+  const lote = await estadoDaFilaAposRegistos(inicial, registos, "lote");
+  assert.equal(lote.length, umAUm.length, "o lote tem de deixar o mesmo número de itens");
+  assert.deepEqual(lote, umAUm, "o lote tem de deixar o mesmo estado que o registo a registo");
+}
+
 async function main() {
   await caso("L1  comLockDaFila com N aprovações: uma aquisição do lock", casoLoteDeAprovacoesUmaAquisicao);
   await caso("L2  importação em fluxo: no máximo uma aquisição por lote de escrita", casoImportacaoUmLockPorLote);
   await caso("L3  scripts de escrita em loop: o loop está dentro de comLockDaFila", casoScriptsTemLoteComLock);
+  await caso("L4  importação em fluxo: no máximo uma escrita da fila por lote", casoImportacaoUmaEscritaPorLote);
+  await caso("L5  lote e registo a registo deixam o mesmo estado da fila", casoLoteIgualAoRegistoARegisto);
 
   console.log("\nRESUMO");
   for (const r of resultados) console.log(`  ${r.resultado.padEnd(6)} ${r.nome}`);
