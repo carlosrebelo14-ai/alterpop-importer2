@@ -239,6 +239,15 @@ Registada aqui para ficar no relatório. A causa, a linha, a correção, o teste
 | DBG-49 | 2b-2 | Item apagado no admin sem origem própria. Vai junto com DBG-57. |
 | DBG-50 | corrigido | Sync de catálogo punha ACTIVE por regra sem aprovação na fila. Corrigido em [#112](https://github.com/carlosrebelo14-ai/alterpop-importer2/pull/112), `727f44a`. |
 
+### Achados do delta `220e6fc..3b6b6bf` (lente de concorrência, 16/10)
+
+| ID | Sev | Origem | Local | Achado |
+|---|---|---|---|---|
+| DBG-74 | Média | pré-existente | `streamImport.js:155-171`, `:82-85`; `lib/importer/config.js:27` | O processamento do stream é serial. `trackTask` devolve a promessa quando `inFlight.size < maxInFlight`, e o ciclo faz `await` a cada registo. `pLimit` nunca passa de 1, e `STREAM_CONCURRENCY` e `SHOPIFY_GRAPHQL_CONCURRENCY` não têm efeito. Não afeta a correção, porque o lock não é mantido durante o processamento. |
+| DBG-75 | Média | pré-existente | `ProductImporter.js:523`; `streamImport.js:150-152`; `curationQueue.server.js` (`upsertCurationQueueFromRecord`) | Cada registo é escrito duas vezes na fila: uma no lote, dentro de `comLockDaFila`, e outra em `processRecord`, com novo lock. Com lote de 10, são 11 aquisições de lock e 20 reescritas completas do ficheiro por lote, em vez de 1 e 10. É leitura de código, não medição. Liga-se a DBG-46. |
+| DBG-76 | Baixa | delta | `streamImport.js:149-154` | O log `[fila] lote de N itens em X ms` mede desde antes de `comLockDaFila`. Soma a espera na fila em processo e a espera pelo lock de ficheiro, por isso X não é só o tempo de escrita. |
+| DBG-77 | Baixa | delta | `scripts/tests/curation-atividade-app.test.js:180` e `:202-214` | O comentário diz "recusam … e sem gravar", mas o caso só verifica o código 1 e a palavra "Recusado". Não compara a fila em disco antes e depois. |
+
 **Dívida baixa do diff** (lista para a descrição do PR #111): DBG-53, DBG-54, DBG-55, DBG-60, DBG-61, DBG-64, DBG-65, DBG-66, DBG-67 e DBG-68. O DBG-69 sai desta lista, corrigido no 2b-1.
 
 **Numeração.** DBG-56 é usado: o blame mostrou que a espera em processo sem prazo é anterior ao diff. Os DBG-57 e DBG-49 vão para o 2b-2 juntos, porque ambos tratam de itens apagados no admin.
