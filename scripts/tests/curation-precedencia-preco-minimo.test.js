@@ -93,6 +93,8 @@ async function main() {
     await q.upsertCurationQueueFromRecord(registo("P1", "LEGO", 2));
     const item = await q.getCurationQueueEntry("P1");
     assert.equal(item.status, "PENDING", "a regra não pode aprovar abaixo do mínimo, nem rejeitar");
+    assert.equal(item.shopifyStatus, "DRAFT", "um PENDING nunca fica ACTIVE");
+    assert.equal(item.reason, "pending", "reason pending, não approved");
     assert.equal(item.metadata.origem, undefined, "sem origem regra");
     assert.equal(item.metadata.smartRule, undefined, "a regra não pode ter decidido o item");
     assert.equal(item.metadata.approvedAt, null, "sem approvedAt");
@@ -106,6 +108,8 @@ async function main() {
     await q.upsertCurationQueueBatchFromRecords([registo("P1b", "LEGO", 2)], { queue: fila });
     const item = itemDe(fila, "P1b");
     assert.equal(item.status, "PENDING");
+    assert.equal(item.shopifyStatus, "DRAFT", "um PENDING nunca fica ACTIVE");
+    assert.equal(item.reason, "pending", "reason pending, não approved");
     assert.equal(item.metadata.origem, undefined, "sem origem regra");
     assert.equal(item.metadata.smartRule, undefined);
     assert.equal(item.metadata.approvedAt, null, "sem approvedAt");
@@ -148,6 +152,8 @@ async function main() {
     await q.upsertCurationQueueFromRecord(registo("P4", "LEGO", 2));
     const item = await q.getCurationQueueEntry("P4");
     assert.equal(item.status, "PENDING");
+    assert.equal(item.shopifyStatus, "DRAFT", "um PENDING nunca fica ACTIVE");
+    assert.equal(item.reason, "pending", "reason pending, não approved");
     assert.equal(item.metadata.origem, undefined, "sem origem elite");
     assert.equal(item.metadata.eliteAction, undefined, "sem eliteAction AUTO_REJECT");
     escreverFila([]);
@@ -155,6 +161,8 @@ async function main() {
     await q.upsertCurationQueueBatchFromRecords([registo("P4b", "LEGO", 2)], { queue: fila });
     const itemLote = itemDe(fila, "P4b");
     assert.equal(itemLote.status, "PENDING");
+    assert.equal(itemLote.shopifyStatus, "DRAFT", "um PENDING nunca fica ACTIVE");
+    assert.equal(itemLote.reason, "pending", "reason pending, não approved");
     assert.equal(itemLote.metadata.origem, undefined, "sem origem elite");
     assert.equal(itemLote.metadata.eliteAction, undefined, "sem eliteAction AUTO_REJECT");
   });
