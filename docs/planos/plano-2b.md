@@ -673,3 +673,24 @@ Cada item tem o seu commit, e cada commit passa as quatro suítes do gate. Não 
 - DBG-43, se a purga escrever por lote, usa a parte A de DBG-46.
 - Gate de cada commit: `test:franchise`, `test:sync-safety`, `test:health-gate` e `test:deploy`. Mutações do item antes do commit, controlos K e L1, uma lente de concorrência e lock sobre o delta, CI verde, merge com merge commit, deploy com aprovação do Carlos.
 - DBG-47 (Decisão 28 nas rotas) fica para o 2c. DBG-72 (D2 no reset) fica para o 2b-3.
+
+### Decisões do arquiteto (16/10, respostas à secção 12)
+
+As perguntas acima ficam respondidas por esta secção. Estas decisões são as que o código do 2b-2 segue.
+
+1. **DBG-43, purga de elite.**
+   - A purga corre como rota da app, no processo principal, e responde 409 se houver marcador de atividade. A CLI deixa de escrever a fila: chama a rota ou recusa.
+   - Só altera itens PENDING, ou de origem regra ou elite.
+   - Não toca em APPROVED ou REJECTED de origem humano, nem em PUBLISHED ou SYNC_ERROR. Esses itens contam no resumo como "retidos por decisão humana" ou "retidos por estado".
+   - Dry-run por omissão. O execute precisa do ok do arquiteto, como sempre.
+   - Continua proibida em produção até o PR estar em produção e o arquiteto rever um dry-run.
+2. **DBG-56, prazo da espera em processo.**
+   - Rotas HTTP do painel (aprovar, rejeitar, em lote, desfazer): 30 s desde a entrada na fila em processo. Depois, o 503 "fila ocupada" que já existe.
+   - Processos de fundo (importador, worker, ciclo, scripts): 10 min. Depois, erro com a marca "[fila] espera esgotada", sem escrita.
+   - Testes com relógio falso para os dois prazos. Mutação: remover o prazo das rotas. O caso das rotas tem de ficar vermelho.
+3. **DBG-73, dry-run.** Aceita a versão simples. O dry-run não grava a fila, e um produto novo sai como `pending_review`. Teste: o ficheiro da fila tem o mesmo conteúdo antes e depois de um dry-run. Mutação: repor a gravação.
+4. **DBG-46.** Só a parte A: um lock e uma escrita por lote no `upsertOne`. A parte B fica como DBG-46B, baixa. Reavalia-se com as medições dos lotes em produção.
+5. **DBG-49 e DBG-57.**
+   - O apagado no admin da Shopify grava origem `humano`, com o campo fonte `admin-shopify`.
+   - Um undo sobre item apagado no admin, com snapshot APPROVED ou REJECTED, fica `skipped` com o motivo "apagado no admin". Não é erro geral, e os restantes itens do lote seguem.
+   - Testes para os dois casos. Mutação: deixar o undo repor o item. Tem de ficar vermelho.
