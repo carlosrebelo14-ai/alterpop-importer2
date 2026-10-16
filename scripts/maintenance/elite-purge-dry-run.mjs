@@ -9,8 +9,12 @@
 // Repositório público: imprime SÓ linhas "EPD: chave=valor" com contagens e estados fixos.
 // Nunca SKUs, títulos, motivos em texto livre nem mensagens de erro (podem trazer dados da loja).
 //
-// A fila lê-se diretamente do ficheiro, como em active-vs-queue.mjs. Não se importa
-// curationQueue.server.js, que ao ler um ficheiro em falta pode gravar a flag DB_DEGRADED.
+// Leitura sem efeitos colaterais:
+//   - a fila lê-se diretamente do ficheiro, como em active-vs-queue.mjs. Não se importa
+//     curationQueue.server.js, que ao ler um ficheiro em falta pode gravar a flag DB_DEGRADED;
+//   - o catálogo lê-se pelas leituras por omissão da purga, diretas, sem safePrisma (DBG-86, DBG-87);
+//   - sem BD no volume, a tarefa sai com erro antes de ligar. Senão o Prisma criaria um SQLite vazio
+//     e a tarefa diria "0 produtos".
 //
 // Uso (na Fly): node scripts/maintenance/elite-purge-dry-run.mjs
 import fs from "node:fs";
@@ -18,6 +22,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { diretorioDaFila } from "./active-vs-queue.mjs";
 import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
+import { dbFilePath } from "../../lib/health/dbDegraded.js";
+import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ESTADOS = ["APPROVED", "PUBLISHED", "PENDING", "REJECTED", "SYNC_ERROR", "sem_entrada", "outro"];
@@ -61,7 +67,7 @@ export async function executar({ caminhoFila, shop, purgar }) {
   try {
     resultado = await purgar(shop, { executar: false, dependencias: { lerFila: async () => ({ version: 1, items: itens }) } });
   } catch {
-    // Sem err.message: pode trazer SKUs ou dados da loja.
+    // Sem err.message: pode trazer SKUs ou dados da loja. Uma falha de leitura nunca vira zero.
     return { codigo: "catalogo_falhou", linhas: ["EPD: erro=catalogo_falhou"] };
   }
   return { codigo: "ok", linhas: formatarResumoEpd(resultado) };
@@ -76,12 +82,19 @@ async function main() {
   // Mesma guarda da CLI: com a app a escrever na fila, a leitura não é um retrato. Recusa com código 1 e nada lido.
   recusarSeAtividadeApp("elite-purge-dry-run");
   const shop = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
+  // DBG-87: sem BD no volume, o Prisma criaria um SQLite vazio e a tarefa diria zero produtos. Recusa antes de ligar.
+  if (!fs.existsSync(dbFilePath())) {
+    console.log("EPD: erro=bd_em_falta");
+    process.exit(1);
+  }
   const r = await executar({
     caminhoFila: path.join(diretorioDaFila(), "curation-queue.json"),
     shop,
     purgar: purgarComModuloReal,
   });
   for (const linha of r.linhas) console.log(linha);
+  // Fecha a ligação antes de sair: sem isto, o SQLite deixa os ficheiros -wal e -shm no volume.
+  await prisma.$disconnect().catch(() => {});
   process.exit(r.codigo === "ok" ? 0 : 1);
 }
 

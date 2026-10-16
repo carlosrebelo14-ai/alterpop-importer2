@@ -307,6 +307,7 @@ case "$TASK" in
       if grep -q 'EPD: erro=fila_em_falta' "$OUT"; then CAUSE="a fila de curadoria não existe no volume: não contei nada."
       elif grep -q 'EPD: erro=fila_ilegivel' "$OUT"; then CAUSE="a fila de curadoria existe mas não se lê: não contei nada."
       elif grep -q 'EPD: erro=catalogo_falhou' "$OUT"; then CAUSE="não consegui ler o catálogo na base de dados: não contei nada."
+      elif grep -q 'EPD: erro=bd_em_falta' "$OUT"; then CAUSE="a base de dados não está no volume: não contei nada."
       elif grep -q 'Recusado: a app tem atividade em curso' "$OUT"; then CAUSE="a app tem atividade em curso (indexação ou publicação): não contei nada. Repetir depois."
       fi
     fi

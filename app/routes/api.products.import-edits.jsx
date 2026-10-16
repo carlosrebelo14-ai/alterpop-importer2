@@ -178,6 +178,7 @@ export const action = async ({ request }) => {
       continue;
     }
 
+    let gravou = false;
     try {
       // Produto já publicado: o override de preço só se aplica na criação (o publisher
       // nunca reescreve o preço de um produto existente, salvo a 0,00 — revisão do PR
@@ -209,6 +210,7 @@ export const action = async ({ request }) => {
       if (Object.keys(overrides).length) {
         const motivoCell = idx.motivoPreco !== -1 ? (row[idx.motivoPreco] || "").trim() : "";
         await comPrazoDeRota(() => setManualOverride(sku, overrides, { by: author, reason: motivoCell || "import CSV" }));
+        gravou = true;
       }
 
       if (estadoRaw === "APPROVED") {
@@ -219,7 +221,13 @@ export const action = async ({ request }) => {
 
       applied.push({ line: lineNo, sku });
     } catch (err) {
-      rejected.push({ line: lineNo, sku, reason: err?.message || "Erro desconhecido ao aplicar" });
+      // DBG-110. Com a fila ocupada, o override pode já estar gravado e a aprovação ou a rejeição não. A linha diz isso, para não parecer que nada foi escrito.
+      const filaOcupada = err?.code === "CURATION_QUEUE_LOCK_TIMEOUT";
+      const motivo =
+        filaOcupada && gravou
+          ? "fila ocupada: o override foi gravado, a aprovação ou a rejeição não. Repetir esta linha."
+          : err?.message || "Erro desconhecido ao aplicar";
+      rejected.push({ line: lineNo, sku, reason: motivo });
     }
   }
 

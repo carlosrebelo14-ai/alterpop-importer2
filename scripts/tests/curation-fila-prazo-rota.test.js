@@ -286,6 +286,16 @@ function casoRotasTraduzemTimeoutPara503() {
   }
 }
 
+// DBG-110: o timeout depois do override não pode dizer que nada foi escrito. A linha diz o que ficou gravado.
+function casoImportEditsDizOverrideGravado() {
+  const codigo = semComentarios(fs.readFileSync(path.join(REPO, "app/routes/api.products.import-edits.jsx"), "utf8"));
+  const override = codigo.indexOf("setManualOverride(sku, overrides");
+  const gravou = codigo.indexOf("gravou = true;");
+  assert.ok(override > 0 && gravou > override, "gravou só se marca depois do override");
+  assert.match(codigo, /filaOcupada && gravou/, "o motivo do timeout distingue o override já gravado");
+  assert.ok(codigo.includes("o override foi gravado, a aprovação ou a rejeição não"), "a mensagem diz o que ficou gravado");
+}
+
 async function main() {
   console.log("curation-fila-prazo-rota");
   await caso("P1 rota com a fila ocupada desiste no prazo de rota, com a marca de espera esgotada", casoRotaDesisteNoPrazo);
@@ -298,6 +308,7 @@ async function main() {
   await caso("S1 rotas de escrita do painel usam comPrazoDeRota e não têm chamadas nuas", casoRotasEmbrulhamEscritas);
   await caso("R1 recuperação com timeout de lock não grava DB_DEGRADED e não reescreve a fila", casoRecuperacaoNaoDegradaComTimeout);
   await caso("R2 bulk e undo traduzem o timeout para 503 fila ocupada", casoRotasTraduzemTimeoutPara503);
+  await caso("S2 import-edits: timeout depois do override diz que o override foi gravado (DBG-110)", casoImportEditsDizOverrideGravado);
 
   console.log("\nRESUMO");
   for (const r of resultados) console.log(`  ${r.resultado.padEnd(6)} ${r.nome}`);

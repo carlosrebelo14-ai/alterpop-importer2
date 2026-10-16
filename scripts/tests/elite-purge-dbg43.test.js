@@ -67,7 +67,7 @@ function entrada(sku, status, metadata = {}) {
  * sob o lock, como uma decisão humana que chega entre a leitura e a escrita. `falharFila` faz a
  * escrita da fila falhar.
  */
-function falsas({ linhas = [], fila = [], falharFila = false, concorrente = null } = {}) {
+function falsas({ linhas = [], fila = [], falharFila = false, concorrente = null, apagarNada = false } = {}) {
   const registo = [];
   let filaAtual = { version: 1, items: JSON.parse(JSON.stringify(fila)) };
   let catalogo = linhas.slice();
@@ -83,7 +83,7 @@ function falsas({ linhas = [], fila = [], falharFila = false, concorrente = null
     },
     async apagarLote({ skus }) {
       registo.push(["apagar", skus.slice()]);
-      catalogo = catalogo.filter((l) => !skus.includes(l.sku));
+      if (!apagarNada) catalogo = catalogo.filter((l) => !skus.includes(l.sku));
     },
     async lerFila() {
       return JSON.parse(JSON.stringify(filaAtual));
@@ -152,6 +152,8 @@ async function casoTabelaDeDecisoes() {
     ["PENDING apagado no admin", entrada("x", "PENDING", { deletedInAdmin: { at: "2026-10-01" } }), false],
     ["PENDING de reset", entrada("x", "PENDING", { origem: "reset" }), false],
     ["sem entrada na fila", null, false],
+    // DBG-88: statusChangedAt é a marca de decisão humana (D2), mesmo sem origem.
+    ["PENDING com statusChangedAt, sem origem (decisão humana)", { ...entrada("x", "PENDING"), statusChangedAt: "2026-10-01T00:00:00.000Z" }, false],
   ];
   for (const [nome, item, esperado] of casos) {
     const { pode } = E.avaliarPurgaDeEntrada(item);

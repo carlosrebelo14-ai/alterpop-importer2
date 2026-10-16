@@ -274,8 +274,10 @@ async function casoLoteIgualAoRegistoARegisto() {
     item("L5-SYN", "SYNC_ERROR"),
     item("L5-PUB", "PUBLISHED"),
     item("L5-REJ", "REJECTED"),
+    // DBG-89: item não fixado com campos que só o disco escreve. O lote tem de os manter, como o caminho unitário.
+    { ...item("L5-DISCO"), metadata: { ...item("L5-DISCO").metadata, shopifyProductId: "gid://shopify/Product/7", lastElitePurgeAt: AGORA, overrides: { price: 9 } } },
   ];
-  const registos = ["L5-NOVO-1", "L5-NOVO-2", "L5-PEN", "L5-APR", "L5-SYN", "L5-PUB", "L5-REJ"].map(registoDeTeste);
+  const registos = ["L5-NOVO-1", "L5-NOVO-2", "L5-PEN", "L5-APR", "L5-SYN", "L5-PUB", "L5-REJ", "L5-DISCO"].map(registoDeTeste);
   const umAUm = await estadoDaFilaAposRegistos(inicial, registos, "um a um");
   const lote = await estadoDaFilaAposRegistos(inicial, registos, "lote");
   assert.equal(lote.length, umAUm.length, "o lote tem de deixar o mesmo número de itens");
