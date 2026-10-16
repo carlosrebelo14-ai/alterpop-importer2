@@ -6,7 +6,7 @@ import { invalidateCurationQueueCache } from "../../lib/importer/curation/index.
 
 /**
  * POST /api/curation/queue/:sku/approve
- * Aprova produto — próxima sync usa shopifyStatus ACTIVE.
+ * Aprova produto — próxima sync usa status APPROVED.
  */
 export const action = async ({ request, params }) => {
   await authenticateAdmin(request);

@@ -4,7 +4,7 @@
 #   bash scripts/ci/maintenance.sh <tarefa> <fase>
 #
 # tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push
-#         | db_flag_check | logs_recent | restore_dry_run   (estas três só leem; nenhuma aceita execute)
+#         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue   (estas quatro só leem; nenhuma aceita execute)
 # db_push recusa-se com a flag DB_DEGRADED presente no volume (Decisão 34), em dry-run e em execute.
 # fase    dry-run  só lê (ou lista o que mudaria)
 #         execute  escreve (só tags_cleanup, character_pages_sync e db_push; nas outras é igual ao dry-run)
@@ -42,12 +42,12 @@ RESTORE_OUT="$(mktemp)"
 LOG_SUM=""
 
 case "$TASK" in
-  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run) ;;
+  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
 esac
 # As tarefas novas só leem: nenhuma aceita execute, nem como no-op.
 case "$TASK" in
-  db_flag_check | logs_recent | restore_dry_run)
+  db_flag_check | logs_recent | restore_dry_run | active_vs_queue)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
 case "$PHASE" in
@@ -288,6 +288,17 @@ case "$TASK" in
     fi
     fi
     ;;
+  active_vs_queue)
+    # DBG-50: lê os produtos ACTIVE pela API da loja e a fila no volume, só para contar (scripts/maintenance/active-vs-queue.mjs).
+    DESC="Conta os produtos ACTIVE da loja por estado na fila de curadoria (APPROVED, PUBLISHED, PENDING, REJECTED, outro estado ou sem entrada) e lista os processos node da máquina. Só lê. Não mostra SKUs."
+    remote "node scripts/maintenance/active-vs-queue.mjs"; RC=$?
+    if [ "$RC" -ne 0 ]; then
+      if grep -q 'AVQ: erro=fila_em_falta' "$OUT"; then CAUSE="a fila de curadoria não existe no volume: não classifiquei nada."
+      elif grep -q 'AVQ: erro=fila_ilegivel' "$OUT"; then CAUSE="a fila de curadoria existe mas não se lê: não classifiquei nada."
+      elif grep -q 'AVQ: erro=shopify_falhou' "$OUT"; then CAUSE="não consegui ler os produtos ACTIVE pela API da loja (sessão offline ou API)."
+      fi
+    fi
+    ;;
 esac
 
 # ── resumo em português, só contagens e estados ───────────────────────
@@ -422,6 +433,26 @@ case "$TASK" in
     if grep -q 'integrity_check: ok' "$RESTORE_OUT" 2>/dev/null; then IC="ok"; elif grep -q 'integrity_check:' "$RESTORE_OUT" 2>/dev/null; then IC="falhou"; else IC="não correu"; fi
     bullets="- Cópia de dev.sqlite do volume para o runner (temporária, apagada no fim). integrity_check da cópia: **$IC**. WAL: **${WAL_NOTE:-não verificado}**. Dry-run: nenhuma flag foi apagada e a BD da Fly não foi tocada."
     KEY="integrity_check da cópia: $IC"
+    ;;
+  active_vs_queue)
+    avq() { echo "$CLEAN" | grep -E "^AVQ: $1=" | head -1 | sed -E "s/^AVQ: $1=//"; }
+    an() { local v; v="$(avq "$1")"; echo "${v:-0}"; }
+    if [ -z "$(avq total)" ]; then
+      bullets=""; KEY="sem leitura"
+    else
+      bullets="- Produtos ACTIVE na loja: **$(an total)**; sem SKU: **$(an sem_sku)**."
+      bullets="$bullets"$'\n'"- Com entrada na fila: APPROVED **$(an APPROVED)**, PUBLISHED **$(an PUBLISHED)**, PENDING **$(an PENDING)**, REJECTED **$(an REJECTED)**, outro estado **$(an outro_estado)**."
+      bullets="$bullets"$'\n'"- Sem entrada na fila: **$(an sem_entrada)**."
+      fora=$(( $(an PENDING) + $(an REJECTED) + $(an outro_estado) + $(an sem_entrada) + $(an sem_sku) ))
+      if [ "$fora" -gt 0 ]; then bullets="$bullets"$'\n'"- ⚠️ ACTIVE fora de APPROVED e PUBLISHED: **$fora** (decidir produto a produto no painel)."; fi
+      if echo "$CLEAN" | grep -q 'processos: não consegui listar'; then
+        bullets="$bullets"$'\n'"- Processos na máquina: não consegui listar."
+      else
+        procs="$(echo "$CLEAN" | grep -E '^AVQ: proc=' | sed -E 's/^AVQ: proc=//' | paste -sd, - | sed 's/,/, /g')"
+        bullets="$bullets"$'\n'"- Processos node na máquina: **$(an processos_node)**${procs:+ ($procs)}."
+      fi
+      KEY="$(an total) ACTIVE: $(an APPROVED) APPROVED, $(an PUBLISHED) PUBLISHED, $(an PENDING) PENDING, $(an REJECTED) REJECTED, $(an outro_estado) outro, $(an sem_entrada) sem entrada"
+    fi
     ;;
 esac
 

@@ -77,9 +77,12 @@ async function main() {
     const record = await loadRecordForSku(target.sku, target.synthetic ? target.baseSku : null);
     if (!record) throw new Error(`SKU ${target.sku} não encontrado no CSV`);
 
-    const { status, reasons } = await resolveProductStatus(record);
+    // DBG-50: updateProduct precisa da resolução completa (pending) para decidir o status.
+    const resolucao = await resolveProductStatus(record);
+    const { status, reasons } = resolucao;
     record._shopifyStatus = status;
     record._curationReasons = reasons;
+    record._curationResolution = resolucao;
 
     const variantQuery = await client.graphql(
       `query ($id: ID!) {
