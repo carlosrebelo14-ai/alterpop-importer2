@@ -488,3 +488,188 @@ Cada PR: testes antes das correções, mutação em cada teste, revisão adversa
 ### Atualização de 15/10 (segunda resposta do arquiteto)
 
 As decisões que estavam pendentes na tabela acima foram fechadas e estão na Decisão 35 de `docs/decisoes.md`. Esta tabela fica como registo histórico do que foi perguntado.
+
+## 12. Plano do PR 2b-2 (sem código)
+
+**Estado:** plano para aprovação do arquiteto. Nenhum código escrito. Base: `main` em `f32b065`. Leitura feita em `3b6b6bf`, que tem o mesmo conteúdo que `f32b065` nos ficheiros lidos. Causas confirmadas por leitura de código e, onde indicado, por sondas numa cópia temporária, apagada no fim.
+
+**Ordem proposta**, do menor risco para o maior:
+
+1. DBG-49 com DBG-57 (undo e itens apagados).
+2. DBG-44 (`approvedAt` e `rejectedAt`).
+3. DBG-73 (dry-run não grava a fila). Depende da decisão 3.
+4. DBG-56 (espera em processo sem prazo). Depende da decisão 2.
+5. DBG-46 (lote no `upsertOne` e justiça do lock). Depende de DBG-56.
+6. DBG-43 (purga de elite). Depende da decisão 1. Continua proibida em produção até a decisão e o PR estarem fechados.
+
+Cada item tem o seu commit, e cada commit passa as quatro suítes do gate. Não há código de DBG-43 antes da decisão 1.
+
+### DBG-49 e DBG-57: itens apagados no admin
+
+**Causa.**
+- DBG-49: `applyDeletedInAdmin` não grava origem própria. O bloco `metadata` (`lib/curation/curationQueue.server.js:1594-1605`) começa com `...rest` e mantém a origem anterior, que pode ser regra, humano ou nenhuma.
+- DBG-57, guarda: a única guarda do undo contra item publicado é `shopifyProductId` (`curationQueue.server.js:1414-1417`). `applyDeletedInAdmin` retira esse campo, por isso um item apagado passa a guarda.
+- DBG-57, estado: `item.status = snap.status` e `item.statusChangedAt` seguem o snapshot (`:1424`, `:1431`), sem consultar o estado atual. Um snapshot APPROVED repõe o item como APPROVED, sem marca.
+- DBG-57, metadata: `item.metadata = { ...snap.metadata }` (`:1436`) apaga `deletedInAdmin`, `previousShopifyProductId`, `lastPriceWrite` e `wasPublished`.
+
+**Correção**, três edições em `curationQueue.server.js`:
+1. `applyDeletedInAdmin` grava `origem: "humano"` logo depois de `...rest`. O reset continua a gravar `reset` depois, como hoje.
+2. Undo: se o item está retido (`isHeldAfterDeletion`, `:645-647`) e o snapshot não é PENDING, o item vai para `skipped`.
+3. Undo: num item retido com snapshot PENDING, a metadata mantém `deletedInAdmin`, `wasPublished` e `previousShopifyProductId`.
+
+**Testes.** `scripts/tests/deleted-never-approved.test.js`, com os casos (a) a (d), e a regressão com `approveProduct` seguido de undo em `curation-undo-marca-origem.test.js`. As sondas P1 a P5 foram validadas numa cópia descartável, antes e depois da correção, e as 13 suítes de curadoria, undo, reset e reprice saíram com exit 0.
+
+**Mutações.**
+- M1, origem do apagado: remover a linha `origem: "humano"`. Vermelho em P3.
+- M2, guarda do undo: remover o bloco `skipped`. Vermelho em P1 e P4.
+- M3, marca no undo: repor a marca sem preservar `deletedInAdmin` e `wasPublished`. Vermelho em P2.
+- M4, guarda só para APPROVED: trocar `!== "PENDING"` por `=== "APPROVED"`. Vermelho em P4.
+
+**Riscos.** Um undo de item retido com snapshot APPROVED ou REJECTED passa a aparecer em `skipped`. A rota `app/routes/api.curation.queue.undo.jsx` já devolve `skippedCount`. Itens apagados antes da correção mantêm a origem herdada, porque a correção não reescreve o passado.
+
+**Decisões do arquiteto.**
+- A. Origem do apagado: `humano` ou `reset`. `origemExplicita` aceita os quatro valores. Proposta: `humano`.
+- B. Undo de item retido com snapshot APPROVED ou REJECTED: ficar em `skipped` ou devolver erro explícito. D15 não diz.
+
+### DBG-44: `approvedAt` e `rejectedAt` repostos a null em reindex
+
+**Causa.**
+- `buildMetadata` devolve sempre `approvedAt: null` e `rejectedAt: null` (`lib/curation/curationQueue.server.js:1023-1024`). Origem do bloco: `c5a4645`.
+- Caminho unitário, ramo `isManual`: `existing.metadata = { ...existing.metadata, ...buildMetadata(...), lastSeenAt }` (`:841-845`, sobrescrita em `:843`).
+- Caminho em lote, ramo fixado: a mesma sobrescrita em `:974-976`.
+
+**Correção.** Duas linhas. Depois de `:843`, e dentro do fragmento de `:976`, acrescentar `...soCampos(existing.metadata || {}, ["approvedAt", "rejectedAt"])`. `soCampos` já existe em `:525`. O ramo não fixado não muda, porque aí `approvedAt` null num PENDING recalculado está certo (Decisão 4).
+
+**Testes.** H9 e H9b (unitário, APPROVED e REJECTED humanos). H9c (lote com fila externa). H9e (`refreshCatalogProductsLite`, sem opções). T5 (guarda da linha 549 de `fundirItemDoWorker`). H9f não serve de guarda, porque passa com e sem correção.
+
+**Mutações.**
+- M1, sem `soCampos` no unitário: vermelho em H9 e H9b.
+- M2, sem o fragmento no lote: vermelho em H9c e H9e.
+- M3, `CAMPOS_DE_ESTADO` deixa de ser removido em `fundirItemDoWorker` (`:549`): vermelho em T5 e H6.
+
+**Riscos.** `scripts/catalog/pre-pilot-verify.js:368-369` mede a idade dos aprovados por `approvedAt`. Itens de regra recalculados recebem `approvedAt = new Date()` a cada reindex (`:791`, `:962`). `queuedAt` é reposto a agora em cada reindex de item fixado (`:1022`), efeito menor. O ramo não fixado de `aplicarLoteNaFila` (`:982-989`) não repõe os campos de disco, por confirmar com sonda própria.
+
+**Dúvida.** Confirmar se a UI lê `approvedAt` ou `rejectedAt`. O grep fora de testes só encontrou `pre-pilot-verify.js`, `character-import.js:161` e `eliteCuration.server.js:201`.
+
+### DBG-73: dry-run grava a fila
+
+**Causa.** `lib/importer/core/streamImport.js:149-154` (`escreverLoteDaFila`) grava cada lote com `comLockDaFila` e `upsertCurationQueueFromRecord`, sem verificar `job.mode`. Em `lib/importer/importers/ProductImporter.js:523`, `upsertOne` chama `upsertCurationQueueFromRecord` antes do ramo `if (this.dryRun)` (`:557`), que só corta a parte Shopify. A única guarda em `lib/importer/jobs/runImport.js:31` bloqueia o modo live, não as escritas em dry-run. A guarda de atividade (`recusarSeAtividadeApp`) é a primeira instrução de `scripts/sync/stream-import-dry-run.js:13`, e só recusa com marcador vivo. Classificação: pré-existente. O commit `c5a4645` já tinha as duas escritas. O 2b-1 mudou apenas a forma, para lotes.
+
+**Correção.**
+- (a) `streamImport.js:149-154`: um bloco `if (job.mode !== "DRY_RUN")` em volta de `inicioDoLote`, do `comLockDaFila` e do log.
+- (b) `ProductImporter.js:523`: não gravar quando `this.dryRun`, mantendo o cálculo.
+
+**Testes.** Novo `scripts/tests/dbg73-dry-run-nao-grava-fila.test.js`: D1, lote em dry-run não grava; D2, upsert em dry-run não grava; D3, live continua a gravar. Regressão: `curation-queue-lote-lock.test.js` (L1 a L3). Sonda sem correção: dry-run passou de 0 para 5 itens no lote e de 0 para 1 no upsert. Com correção, 0 e 0.
+
+**Mutações.** M1, sem a guarda do lote: vermelho em D1. M2, sem a guarda do upsert: vermelho em D2.
+
+**Riscos e decisão 3.** O dry-run deixa de prever o estado da fila. Um produto novo sai como `pending_review`. Para SKUs já na fila, o dry-run mostra o estado gravado, não o recalculado. Não se recomenda simular a gravação sem a fazer, porque a cache do processo devolve o mesmo `mtime`. Decisão 3: aceitar que o dry-run deixe de prever o estado da fila, ou pedir uma simulação que calcule sem gravar (exige separar cálculo e gravação).
+
+### DBG-56: espera em processo sem prazo
+
+**Causa.** `withCurationQueueLock` (`lib/curation/curationQueue.server.js:72-81`) faz `queueLock.then(correr, correr)` em `:75`, sem limite. `correrComLockDeFicheiro` chama `adquirirLockDoFicheiro` só depois (`:91-92`). O prazo de 30 s (`lib/curation/curationQueueFileLock.server.js:32`) começa em `:252` e só lança `CURATION_QUEUE_LOCK_TIMEOUT` em `:259-261`. As rotas tratam esse código com 503 "fila ocupada" em `app/routes/api.curation.queue.$sku.approve.jsx:41-42` e `reject.jsx:32-33`. Classificação: pré-existente (`c5a4645`).
+
+**Correção.**
+- (a) `curationQueueFileLock.server.js`: exportar `prazoDoLock()`, e aceitar um `limiteMs` opcional em `adquirirLockDoFicheiro`, que é o orçamento restante.
+- (b) `curationQueue.server.js`: o prazo arma-se na entrada de `withCurationQueueLock`. Ao expirar, a chamada rejeita com `CURATION_QUEUE_LOCK_TIMEOUT`. Se a operação ainda não correu, não corre. Se o lock for obtido depois do cancelamento, é libertado.
+
+**Testes.** Novo `scripts/tests/curation-fila-processo-prazo.test.js`, com relógio falso. Caso C1: a fila em processo fica ocupada mais de 30 s, a aprovação responde 503 e o item não fica APPROVED.
+
+**Mutações.**
+- M3, pedido do arquiteto: tirar o prazo da fila em processo. Vermelho em C1.
+- M4, a operação cancelada corre na mesma: vermelho em C1, no disco.
+
+**Riscos.** Sem cancelamento, a rota responde 503 "nada foi escrito" e a operação grava mais tarde, e o cliente repete a aprovação. `recoverCorruptedQueueJson` (`curationQueue.server.js:333`) está dentro do `try`, por isso um timeout pode afetá-lo. A confirmar. `CURATION_QUEUE_LOCK_LOST` cai no 404 genérico de `approve.jsx:44-47` e `reject.jsx:35-38`. É pré-existente e fica fora deste item.
+
+**Decisão 2.** Âmbito: todo o `withCurationQueueLock`, ou só aprovar e rejeitar. O prazo geral afeta o importador e o painel. Com DBG-46, a cadeia fica ocupada mais tempo, e o 503 aparece com mais frequência.
+
+### DBG-46: lote no `upsertOne` e justiça do lock
+
+**Causa.**
+- Cada registo é escrito duas vezes. Primeira escrita: `streamImport.js:151`, dentro de `comLockDaFila` (`:150`). Segunda escrita: `ProductImporter.js:523`, em `upsertOne`, chamado por `processRecord` (`streamImport.js:194-217`).
+- Cada escrita faz `loadCurationQueue` (`curationQueue.server.js:738`) e `saveCurationQueue` (`:883`), sobre um ficheiro de 12 a 15 MB.
+- `ProductImporter.js:509` lê a entrada fora do lock (`getCurationQueueEntry`), e `escreverFila` invalida a cache (`curationQueue.server.js:459`) a cada escrita, por isso a leitura seguinte volta a parsear o ficheiro.
+- Injustiça: `curationQueueFileLock.server.js:249-265`, polling com recuo de 5 a 200 ms, sem fila nem marca de espera. Depois de libertar (`:273-285`), o titular em processo volta a tomar o lock em milissegundos. Sonda com um titular que volta a tomar sem intervalo: 4 de 5 ensaios deram `CURATION_QUEUE_LOCK_TIMEOUT` a um externo. A injustiça só afeta processos externos (scripts sem IPC). O importador e o painel no mesmo processo passam pela cadeia FIFO (`curationQueue.server.js:72-81`).
+
+**Correção.**
+- *Parte A, lote e uma escrita.* Extrair de `upsertCurationQueueFromRecordLocked` (`:737-885`) a parte síncrona para `aplicarRegistoNaFila(queue, record)`. Acrescentar `upsertCurationQueueFromRecordsBatch(records)`: uma leitura, aplica cada registo, uma escrita. Comando novo em `ESCRITAS_REMOTAS`, sem callbacks. O override de título é aplicado antes da escrita do lote. `upsertOne` aceita `{ entradaFila }` e não escreve de novo.
+- *Parte B, justiça.* Marca `queue.lock.espera-*` com frescura de 5 s, criada por quem espera. Quem tem a marca fresca tem prioridade sobre um titular que volta a tomar o lock. Remoção em `finally`.
+
+**Testes.**
+- L4: 20 registos, aquisições ≤ `ceil(N / LOTE_DA_FILA)`.
+- L5: um override de título editado à mão não se perde.
+- F-a: um titular em processo cede à marca externa fresca.
+- F-b: sem marca, a segunda aquisição demora menos de 100 ms.
+- F-c: enquanto espera, há exatamente uma marca; depois, nenhuma.
+- A sonda holder/waiter fica fora do CI, como verificação manual.
+
+**Mutações.**
+- M1, sem escrita do lote: vermelho em L2.
+- M2, sem segunda escrita (naive): vermelho em L5.
+- M3, `upsertOne` ignora a entrada do lote: vermelho em L4.
+- M4, lote sem override de título: vermelho em L5.
+- M5, sem cedência: vermelho em F-a.
+- M6, sem marca de espera: vermelho em F-c.
+- M7, escrita por registo dentro do lote: sem teste ainda. Precisa de um gancho de contagem de escritas, no estilo de `setLockAcquisitionObserverForTests`.
+
+**Riscos.** Uma escrita por lote falha inteira, em vez de parcial. O lock fica ocupado cerca de 0,3 s por escrita, na sonda, em vez de dez escritas intercaladas. A cedência não é FIFO. Se o processo morrer em espera, fica uma marca órfã, limitada pela frescura. `upsertOne` com `entradaFila` mantém `normalizeRecordCategories` e `applyTitleGlossary`, que são idempotentes na prática, não provado em todos os casos.
+
+**Decisão 4.** Confirmar a parte B (marca de espera), ou ficar só com a parte A.
+
+### DBG-43: purga de elite
+
+**Causa.** `scripts/curation/elite-curation-purge.js:15-20` sai com código 1, de propósito. Em `lib/importer/curation/eliteCuration.server.js`:
+- `:184-185` só salta REJECTED. PUBLISHED, SYNC_ERROR, APPROVED humano e PENDING retido entram na decisão da elite. Viola D29, D2 e D15.
+- `:194-196` escreve `status`, `shopifyStatus = DRAFT` e `reason`, sem chamar a Shopify e sem tocar em `statusChangedAt`. Um PUBLISHED passa a PENDING ou REJECTED com o produto ainda ativo na loja.
+- `:186-191` usa um registo esparso `{ sku, vendor, netPrice }`. A elite decide sem título, categoria ou stock. `buildMetadata` (`curationQueue.server.js:1012-1025`) não guarda `categorySegments` nem `productTypePath`. A decisão difere da do catálogo, que usa `catalogRowToEvaluateRecord` (`eliteCuration.server.js:123-124`).
+- `:122-127` remove linhas do catálogo sem consultar a fila. Um APPROVED humano perde a linha, e a Decisão 28 leva o item a SYNC_ERROR (`curationQueue.server.js:1626-1628`).
+- `:132-145` apaga o catálogo antes de a fila ser reescrita (`:164`). Uma falha a meio deixa o catálogo sem a fila atualizada. O log diz "removidos" antes de a fila ser gravada.
+- `curationQueue.server.js:1665-1673` escreve localmente num processo CLI, sem IPC. `recusarSeRemoto` só dispara com `remoto` definido, e isso só acontece em filhos. Viola D1 e D3.
+
+**Correção mínima.** Em `eliteCuration.server.js:185`, trocar por `if (item.status === "REJECTED" || fixadoPorDecisaoHumana(item)) continue;`, exportando `fixadoPorDecisaoHumana` de `curationQueue.server.js:705`. Não chega sozinha. Faltam o registo esparso, a remoção de SKUs fixados, a ordem das escritas e a escrita pelo escritor único.
+
+**Passos para a purga poder correr**, depois das decisões:
+- (a) Retirar o bloqueio e pôr a execução numa rota da app que responda 409 quando `atividadeAppEmCurso` devolver atividade.
+- (b) Decidir por SKU a partir do catálogo, com a ação e o motivo registados antes da escrita.
+- (c) Excluir, de ambos os lados (catálogo e fila), os SKUs fixados.
+- (d) Escrever a fila antes de apagar linhas do catálogo, e escrever o log só depois das duas escritas.
+- (e) Escrever a fila por uma operação dentro de `withCurationQueueLock`, no processo principal, registada em `ESCRITAS_REMOTAS`.
+
+**Testes.**
+- T1: SYNC_ERROR continua SYNC_ERROR.
+- T2: PUBLISHED continua PUBLISHED.
+- T3: APPROVED humano continua APPROVED.
+- T4: PENDING com `deletedInAdmin` continua PENDING e mantém a marca.
+- T5: APPROVED de regra passa a PENDING (comportamento que se mantém).
+- T6: título com palavra de elite decide igual ao catálogo.
+- T7: uma falha da fila não apaga linhas do catálogo.
+- T8: um SKU APPROVED humano não é apagado.
+- T9: escritor único, 409 com marcador.
+- T10: substitui `scripts/tests/elite-purge-bloqueada.test.js`, e atualiza `curation-guard-coverage.test.js:48` e `curation-atividade-app.test.js:19`.
+
+**Mutações.**
+- M1, sem a proteção do ciclo (`:185`): vermelho em T1 a T4.
+- M2, `fixadoPorDecisaoHumana` sem SYNC_ERROR e PUBLISHED: vermelho em T1 e T2.
+- M3, PENDING retido sem proteção (`curationQueue.server.js:645-647`): vermelho em T4.
+- M4, decisão esparsa de novo: vermelho em T6.
+- M5, SKU protegido não excluído: vermelho em T8.
+- M6, ordem invertida: vermelho em T7.
+- M7, sem guarda de atividade: vermelho em T9.
+- M8, purga sem `deletedInAdmin` (`eliteCuration.server.js:197-204`): vermelho em T4.
+
+**Decisões do arquiteto.**
+1. Onde corre a purga: rota da app com 409, ou CLI com IPC. Pelo D1, a CLI não escreve a fila.
+2. D11 não cobre a purga. Proposta: SYNC_ERROR não sai pela purga, pela letra de D29, que só admite as três transições manuais.
+3. PUBLISHED na purga: fica intacto na fila e no catálogo, ou só o catálogo muda.
+4. APPROVED humano que a elite não aceita: D2 (a decisão humana ganha) contra a precedência da elite (`eliteCuration.server.js:40`).
+5. Item da fila sem linha no catálogo: rebaixar, ou tocar só nos SKUs removidos.
+6. Item retido por `deletedInAdmin` que a elite rejeitaria: proposta, fica PENDING, pela letra de D15.
+
+**Riscos.** Retirar só o bloqueio põe em produção a violação de D29. Remover linhas de SKUs APPROVED cria SYNC_ERROR pela Decisão 28. Uma falha a meio deixa o catálogo sem a fila atualizada. A cache entre processos: `clearCurationCache` (`eliteCuration.server.js:90`) só limpa o processo local. Os testes atuais assumem o bloqueio (`elite-purge-bloqueada.test.js:60-81`).
+
+### Dependências e gate
+
+- DBG-56 e DBG-46 partilham o lock. A parte B de DBG-46 depende do prazo em processo de DBG-56.
+- DBG-43, se a purga escrever por lote, usa a parte A de DBG-46.
+- Gate de cada commit: `test:franchise`, `test:sync-safety`, `test:health-gate` e `test:deploy`. Mutações do item antes do commit, controlos K e L1, uma lente de concorrência e lock sobre o delta, CI verde, merge com merge commit, deploy com aprovação do Carlos.
+- DBG-47 (Decisão 28 nas rotas) fica para o 2c. DBG-72 (D2 no reset) fica para o 2b-3.
