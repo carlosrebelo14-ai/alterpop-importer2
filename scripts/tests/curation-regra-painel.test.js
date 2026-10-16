@@ -145,6 +145,18 @@ async function main() {
     assert.equal(item.metadata.origem, undefined);
   });
 
+  // H3b: o caminho em lote também deixa PENDING um item novo sem regra de painel aplicável.
+  await caso("H3b item novo sem regra de painel nasce PENDING (lote)", async () => {
+    escreverRegras([REGRA_APROVA_LEGO]);
+    escreverFila([]);
+    // Funko é marca premium, mas a regra de painel é só para LEGO.
+    const fila = await q.loadCurationQueue();
+    await q.upsertCurationQueueBatchFromRecords([registo("H3b", "Funko")], { queue: fila });
+    const item = itemDe(fila, "H3b");
+    assert.equal(item.status, "PENDING");
+    assert.equal(item.metadata.origem, undefined);
+  });
+
   await caso("H4 item novo com regra de painel nasce APPROVED com origem 'regra' (unitário)", async () => {
     escreverRegras([REGRA_APROVA_LEGO]);
     escreverFila([]);
@@ -414,6 +426,19 @@ async function main() {
     assert.equal(item.metadata.origem, undefined);
   });
 
+  // D5 legado sem statusChangedAt nem origem: APPROVED com smartAction AUTO_REJECT não bate com o estado,
+  // por isso é decisão humana e fica congelado, mesmo com uma regra de rejeição que se aplica.
+  await caso("D5 legado com smartAction AUTO_REJECT e estado APPROVED fica humano e congelado (não recalculado)", async () => {
+    escreverRegras([{ id: "rule_painel_lego_rej", action: "AUTO_REJECT", brand: "LEGO" }]);
+    escreverFila([
+      { sku: "D5d", title_en: "D5d", status: "APPROVED", reason: "manual_dashboard", shopifyStatus: "ACTIVE", metadata: { smartRule: true, smartAction: "AUTO_REJECT", smartRuleId: "rule_painel_lego_rej", approvedAt: DECIDIDO, rejectedAt: null } },
+    ]);
+    await q.upsertCurationQueueFromRecord(registo("D5d"));
+    const item = await q.getCurationQueueEntry("D5d");
+    assert.equal(item.status, "APPROVED", "a regra de rejeição não pode recalcular um APPROVED legado de decisão humana");
+    assert.equal(item.metadata.origem, undefined);
+  });
+
   // D7 (Decisão 7): PENDING com decisão humana continua fora da regra, agora por fixadoPorDecisaoHumana.
   await caso("D7 PENDING com decisão humana continua fora da regra de painel e da elite (lote e unitário)", async () => {
     escreverRegras([REGRA_APROVA_LEGO]);
@@ -609,6 +634,31 @@ async function main() {
     for (const [campo, valor] of Object.entries(disco)) {
       assert.deepEqual(item.metadata[campo], valor, `${campo} tem de ser o do disco`);
     }
+  });
+
+  // H16 (DBG-04, Decisão 3): o desfazer não mexe num item com id da Shopify, mesmo com snapshot PENDING.
+  // Fica como está e é reportado em `skipped`.
+  await caso("H16 desfazer não altera um item publicado com shopifyProductId e reporta-o como ignorado", async () => {
+    escreverRegras([]);
+    escreverFila([
+      {
+        sku: "H16",
+        title_en: "H16",
+        status: "PUBLISHED",
+        reason: "manual_dashboard",
+        shopifyStatus: "ACTIVE",
+        statusChangedAt: DECIDIDO,
+        metadata: { shopifyProductId: "gid://shopify/Product/16", publishedAt: DECIDIDO, approvedAt: DECIDIDO, rejectedAt: null },
+      },
+    ]);
+    const antes = structuredClone(await q.getCurationQueueEntry("H16"));
+    const { restored, skipped, skippedCount } = await q.restoreQueueSnapshots([
+      { sku: "H16", status: "PENDING", shopifyStatus: "DRAFT", metadata: { approvedAt: null, rejectedAt: null } },
+    ]);
+    assert.deepEqual(skipped, ["H16"]);
+    assert.equal(skippedCount, 1);
+    assert.equal(restored.length, 0);
+    assert.deepEqual(await q.getCurationQueueEntry("H16"), antes, "o item publicado não pode mudar");
   });
 
   fs.rmSync(projectRoot, { recursive: true, force: true });
