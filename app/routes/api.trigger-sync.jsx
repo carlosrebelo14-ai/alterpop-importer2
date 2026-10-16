@@ -185,12 +185,13 @@ export const action = async ({ request }) => {
           await new Promise((r) => setTimeout(r, INDEXING_POLL_MS));
         }
 
-        // Decisão 7. Só o estado completed publica. Qualquer outro estado recusa a publicação. A recusa fica no log com a marca
-        // estável e em Relatórios, como "não correu".
+        // Decisão 7 (DBG-69). Só completed com totalRows > 0 publica. Qualquer outro caso recusa a publicação. A recusa
+        // fica no log com a marca estável "[ciclo] publicação recusada" e em Relatórios, como "não correu".
         const status = await readCatalogRebuildStatus(shop);
         if (!podePublicarDepoisDaIndexacao(status)) {
-          const motivo = status?.error || `estado ${status?.state ?? "ausente"}`;
-          console.error(`[ciclo] publicação recusada: estado de indexação falhado (${motivo}).`);
+          const motivo =
+            status?.error || (status?.state === "completed" ? "indexação sem linhas" : `estado ${status?.state ?? "ausente"}`);
+          console.error(`[ciclo] publicação recusada: ${motivo}.`);
           await markMarginErosionCycleSkipped(shop, `indexação terminou com erro (${motivo})`);
           return;
         }

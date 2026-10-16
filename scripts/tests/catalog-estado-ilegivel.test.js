@@ -11,7 +11,7 @@
  * - podePublicarDepoisDaIndexacao: só true para completed sem erro (decisão 7); false para tudo o resto.
  *   Ilegível não retoma.
  * - Estático (d): o ciclo automático (api.trigger-sync.jsx) testa a função antes de publicar e o
- *   ramo de recusa tem a marca "[ciclo] publicação recusada: estado de indexação falhado".
+ *   ramo de recusa tem a marca "[ciclo] publicação recusada".
  *
  * PROJECT_ROOT aponta para um diretório temporário, para o estado de indexação não ir para data/ do
  * repositório. Os ficheiros de estado são criados à mão dentro desse diretório.
@@ -97,7 +97,7 @@ await caso("(c) podePublicarDepoisDaIndexacao: só completed publica (decisão 7
   assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "completed", error: "algo correu mal" }), false);
   assert.equal(estado.podePublicarDepoisDaIndexacao(null), false);
   assert.equal(estado.podePublicarDepoisDaIndexacao(undefined), false);
-  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "completed", error: null }), true);
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "completed", error: null, totalRows: 1 }), true);
 
   const sem = await estado.readCatalogRebuildStatus(SEM_FICHEIRO);
   assert.equal(estado.podePublicarDepoisDaIndexacao(sem), false, "idle não publica (decisão 7)");
@@ -137,6 +137,18 @@ await caso("(c-done) estado done não publica (decisão 7)", () => {
   assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "done", error: null }), false);
 });
 
+await caso("(c-zero) completed com 0 linhas não publica (DBG-69)", () => {
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "completed", error: null, totalRows: 0 }), false);
+});
+
+await caso("(c-sem-total) completed sem totalRows não publica (DBG-69)", () => {
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "completed", error: null }), false);
+});
+
+await caso("(c-total-texto) completed com totalRows que não é número não publica (DBG-69)", () => {
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "completed", error: null, totalRows: "5" }), false);
+});
+
 await caso("(c-ausente) estado ausente não publica (decisão 7)", () => {
   assert.equal(estado.podePublicarDepoisDaIndexacao({ error: null }), false);
 });
@@ -156,7 +168,7 @@ await caso("(d) o ciclo automático testa a função antes de publicar, e o ramo
   const abre = rota.indexOf("{", chamada);
   const ramo = rota.slice(abre, fecho(rota, abre, "{", "}") + 1);
   assert.ok(
-    ramo.includes("[ciclo] publicação recusada: estado de indexação falhado"),
+    ramo.includes("[ciclo] publicação recusada"),
     "o ramo de recusa tem de registar a marca estável"
   );
   assert.match(ramo, /\breturn\b/, "o ramo de recusa tem de sair sem publicar");
