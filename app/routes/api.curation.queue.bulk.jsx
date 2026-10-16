@@ -1,5 +1,5 @@
 import { authenticateAdmin } from "../utils/authenticate.server";
-import { bulkSetMarginPct, bulkTransitionPending, loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
+import { bulkSetMarginPct, bulkTransitionPending, comPrazoDeRota, loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { partitionBulkEligible } from "../../lib/curation/bulkEligibility.js";
 import { assertMarginPct } from "../../lib/importer/pricing/pricing.server.js";
 import { invalidateCurationQueueCache } from "../../lib/importer/curation/index.js";
@@ -79,7 +79,7 @@ export const action = async ({ request }) => {
       assertBulkConfirm(eligible.length, body.confirmCount, {
         what: actionName.startsWith("approve") ? "Aprovar" : "Rejeitar",
       });
-      const result = await bulkTransitionPending(eligible, targetStatus);
+      const result = await comPrazoDeRota(() => bulkTransitionPending(eligible, targetStatus));
       invalidateCurationQueueCache();
       return Response.json({
         ok: true,
@@ -109,7 +109,7 @@ export const action = async ({ request }) => {
           return Response.json({ ok: false, error: err?.message || String(err) }, { status: 400 });
         }
       }
-      const result = await bulkSetMarginPct(skus, marginPct);
+      const result = await comPrazoDeRota(() => bulkSetMarginPct(skus, marginPct));
       invalidateCurationQueueCache();
       return Response.json({
         ok: true,

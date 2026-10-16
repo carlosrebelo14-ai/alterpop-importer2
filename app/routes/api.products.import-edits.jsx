@@ -3,6 +3,7 @@ import { parseCsv } from "../../lib/importer/catalog/csvExport.server.js";
 import { prisma, safePrisma } from "../../lib/prisma/prismaSafe.server.js";
 import {
   approveProduct,
+  comPrazoDeRota,
   rejectProduct,
   setManualOverride,
   getCurationQueueEntry,
@@ -207,13 +208,13 @@ export const action = async ({ request }) => {
       if (preco != null) overrides.price = preco;
       if (Object.keys(overrides).length) {
         const motivoCell = idx.motivoPreco !== -1 ? (row[idx.motivoPreco] || "").trim() : "";
-        await setManualOverride(sku, overrides, { by: author, reason: motivoCell || "import CSV" });
+        await comPrazoDeRota(() => setManualOverride(sku, overrides, { by: author, reason: motivoCell || "import CSV" }));
       }
 
       if (estadoRaw === "APPROVED") {
-        await approveProduct(sku);
+        await comPrazoDeRota(() => approveProduct(sku));
       } else if (estadoRaw === "REJECTED") {
-        await rejectProduct(sku);
+        await comPrazoDeRota(() => rejectProduct(sku));
       }
 
       applied.push({ line: lineNo, sku });

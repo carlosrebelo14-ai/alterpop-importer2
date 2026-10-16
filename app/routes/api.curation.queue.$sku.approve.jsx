@@ -1,6 +1,7 @@
 import { authenticateAdmin } from "../utils/authenticate.server";
 import {
   approveProduct,
+  comPrazoDeRota,
 } from "../../lib/curation/curationQueue.server.js";
 import { invalidateCurationQueueCache } from "../../lib/importer/curation/index.js";
 
@@ -21,7 +22,7 @@ export const action = async ({ request, params }) => {
   }
 
   try {
-    const { item, previousSnapshot } = await approveProduct(sku);
+    const { item, previousSnapshot } = await comPrazoDeRota(() => approveProduct(sku));
     invalidateCurationQueueCache();
     return Response.json({
       ok: true,

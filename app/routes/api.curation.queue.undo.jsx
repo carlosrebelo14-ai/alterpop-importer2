@@ -1,5 +1,5 @@
 import { authenticateAdmin } from "../utils/authenticate.server";
-import { restoreQueueSnapshots } from "../../lib/curation/curationQueue.server.js";
+import { comPrazoDeRota, restoreQueueSnapshots } from "../../lib/curation/curationQueue.server.js";
 import { invalidateCurationQueueCache } from "../../lib/importer/curation/index.js";
 
 /**
@@ -26,7 +26,7 @@ export const action = async ({ request }) => {
   }
 
   try {
-    const result = await restoreQueueSnapshots(snapshots);
+    const result = await comPrazoDeRota(() => restoreQueueSnapshots(snapshots));
     invalidateCurationQueueCache();
     // Decisão 3: os ignorados (já publicados na Shopify) vêm na resposta, com a contagem e os SKU.
     return Response.json({

@@ -1,5 +1,5 @@
 import { authenticateAdmin } from "../utils/authenticate.server";
-import { rejectProduct } from "../../lib/curation/curationQueue.server.js";
+import { comPrazoDeRota, rejectProduct } from "../../lib/curation/curationQueue.server.js";
 import { invalidateCurationQueueCache } from "../../lib/importer/curation/index.js";
 
 /**
@@ -19,7 +19,7 @@ export const action = async ({ request, params }) => {
   }
 
   try {
-    const { item, previousSnapshot } = await rejectProduct(sku);
+    const { item, previousSnapshot } = await comPrazoDeRota(() => rejectProduct(sku));
     invalidateCurationQueueCache();
     return Response.json({
       ok: true,
