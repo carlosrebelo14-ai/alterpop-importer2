@@ -661,6 +661,59 @@ async function main() {
     assert.deepEqual(await q.getCurationQueueEntry("H16"), antes, "o item publicado não pode mudar");
   });
 
+  await caso("D44a unitário: reindex não repõe approvedAt de APPROVED humano (DBG-44)", async () => {
+    escreverRegras([REGRA_APROVA_LEGO]);
+    escreverFila([
+      { sku: "H9", title_en: "H9", status: "APPROVED", reason: "manual_dashboard", shopifyStatus: "ACTIVE", statusChangedAt: DECIDIDO, metadata: { origem: "humano", approvedAt: DECIDIDO, rejectedAt: null } },
+    ]);
+    await q.upsertCurationQueueFromRecord(registo("H9"));
+    const item = await q.getCurationQueueEntry("H9");
+    assert.equal(item.metadata.approvedAt, DECIDIDO, "a data da aprovação humana tem de sobreviver ao reindex");
+  });
+
+  await caso("D44b unitário: reindex não repõe rejectedAt de REJECTED humano (DBG-44)", async () => {
+    escreverRegras([REGRA_APROVA_LEGO]);
+    escreverFila([
+      { sku: "H9b", title_en: "H9b", status: "REJECTED", reason: "manual_dashboard", shopifyStatus: "DRAFT", statusChangedAt: DECIDIDO, metadata: { origem: "humano", rejectedAt: DECIDIDO, approvedAt: null } },
+    ]);
+    await q.upsertCurationQueueFromRecord(registo("H9b"));
+    const item = await q.getCurationQueueEntry("H9b");
+    assert.equal(item.metadata.rejectedAt, DECIDIDO, "a data da rejeição humana tem de sobreviver ao reindex");
+  });
+
+  await caso("D44c lote com fila externa: reindex não repõe approvedAt de APPROVED humano (DBG-44)", async () => {
+    escreverRegras([REGRA_APROVA_LEGO]);
+    const fila = {
+      version: 1,
+      updatedAt: null,
+      items: [{ sku: "H9c", title_en: "H9c", status: "APPROVED", reason: "manual_dashboard", shopifyStatus: "ACTIVE", statusChangedAt: DECIDIDO, metadata: { origem: "humano", approvedAt: DECIDIDO, rejectedAt: null } }],
+    };
+    await q.upsertCurationQueueBatchFromRecords([registo("H9c")], { queue: fila });
+    assert.equal(itemDe(fila, "H9c").metadata.approvedAt, DECIDIDO);
+  });
+
+  await caso("D44e lote sem opções (refresh do catálogo): reindex não repõe approvedAt de APPROVED humano (DBG-44)", async () => {
+    escreverRegras([REGRA_APROVA_LEGO]);
+    escreverFila([
+      { sku: "H9e", title_en: "H9e", status: "APPROVED", reason: "manual_dashboard", shopifyStatus: "ACTIVE", statusChangedAt: DECIDIDO, metadata: { origem: "humano", approvedAt: DECIDIDO, rejectedAt: null } },
+    ]);
+    await q.upsertCurationQueueBatchFromRecords([registo("H9e")]);
+    const item = await q.getCurationQueueEntry("H9e");
+    assert.equal(item.metadata.approvedAt, DECIDIDO);
+  });
+
+  await caso("D44t flush do worker com approvedAt null não repõe a data de APPROVED humano (DBG-44)", async () => {
+    escreverFila([
+      { sku: "T5", title_en: "T5", status: "APPROVED", reason: "manual_dashboard", shopifyStatus: "ACTIVE", statusChangedAt: DECIDIDO, metadata: { origem: "humano", approvedAt: DECIDIDO, rejectedAt: null } },
+    ]);
+    await q.flushCurationQueueItems([
+      { sku: "T5", title_en: "T5", status: "PENDING", reason: "pending_review", shopifyStatus: "DRAFT", metadata: { approvedAt: null, rejectedAt: null } },
+    ]);
+    const item = await q.getCurationQueueEntry("T5");
+    assert.equal(item.status, "APPROVED");
+    assert.equal(item.metadata.approvedAt, DECIDIDO, "o flush do worker não pode repor approvedAt a null");
+  });
+
   fs.rmSync(projectRoot, { recursive: true, force: true });
 
   if (falhas) {
