@@ -199,8 +199,8 @@ export const action = async ({ request }) => {
     throw err;
   }
 
-  // DBG-105: a reserva é tomada aqui, sem await até ao arranque. Não depende de force: force só salta o gate de
-  // estado, acima. Se o ciclo já publica, responde 409.
+  // DBG-105: a reserva é tomada aqui, sem await entre ela e o initShopifySyncJob, e segue com o job até ao arranque
+  // em background. Não depende de force: force só salta o gate de estado, acima. Se o ciclo já publica, responde 409.
   const reserva = tentarReservarPublicacao();
   if (!reserva) {
     return Response.json({ ok: false, error: "Já existe uma sincronização Shopify em curso." }, { status: 409 });
