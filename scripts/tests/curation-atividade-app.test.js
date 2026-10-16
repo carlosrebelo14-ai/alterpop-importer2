@@ -177,6 +177,42 @@ await check("D7: sem marcador o mesmo script grava (o override sai)", () => {
   assert.deepEqual(depois, {}, "o override de título tinha de sair");
 });
 
+// D7 (2b-1): todos os escritores que chamam recusarSeAtividadeApp recusam com marcador vivo, com código 1 e sem gravar.
+const ESCRITORES_COM_GUARDA = [
+  "scripts/catalog/catalog-purge-reindex.js",
+  "scripts/catalog/character-import.js",
+  "scripts/catalog/curation-mark-deleted.js",
+  "scripts/catalog/curation-override-clear.js",
+  "scripts/catalog/curation-requeue-deleted.js",
+  "scripts/catalog/curation-revert-published.js",
+  "scripts/catalog/last-price-write-backfill.js",
+  "scripts/catalog/line-publish-verify.js",
+  "scripts/catalog/price-reconcile-apply.js",
+  "scripts/catalog/run-approved-sync.js",
+  "scripts/catalog/shopify-products-purge.js",
+  "scripts/curation/curation-spot-check.js",
+  "scripts/curation/elite-curation-purge.js",
+  "scripts/curation/repair-spot-check-products.js",
+  "scripts/pilot-batch-select.js",
+  "scripts/sync/run-live-import.js",
+  "scripts/sync/stream-import-dry-run.js",
+  "scripts/sync/verify-post-ai-removal.js",
+];
+
+await check("D7: os escritores com guarda recusam com atividade da app viva (código 1, mensagem da guarda)", () => {
+  limpar();
+  const retirar = marcarAtividadeApp({ tipo: "indexacao", pid: process.pid, dir: tmp });
+  try {
+    for (const script of ESCRITORES_COM_GUARDA) {
+      const r = correrScript([script], tmp);
+      assert.equal(r.codigo, 1, `${script}: código ${r.codigo}; saída: ${r.saida.slice(-300)}`);
+      assert.match(r.saida, /Recusado/, `${script}: a recusa tem de vir da guarda`);
+    }
+  } finally {
+    retirar();
+  }
+});
+
 fs.rmSync(tmp, { recursive: true, force: true });
 if (falhas) {
   console.error(`\n${falhas} falha(s)`);

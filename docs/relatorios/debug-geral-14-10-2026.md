@@ -215,6 +215,15 @@ Três lentes, uma de cada vez, sobre o diff de `origin/main` a `36a9424` (69 fic
 | DBG-70 | Baixa | pré-existente | `indexingStream.server.js:354-362, 149-163` | O listener de progresso continua ligado depois da paragem. Progresso tardio repõe `running` na memória e no disco, e a pausa perde-se. O gate fica seguro, porque a memória `running` recusa. |
 | DBG-71 | Baixa | pré-existente | `api.shopify-sync.jsx:131, 202` | A publicação manual não passa pelo portão da Decisão 7 nem verifica indexação em curso. |
 
+### Pendentes de `37bab0e`: decisões do arquiteto (16/10/2026)
+
+- **D2 no reset (DBG-72).** Fica para o 2b-3. O reset continua proibido em produção até lá. Sem código neste PR.
+- **Lista de scripts D7.** Bloqueia, e a verificação mostrou que os seis já chamavam `recusarSeAtividadeApp` no início de `main` ou no nível do módulo: `run-approved-sync.js:26`, `verify-post-ai-removal.js:25`, `catalog-purge-reindex.js:20`, `price-reconcile-apply.js:119`, `curation-spot-check.js:491` e `stream-import-dry-run.js:13`. Ao todo são 18 escritores com guarda, não 15. O teste `curation-atividade-app.test.js` passou a correr os 18 com um marcador vivo: código 1 e mensagem da guarda. M6 (tirar a guarda de `run-approved-sync.js`) deixa o teste vermelho. `stream-import-dry-run.js` grava a fila mesmo com `dryRun=true`: DBG-73, para o 2b-2.
+- **D6 literal.** Aceita a leitura com regras. PENDING sem decisão humana continua governado por AUTO_APPROVE e AUTO_REJECT, e um item novo pode nascer APPROVED ou REJECTED pela regra. Sem código. O texto da Decisão 35 é corrigido no PR de documentação.
+- **D5 de ponta a ponta.** Verificado e não confirmado. O checkpoint só avança depois do flush confirmado. O bloco citado (`indexingStream.server.js:277-287`) é o `finishDone`, que grava `checkpointScanned: null`, e não avança o checkpoint. O avanço só existe em `catalog-index-worker.mjs:60-68`, chamado por `confirmarJanelaDaFila` depois do `await flush` (`syncCatalogWithProgress.server.js:81-86`, com chamadas em `:201`, `:267` e `:292`). O progresso do principal não traz checkpoint (`indexingStream.server.js:113-114`, `:355`). Quando não há fila em memória, o checkpoint segue o lote, depois do insert na BD (`syncCatalogWithProgress.server.js:265-267`), e não há fila para confirmar. A recusa de flush com checkpoint parado já está coberta por `catalog-checkpoint-ordem.test.js`, caso C2. Sem código.
+- **Purga de elite.** Fica no DBG-43, 2b-2. A purga continua proibida em produção. Sem código.
+- **Custo no lock.** Log por lote no processo principal: `[fila] lote de N itens em X ms`, só com números. Medido na Fly depois do deploy.
+
 **Dívida baixa do diff** (lista para a descrição do PR #111): DBG-53, DBG-54, DBG-55, DBG-60, DBG-61, DBG-64, DBG-65, DBG-66, DBG-67 e DBG-68. O DBG-69 sai desta lista, corrigido no 2b-1.
 
 **Numeração.** DBG-56 é usado: o blame mostrou que a espera em processo sem prazo é anterior ao diff. Os DBG-57 e DBG-49 vão para o 2b-2 juntos, porque ambos tratam de itens apagados no admin.
