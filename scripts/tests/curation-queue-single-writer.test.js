@@ -81,8 +81,13 @@ check("cada escrita exportada de curationQueue.server.js é registada em ESCRITA
   assert.ok(registadas.length >= 10, `registo com poucas operações: ${registadas.length}`);
 
   // Escritas exportadas que tocam o lock de escrita: têm de estar registadas.
+  // Leituras que tomam o lock para não ler a meio de uma escrita (DBG-04, Decisão 2): não escrevem, e
+  // ficam fora do registo. Têm de ser exportadas, para o teste não ficar a verificar um nome que não existe.
+  const LEITURAS_COM_LOCK = ["lerEstadoAtualNaFila"];
   const exportadas = [...src.matchAll(/export async function (\w+)\(/g)].map((m) => m[1]);
+  for (const nome of LEITURAS_COM_LOCK) assert.ok(exportadas.includes(nome), `leitura com lock não exportada: ${nome}`);
   const escritoras = exportadas.filter((nome) => {
+    if (LEITURAS_COM_LOCK.includes(nome)) return false;
     const corpo = src.slice(src.indexOf(`export async function ${nome}(`));
     const fim = corpo.indexOf("\n}\n");
     return /withCurationQueueLock\(|mutateCurationQueue\(|flushCurationQueueItems|saveCurationQueue\(/.test(corpo.slice(0, fim < 0 ? 400 : fim + 2));

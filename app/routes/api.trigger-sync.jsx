@@ -4,7 +4,10 @@ import {
   isCatalogIndexingRunning,
   startCatalogIndexingWorker,
 } from "../../lib/importer/catalog/indexingStream.server.js";
-import { readCatalogRebuildStatus } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
+import {
+  podePublicarDepoisDaIndexacao,
+  readCatalogRebuildStatus,
+} from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { runApprovedShopifySync } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
 import { syncPublishedStockLevels } from "../../lib/importer/shopify/publishedStockSync.server.js";
 import { isShopifySyncRunning } from "../../lib/importer/shopify/shopifySyncJob.server.js";
@@ -182,10 +185,13 @@ export const action = async ({ request }) => {
           await new Promise((r) => setTimeout(r, INDEXING_POLL_MS));
         }
 
+        // Decisão 6. Estado ilegível ou falhado recusa a publicação. A recusa fica no log com a marca
+        // estável e em Relatórios, como "não correu".
         const status = await readCatalogRebuildStatus(shop);
-        if (status.error) {
-          console.error(`[trigger-sync] indexação terminou com erro (${status.error}) — publish cancelado.`);
-          await markMarginErosionCycleSkipped(shop, `indexação terminou com erro (${status.error})`);
+        if (!podePublicarDepoisDaIndexacao(status)) {
+          const motivo = status?.error || "estado de indexação falhado";
+          console.error(`[ciclo] publicação recusada: estado de indexação falhado (${motivo}).`);
+          await markMarginErosionCycleSkipped(shop, `indexação terminou com erro (${motivo})`);
           return;
         }
 

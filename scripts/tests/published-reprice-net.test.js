@@ -109,6 +109,8 @@ const lastLegacy = (price, extra = {}) =>
   buildLastPriceWrite({ price, cost: 12.09, pvpr: 17.95, marginPct: 10, priceStatus: "PISO_PVPR", source: "publisher", rule: "LEGACY", ...extra });
 async function publishedItem(sku, lastPrice, overrides) {
   await q.setManualOverride(sku, overrides || {});
+  // Decisão 2 (DBG-04): só um APPROVED passa a PUBLISHED. O fixture segue o fluxo real: aprova e depois publica.
+  await q.approveProduct(sku);
   await q.markQueueItemPublished(sku, `gid://shopify/Product/${sku}`, { lastPriceWrite: lastPrice ? lastLegacy(lastPrice) : null });
 }
 

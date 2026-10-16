@@ -2521,6 +2521,7 @@ export default function CurationDashboard() {
                             liveError,
                             syncError,
                             wasPublished,
+                            publicadoNaShopifyAlerta,
                             deletedInAdminAt,
                             salesUnits30d,
                             barcode,
@@ -2732,6 +2733,11 @@ export default function CurationDashboard() {
                                   {wasPublished && status !== "PUBLISHED" && (
                                     <Tooltip content={deletedInAdminAt ? `Apagado no admin em ${new Date(deletedInAdminAt).toLocaleDateString("pt-PT")}. Só volta à loja com aprovação nova.` : "Já esteve publicado e foi apagado no admin. Só volta à loja com aprovação nova."}>
                                       <Badge tone="info">Já esteve publicado</Badge>
+                                    </Tooltip>
+                                  )}
+                                  {publicadoNaShopifyAlerta && (
+                                    <Tooltip content={`Criado na Shopify em ${new Date(publicadoNaShopifyAlerta.em).toLocaleDateString("pt-PT")}. Chegou uma decisão humana durante a corrida, por isso não ficou publicado. Sem despublicação automática: retirar à mão na Shopify se for preciso.`}>
+                                      <Badge tone="critical">Publicado na Shopify</Badge>
                                     </Tooltip>
                                   )}
                                   {showReason && (
