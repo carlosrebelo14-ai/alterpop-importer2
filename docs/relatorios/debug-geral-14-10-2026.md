@@ -337,7 +337,25 @@ Origem: `delta` é correção desta rodada. `PR` é código deste PR anterior à
 
 **Reconfirmado, sem número novo.** DBG-96 (`apagarLote` com `safePrisma` sem `rethrow`): a lente do delta confirmou, e o achado continua latente, porque a execução está bloqueada.
 
-**Dívida baixa do diff** (lista para a descrição do PR #111): DBG-53, DBG-54, DBG-55, DBG-60, DBG-61, DBG-64, DBG-65, DBG-66, DBG-67, DBG-68, DBG-93, DBG-98, DBG-99, DBG-117 a DBG-122, DBG-129 e DBG-130. O DBG-69 sai desta lista, corrigido no 2b-1.
+### Achados da lente final (26218be..63c8b56, 16/10)
+
+Uma lente, aplicada a cada um dos nove ficheiros de código do delta. Saíram quinze achados. Todos foram verificados por um agente adversarial, e todos se confirmaram. Nenhum ficou médio ou alto no veredito. Três achados que o revisor deu como médios foram rebaixados pelo verificador, com a razão registada: DBG-133, DBG-135 e DBG-137. Pela regra de convergência, o ciclo fecha sem correções.
+
+Origem: `delta` é correção desta rodada. `PR` é código deste PR anterior à rodada. `main` já existe em `origin/main`.
+
+| ID | Sev | Origem | Local | Achado e estado |
+|---|---|---|---|---|
+| DBG-131 | Baixa | delta | `app/routes/api.curation.elite-purge.jsx:35` | Com a fila já degradada, a rota de dry-run deixou de ver `DB_DEGRADED`, porque lê a fila sem o loader. Responde 500 com o erro cru, em vez de 503 com a causa. Só dry-run, sem escrita. Não corrigido. |
+| DBG-132 | Baixa | delta | `app/routes/api.curation.elite-purge.jsx:42`, `lib/curation/curationQueue.server.js:218` | Fila em falta ou ilegível: a rota responde 500 com `err.message` cru (caminho do ficheiro ou erro de JSON). Nenhum teste fixa essa resposta. Não corrigido. |
+| DBG-133 | Baixa | delta | `lib/curation/curationQueue.server.js:217-218` | `lerFicheiroDaFilaSemEfeitos` faz `readFile` e `JSON.parse` por pedido, sem cache nem partilha de leitura. Medido com uma fila de 15,6 MB e 29.600 itens: cerca de 225 ms de bloqueio do event loop por pedido, e cerca de 55 MB de heap extra por pedido. O OOM não foi reproduzido. O revisor deu média. O verificador deu baixa. Não corrigido. |
+| DBG-134 | Baixa | delta | `lib/curation/curationQueue.server.js:219` | Ficheiro com JSON válido e `items` que não é array passa como fila vazia. A rota responde `ok: true` com `sem_entrada`. A tarefa de manutenção responde `fila_ilegivel`. Não corrigido. |
+| DBG-135 | Baixa | delta | `app/routes/api.curation.elite-purge.jsx:35`, `lib/importer/curation/eliteCuration.server.js:154` | A rota de dry-run usa as leituras do catálogo com `rethrow`. Numa corrupção grava `DB_DEGRADED` e copia `-wal` e `-shm`, contra o docstring "não escreve nada". É o comportamento do DBG-116, e o docstring está desatualizado. O revisor deu média. O verificador deu baixa. Não corrigido. |
+| DBG-136 | Baixa | delta | `lib/importer/curation/eliteCuration.server.js:100` | Com a origem `reset` antes de `statusChangedAt` (DBG-124), os itens reset saem de `retidos_decisao_humana`. O comentário da Decisão 5 ainda os descreve como decisão humana. Não corrigido. |
+| DBG-137 | Baixa | PR | `scripts/curation/elite-curation-purge.js:24` | A CLI de dry-run não tem a guarda de BD em falta da tarefa. Com a BD em falta, sai com código 1 e stack P2021 crua, e deixa `dev.sqlite` criado, apesar de dizer que nada é escrito. O teste P5 corre o mesmo import sem verificar os ficheiros. O revisor deu média. O verificador deu baixa. Não corrigido. |
+| DBG-138 | Baixa | delta | `scripts/tests/elite-purge-dbg43.test.js` (T13) | Nenhum teste exercita a ligação da CLI às leituras sem efeitos. T13 passa com ou sem ela. Reverter para o loader com efeitos não falha nenhum teste. Não corrigido. |
+| DBG-139 | Baixa | delta | `scripts/tests/elite-purge-dry-run.test.js:293` | O teste (e) exercita `caminhoDaBd` com ambiente explícito. A chamada sem argumentos em `main()` não está coberta. Reverter para a forma relativa ao cwd passa todos os testes. Não corrigido. |
+
+**Dívida baixa do diff** (lista para a descrição do PR #111): DBG-53, DBG-54, DBG-55, DBG-60, DBG-61, DBG-64, DBG-65, DBG-66, DBG-67, DBG-68, DBG-93, DBG-98, DBG-99, DBG-117 a DBG-122, DBG-129, DBG-130 e DBG-131 a DBG-139. O DBG-69 sai desta lista, corrigido no 2b-1.
 
 **Numeração.** DBG-56 é usado: o blame mostrou que a espera em processo sem prazo é anterior ao diff. Os DBG-57 e DBG-49 vão para o 2b-2 juntos, porque ambos tratam de itens apagados no admin.
 
