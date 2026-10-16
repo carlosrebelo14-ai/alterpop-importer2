@@ -27,6 +27,8 @@ import {
   runShopifyCatalogReset,
 } from "../../lib/importer/shopify/shopifyReset.server.js";
 
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
+
 const args = process.argv.slice(2);
 const EXECUTE = args.includes("--execute");
 const SHOP =
@@ -36,6 +38,7 @@ const SHOP =
   "jyr17t-wr.myshopify.com";
 
 async function main() {
+  recusarSeAtividadeApp("shopify-products-purge");
   const session = { shop: SHOP };
 
   const count = await countShopifyProductsForReset(session);

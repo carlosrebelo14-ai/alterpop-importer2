@@ -187,5 +187,40 @@ As quatro execuções correram no `main` em `224c758`. Esse commit só acrescent
 DBG-37 fica fechado em produção no SHA `a9930c9`.
 
 
+## 12. Lote 2b-1: lentes sobre `36a9424` (16/10/2026)
+
+Três lentes, uma de cada vez, sobre o diff de `origin/main` a `36a9424` (69 ficheiros). Classificação pelo `git blame`. Só achados de severidade média ou alta causados pelo diff bloqueiam. Os bloqueantes corrigidos no commit seguinte a esta secção: renovação do lock que truncava o ficheiro (lente 1), cache com estado não gravado depois de falha (lente 1), e undo que gravava marca de decisão humana em itens de regra (lente 2).
+
+| ID | Sev | Origem | Local | Achado |
+|---|---|---|---|---|
+| DBG-51 | Baixa | pré-existente | `curationQueue.server.js:444` | `.tmp` órfão quando a gravação falha com ENOSPC. O `writeFile` do tmp fica fora do `try`. Origem `c5a4645`. |
+| DBG-52 | Baixa | pré-existente | `catalogRebuildStatus.server.js:76-106` | Race do ficheiro de estado de indexação: worker e principal fazem leitura-modificação-escrita sem lock. Efeito seguro, o upsert é idempotente. |
+| DBG-53 | Baixa | diff | `curationQueueFileLock.server.js` (`libertarSeObsoleto`) | Race do unlink de lock obsoleto: dois titulares podem ficar com o lock. Janela de sub-milissegundo. |
+| DBG-54 | Baixa | diff | `curationQueueFileLock.server.js:194-199, 235-247` | Erros de renovação e de libertação engolidos. Se o unlink falhar, o lock fica preso até 10 min. |
+| DBG-55 | Baixa | diff | `scripts/catalog/price-reconcile-apply.js:253`, `curation-requeue-deleted.js:147`, `curation-mark-deleted.js:104` | Scripts seguram o lock durante o ciclo inteiro. Aprovações do painel esperam 30 s e devolvem 503 "fila ocupada". |
+| DBG-56 | Média | pré-existente | `curationQueue.server.js:72-82` | Espera em processo sem prazo (cadeia `queueLock`). Existe em `origin/main` (`c5a4645`). O diff alargou a ocupação com o lote de 50, corrigido por lote de 10 no mesmo commit. Para o 2b-2. |
+| DBG-57 | Média | pré-existente | `curationQueue.server.js:1407-1424` | Item apagado no admin é reposto pelo undo. Snapshot APPROVED volta sem marcador. PENDING perde `deletedInAdmin`. Vai para o 2b-2 junto com DBG-49. |
+| DBG-58 | Média | pré-existente | `curationQueue.server.js:1424` | O undo substitui a metadata inteira pelo snapshot. Overrides, `lastPriceWrite`, `costAtPublish` e `deletedInAdmin` desaparecem. |
+| DBG-59 | Média | pré-existente | `shopifyReset.server.js:237, 268`; `scripts/catalog/curation-revert-published.js:30` | O reset põe `targetStatus` em qualquer item com `shopifyProductId`, incluindo REJECTED por decisão humana. Um PUBLISHED rejeitado pode ser republicado. |
+| DBG-60 | Baixa | diff | `curationQueue.server.js:1471` | `alertaPublicadoNaShopify` nunca sai, nem com nova aprovação e publicação, nem com reset. O undo fica bloqueado para sempre. |
+| DBG-61 | Baixa | diff | `curationQueue.server.js:1468-1472`; `shopifyApprovedSync.server.js:353` | Se a regra recalcula o item durante a criação na Shopify, `markQueueItemPublished` grava só o alerta e não liga o item ao produto. O texto do painel fala de decisão humana, que não existe. |
+| DBG-62 | Baixa | pré-existente | `structuredCatalogFilter.server.js:489` | `net > 0` deixa passar `netPrice` null. Premium com null e regra AUTO_APPROVE fica APPROVED. O publicador devolve SYNC_ERROR "Preço não calculado". |
+| DBG-63 | Baixa | pré-existente | `shopifyApprovedSync.server.js:353` e catch | Falha em `markQueueItemPublished` depois de a Shopify criar o produto marca SYNC_ERROR sem `shopifyProductId`. O produto fica na loja sem ligação à fila. |
+| DBG-64 | Baixa | diff | `api.trigger-sync.jsx:191`; `catalogRebuildStatus.server.js:54-61, 69-90`; `indexingStream.server.js:156-157` | Pausa nos primeiros ~5 s: a memória fica `paused`, mas só `running` é lido da memória. O gate lê `completed` do disco e publica. Correção proposta: gravar a paragem com `flushCatalogRebuildStatus`. |
+| DBG-65 | Baixa | diff | `api.trigger-sync.jsx:191-195` | Mensagem "estado de indexação falhado" para paused, idle e running. O `return` salta também o sync de stock dos publicados (18b) e o catálogo de franquias. Consequência da Decisão 7. Aceite pelo arquiteto como está: stock atrasado é preferível a stock calculado sobre indexação incompleta. Nota para o 2b-3: aviso quando dois ciclos seguidos são recusados. |
+| DBG-66 | Baixa | diff | `shopifyApprovedSync.server.js:338, 374`; `curationQueue.server.js:1453-1458` | A releitura é por SKU e lê o ficheiro inteiro. Cerca de 70 ms por leitura com fila de 15,7 MB. Custo de N aprovados × 70 ms. Correção: reler uma vez por lote. |
+| DBG-67 | Baixa | diff | `indexingStream.server.js:232, 387, 400-403`; `atividadeApp.js:29` | Spawn falhado deixa o pid do principal no marcador de atividade. `atividadeAppEmCurso` fica verdadeiro até reiniciar a app. A reposição Shopify e os scripts de escrita recusam. Gatilho raro. |
+| DBG-68 | Baixa | diff | `scripts/maintenance/logs-summary.mjs:96, 131-132` | `INDEX_ULTIMA_CAUSA` e `INDEX_ULTIMA_ESTADO` saem do texto bruto da linha, sem validação por categoria. Contra o contrato do cabeçalho. A app só escreve valores fixos. |
+| DBG-69 | Média, se acontecer | pré-existente | `indexingStream.server.js:265-285`; `syncCatalogWithProgress.server.js:128-143, 364`; `shopifyApprovedSync.server.js:318-333` | Feed inválido (HTML com 200, cabeçalho trocado, linhas todas rejeitadas) termina `completed` com 0 linhas. O gate publica, e cada APPROVED passa a SYNC_ERROR por "SKU ausente". Corrigido no 2b-1: o gate exige `completed` com `totalRows > 0` (Decisão 7 do DBG-69). A recusa usa a marca "[ciclo] publicação recusada" com o motivo "indexação sem linhas". |
+| DBG-70 | Baixa | pré-existente | `indexingStream.server.js:354-362, 149-163` | O listener de progresso continua ligado depois da paragem. Progresso tardio repõe `running` na memória e no disco, e a pausa perde-se. O gate fica seguro, porque a memória `running` recusa. |
+| DBG-71 | Baixa | pré-existente | `api.shopify-sync.jsx:131, 202` | A publicação manual não passa pelo portão da Decisão 7 nem verifica indexação em curso. |
+
+**Dívida baixa do diff** (lista para a descrição do PR #111): DBG-53, DBG-54, DBG-55, DBG-60, DBG-61, DBG-64, DBG-65, DBG-66, DBG-67 e DBG-68. O DBG-69 sai desta lista, corrigido no 2b-1.
+
+**Numeração.** DBG-56 é usado: o blame mostrou que a espera em processo sem prazo é anterior ao diff. Os DBG-57 e DBG-49 vão para o 2b-2 juntos, porque ambos tratam de itens apagados no admin.
+
+**Efeito colateral local.** Os probes da lente de integridade acrescentaram linhas a `logs/execution-history.log`, às 14:15 UTC. O ficheiro é ignorado pelo git, é local e não vai para produção. Fica como está, por decisão do arquiteto.
+
+
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._

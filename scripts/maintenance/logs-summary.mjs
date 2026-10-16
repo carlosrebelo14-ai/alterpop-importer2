@@ -11,6 +11,7 @@
  *   [indexacao] inicio causa=<painel|ciclo|script|desconhecida> modo=<completa|retoma|purga>
  *   [indexacao] fim causa=<...> estado=<concluida|falhou|parada> duracao_s=<n> [indexados=<n>]
  *   [indexacao] worker terminou sem concluir (code=... signal=...)     → reinício do worker
+ *   [indexacao] lote-fila duracao_ms=<n> itens=<n>                    → um lote de escrita da fila
  *   [dbDegraded] recusado: <ação>                                      → escrita recusada
  *
  * Uso: node scripts/maintenance/logs-summary.mjs <ficheiro>
@@ -21,6 +22,7 @@ import { pathToFileURL } from "node:url";
 const CAUSAS = ["painel", "ciclo", "script", "desconhecida"];
 const INICIO_RE = /\[indexacao\] inicio causa=(\w+) modo=(\w+)/;
 const FIM_RE = /\[indexacao\] fim causa=(\w+) estado=(\w+) duracao_s=(\d+)/;
+const LOTE_FILA_RE = /\[indexacao\] lote-fila duracao_ms=(\d+) itens=(\d+)/;
 const ISO_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/;
 
 /** Marca de tempo em ISO, ou null se não for uma data válida. */
@@ -71,21 +73,34 @@ export function resumirLogs(texto) {
   let ultimoInicio = null;
   let ultimoFim = null;
   let aDecorrer = false;
+  // Decisão 6: contagem dos lotes de fila e o máximo da duração observada (ms).
+  let lotesFila = 0;
+  let loteFilaMaxMs = null;
+  // Uma linha sem marca própria (DBG-40) herda a última marca vista antes dela, na ordem do ficheiro.
+  let tsAnterior = null;
 
   for (const e of entradas) {
+    const ts = e.ts ?? tsAnterior;
+    if (e.ts) tsAnterior = e.ts;
     const ini = e.linha.match(INICIO_RE);
     if (ini) {
       inicios += 1;
       porCausa[CAUSAS.includes(ini[1]) ? ini[1] : "desconhecida"] += 1;
-      ultimoInicio = { causa: ini[1], ts: e.ts };
+      ultimoInicio = { causa: ini[1], ts };
       aDecorrer = true;
       continue;
     }
     const fim = e.linha.match(FIM_RE);
     if (fim) {
       if (fim[2] in porEstado) porEstado[fim[2]] += 1;
-      ultimoFim = { causa: fim[1], estado: fim[2], duracao: fim[3], ts: e.ts };
+      ultimoFim = { causa: fim[1], estado: fim[2], duracao: fim[3], ts };
       aDecorrer = false;
+    }
+    const lote = e.linha.match(LOTE_FILA_RE);
+    if (lote) {
+      lotesFila += 1;
+      const ms = Number(lote[1]);
+      if (loteFilaMaxMs === null || ms > loteFilaMaxMs) loteFilaMaxMs = ms;
     }
   }
 
@@ -117,6 +132,8 @@ export function resumirLogs(texto) {
     INDEX_ULTIMA_ESTADO: ultimoFim?.estado ?? "-",
     INDEX_ULTIMA_DURACAO_S: ultimoFim?.duracao ?? "-",
     INDEX_ULTIMO_FIM_TS: ultimoFim?.ts ?? "-",
+    FILA_LOTES: lotesFila,
+    FILA_LOTE_MAX_MS: loteFilaMaxMs ?? "-",
   };
 }
 

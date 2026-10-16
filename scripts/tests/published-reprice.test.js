@@ -100,6 +100,8 @@ const last = (price, extra = {}) => buildLastPriceWrite({ price, cost: 12.09, pv
 async function publishedItem(sku, lastPrice, productId) {
   await q.setManualOverride(sku, {});
   const entry = await q.getCurationQueueEntry(sku);
+  // Decisão 2 (DBG-04): só um APPROVED passa a PUBLISHED. O fixture segue o fluxo real: aprova e depois publica.
+  await q.approveProduct(sku);
   await q.markQueueItemPublished(sku, productId ?? `gid://shopify/Product/${sku}`, { lastPriceWrite: lastPrice ? last(lastPrice) : null });
   return entry;
 }

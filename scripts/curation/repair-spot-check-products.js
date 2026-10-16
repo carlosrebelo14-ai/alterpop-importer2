@@ -12,6 +12,7 @@ import { resolveProductStatus } from "../../lib/importer/curation/index.js";
 import { ImportJob } from "../../lib/importer/jobs/ImportJob.js";
 import { ProductImporter } from "../../lib/importer/importers/ProductImporter.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const TARGETS = [
   {
@@ -48,6 +49,7 @@ async function loadRecordForSku(sku, syntheticFrom) {
 }
 
 async function main() {
+  recusarSeAtividadeApp("repair-spot-check-products");
   const session = await prisma.session.findFirst({
     where: { shop: "alterpop-store.myshopify.com" },
     orderBy: { expires: "desc" },

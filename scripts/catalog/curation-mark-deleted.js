@@ -17,12 +17,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
-import { loadCurationQueue, markQueueItemDeletedInAdmin } from "../../lib/curation/curationQueue.server.js";
+import { comLockDaFila, loadCurationQueue, markQueueItemDeletedInAdmin } from "../../lib/curation/curationQueue.server.js";
 import { readCatalogRebuildStatus } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { fetchLiveVariantsBySku } from "../../lib/importer/shopify/liveVariantsBySku.server.js";
 import { planDeletedMigration } from "../../lib/curation/deletedMigration.js";
+
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const EXECUTE = process.argv.includes("--execute");
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
@@ -46,6 +48,7 @@ function appendErrors(entries) {
 const errorEntry = (codigo, sku, mensagem) => ({ operacao: "curation-mark-deleted", codigo, mensagem, timestamp: new Date().toISOString(), contexto: { sku } });
 
 async function main() {
+  recusarSeAtividadeApp("curation-mark-deleted");
   console.log(`=== curation-mark-deleted (${SHOP})${EXECUTE ? " · EXECUTE" : " · DRY-RUN — nada é escrito"} ===\n`);
   if (EXECUTE) {
     const st = await readCatalogRebuildStatus(SHOP);
@@ -97,15 +100,18 @@ async function main() {
   }
 
   let done = 0;
-  for (const r of migrate) {
-    try {
-      const item = await markQueueItemDeletedInAdmin(r.sku);
-      if (item) done += 1;
-      else errors.push(errorEntry("not_in_queue", r.sku, "SKU saiu da fila entre a leitura e a escrita"));
-    } catch (err) {
-      errors.push(errorEntry("write_failed", r.sku, err?.message || String(err)));
+  // Um lock para o lote inteiro (DBG-04, decisão 1): as escritas por SKU reutilizam-no.
+  await comLockDaFila(async () => {
+    for (const r of migrate) {
+      try {
+        const item = await markQueueItemDeletedInAdmin(r.sku);
+        if (item) done += 1;
+        else errors.push(errorEntry("not_in_queue", r.sku, "SKU saiu da fila entre a leitura e a escrita"));
+      } catch (err) {
+        errors.push(errorEntry("write_failed", r.sku, err?.message || String(err)));
+      }
     }
-  }
+  });
   appendErrors(errors);
   const after = new Map((await loadCurationQueue()).items.map((i) => [i.sku, i]));
   const ok = migrate.filter((r) => after.get(r.sku)?.status === "PENDING" && after.get(r.sku)?.metadata?.deletedInAdmin).length;

@@ -40,6 +40,7 @@ import {
 } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { loadCurationQueueForPanel } from "../../lib/curation/curationQueue.server.js";
 import { partitionPublishSelection, describeLeftOut } from "../../lib/curation/publishSelection.js";
+import { mostrarAlertaPublicado } from "../../lib/curation/alertaPublicado.js";
 import { countSmartRuleDecisions } from "../../lib/importer/curation/smartRules.server.js";
 import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
 import { translateCategoryLabel } from "../../lib/importer/catalog/categoryLabel.js";
@@ -489,7 +490,11 @@ export default function CurationDashboard() {
         setToast({ content: data?.error || "Não foi possível desfazer ação", error: true });
         return;
       }
-      setToast({ content: "Ação desfeita com sucesso" });
+      // Decisão 3: itens já publicados na Shopify não são desfeitos e vêm reportados.
+      const ignorados = data.skippedCount
+        ? ` ${data.skippedCount} ignorado(s), já publicado(s) na Shopify (${(data.skipped || []).slice(0, 5).join(", ")}).`
+        : "";
+      setToast({ content: `Ação desfeita com sucesso.${ignorados}` });
       setUndoSnapshots([]);
       setListRefreshKey((k) => k + 1);
       refreshDashboardStats();
@@ -2517,6 +2522,7 @@ export default function CurationDashboard() {
                             liveError,
                             syncError,
                             wasPublished,
+                            publicadoNaShopifyAlerta,
                             deletedInAdminAt,
                             salesUnits30d,
                             barcode,
@@ -2728,6 +2734,11 @@ export default function CurationDashboard() {
                                   {wasPublished && status !== "PUBLISHED" && (
                                     <Tooltip content={deletedInAdminAt ? `Apagado no admin em ${new Date(deletedInAdminAt).toLocaleDateString("pt-PT")}. Só volta à loja com aprovação nova.` : "Já esteve publicado e foi apagado no admin. Só volta à loja com aprovação nova."}>
                                       <Badge tone="info">Já esteve publicado</Badge>
+                                    </Tooltip>
+                                  )}
+                                  {mostrarAlertaPublicado(item) && (
+                                    <Tooltip content={`Criado na Shopify em ${new Date(publicadoNaShopifyAlerta.em).toLocaleDateString("pt-PT")}. Chegou uma decisão humana durante a corrida, por isso não ficou publicado. Sem despublicação automática: retirar à mão na Shopify se for preciso.`}>
+                                      <Badge tone="critical">Publicado na Shopify</Badge>
                                     </Tooltip>
                                   )}
                                   {showReason && (

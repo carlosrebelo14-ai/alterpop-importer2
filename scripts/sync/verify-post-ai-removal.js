@@ -16,11 +16,13 @@
 import { runApprovedShopifySync } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { getCurationQueueEntry } from "../../lib/curation/curationQueue.server.js";
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
 const SKU = "0030506556343"; // Pikachu, um dos 8 do piloto
 
 async function main() {
+  recusarSeAtividadeApp("verify-post-ai-removal");
   const before = await getCurationQueueEntry(SKU);
   console.log(`=== Verificação pós-remoção de AI — SKU ${SKU} (${SHOP}) ===\n`);
   console.log(`Estado antes: status=${before?.status} shopifyStatus=${before?.shopifyStatus}\n`);

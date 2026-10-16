@@ -30,6 +30,8 @@ import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient
 import { fetchLiveVariantsBySku } from "../../lib/importer/shopify/liveVariantsBySku.server.js";
 import { planLastWriteBackfill } from "../../lib/importer/pricing/lastWriteBackfill.js";
 
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
+
 const args = process.argv.slice(2);
 const EXECUTE = args.includes("--execute");
 const skipIdx = args.indexOf("--skip");
@@ -59,6 +61,7 @@ function appendError(entry) {
 const eur = (n) => (n == null ? "—" : Number(n).toFixed(2));
 
 async function main() {
+  recusarSeAtividadeApp("last-price-write-backfill");
   console.log(`=== last-price-write-backfill (${SHOP})${EXECUTE ? " · EXECUTE" : " · DRY-RUN — nada é escrito"} ===\n`);
 
   if (EXECUTE) {

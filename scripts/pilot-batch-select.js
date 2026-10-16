@@ -64,6 +64,8 @@ import { FRANCHISE_UNIVERSES } from "../lib/importer/catalog/franchiseUniverses.
 import { FRANCHISE_LINES } from "../lib/importer/catalog/franchiseLines.js";
 import { titleOnlyUniverse } from "../lib/importer/catalog/franchiseResolver.server.js";
 
+import { recusarSeAtividadeApp } from "../lib/curation/atividadeApp.js";
+
 const args = process.argv.slice(2);
 const APPROVE = args.includes("--approve");
 const SHOP =
@@ -224,6 +226,7 @@ async function runPin(skus) {
 }
 
 async function main() {
+  recusarSeAtividadeApp("pilot-batch-select");
   if (PIN_SKUS.length) {
     await runPin(PIN_SKUS);
     return;

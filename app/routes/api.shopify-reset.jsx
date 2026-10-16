@@ -14,6 +14,8 @@ import {
   ShopifyAuthSessionError,
 } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { readDbDegraded } from "../../lib/health/dbDegraded.js";
+import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
+import { atividadeAppEmCurso, motivoDeRecusaDoReset } from "../../lib/curation/atividadeApp.js";
 
 const CONFIRM_WORD = "APAGAR";
 
@@ -84,6 +86,15 @@ export const action = async ({ request }) => {
       { ok: false, error: `BD em modo degradado: ${dbDegraded.cause}`, dbDegraded },
       { status: 503 }
     );
+  }
+
+  // Decisão 35 (D3): o reset reverte a fila e não corre com indexação em curso (409).
+  const motivoRecusa = motivoDeRecusaDoReset({
+    indexacaoEmCurso: isCatalogIndexingRunning(session.shop),
+    atividade: atividadeAppEmCurso(),
+  });
+  if (motivoRecusa) {
+    return Response.json({ ok: false, error: motivoRecusa }, { status: 409 });
   }
 
   if (await isShopifyResetRunning(session.shop)) {

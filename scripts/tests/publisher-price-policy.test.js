@@ -335,6 +335,7 @@ await check("produto novo devolve a última escrita (preço, custo, PVPR, margem
 await check("markQueueItemPublished grava a última escrita e a leitura devolve-a igual", async () => {
   const shop = makeShop();
   await q.setManualOverride("LW-2", {});
+  await q.approveProduct("LW-2");
   const r = await publish(shop, "LW-2");
   await q.markQueueItemPublished("LW-2", r.shopifyProductId, { lastPriceWrite: r.lastPriceWrite });
   const item = await q.getCurationQueueEntry("LW-2");
@@ -344,6 +345,7 @@ await check("produto existente com preço não escreve preço: sem última escri
   const shop = makeShop();
   shop.existing("LW-3", "19.90");
   await q.setManualOverride("LW-3", {});
+  await q.approveProduct("LW-3");
   const prev = buildLastPriceWrite({ price: 19.9, cost: 12.09, pvpr: 17.95, marginPct: 40, source: "backfill" });
   await q.recordLastPriceWrites([{ sku: "LW-3", write: prev }]);
   const r = await publish(shop, "LW-3");

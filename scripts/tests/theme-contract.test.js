@@ -329,8 +329,11 @@ await check("a app pede read_themes e nunca write_themes", () => {
 console.log("ligação ao lote");
 await check("o motor de sync corre a guarda depois da de franquias; a rota pré-verifica antes de iniciar o job", () => {
   const eng = fs.readFileSync(path.join(cwd, "lib/importer/shopify/shopifyApprovedSync.server.js"), "utf8");
-  assert.ok(eng.indexOf("assertThemeContractValid(client") > eng.indexOf("assertFranchiseConditionsAligned(client)"));
-  assert.ok(eng.indexOf("assertThemeContractValid(client") < eng.indexOf("const BATCH_SIZE") || eng.indexOf("assertThemeContractValid(client") < eng.indexOf("await sleep("));
+  // As guardas são chamadas pelas dependências reais do motor (DEPENDENCIAS_REAIS, Decisão 2 / teste injetado).
+  assert.match(eng, /verificarTema: assertThemeContractValid,/);
+  assert.match(eng, /verificarFranquias: assertFranchiseConditionsAligned,/);
+  assert.ok(eng.indexOf("dep.verificarTema(client") > eng.indexOf("dep.verificarFranquias(client)"));
+  assert.ok(eng.indexOf("dep.verificarTema(client") < eng.indexOf("const BATCH_SIZE") || eng.indexOf("dep.verificarTema(client") < eng.indexOf("await sleep("));
   const route = fs.readFileSync(path.join(cwd, "app/routes/api.shopify-sync.jsx"), "utf8");
   assert.ok(route.indexOf("assertThemeContractValid(") < route.indexOf("await initShopifySyncJob("));
   assert.match(route, /THEME_CONTRACT_INVALID|err\.code/);

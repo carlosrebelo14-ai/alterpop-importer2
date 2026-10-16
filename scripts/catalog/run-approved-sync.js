@@ -14,6 +14,7 @@
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { listCurationQueueItems } from "../../lib/curation/curationQueue.server.js";
 import { runApprovedShopifySync } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const args = process.argv.slice(2);
 const SHOP =
@@ -22,6 +23,7 @@ const SHOP =
   "jyr17t-wr.myshopify.com";
 
 async function main() {
+  recusarSeAtividadeApp("run-approved-sync");
   const approvedBefore = (await listCurationQueueItems("APPROVED")).map((i) => i.sku);
   console.log(`=== run-approved-sync (${SHOP}) ===`);
   console.log(`APPROVED na fila: ${approvedBefore.length}`);

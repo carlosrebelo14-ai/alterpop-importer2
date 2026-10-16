@@ -4,11 +4,13 @@
  * Usage: SYNC_LIMIT=5 node scripts/stream-import-dry-run.js
  */
 import { runImport } from "../../lib/importer/jobs/runImport.js";
+import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const limit = parseInt(process.env.SYNC_LIMIT || "5", 10);
 process.env.DRY_RUN = process.env.DRY_RUN ?? "true";
 
 async function main() {
+  recusarSeAtividadeApp("stream-import-dry-run");
   const summary = await runImport({
     dryRun: true,
     settings: {
