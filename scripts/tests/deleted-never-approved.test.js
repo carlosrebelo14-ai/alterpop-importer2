@@ -138,6 +138,58 @@ await check("publishedReprice.server.js: 'não encontrado' só passa por markQue
   assert.ok(!/status\s*=\s*["']APPROVED/.test(src));
 });
 
+// DBG-49 e DBG-57 (PR 2b-2): apagado no admin grava origem humano com fonte admin-shopify; o undo não o repõe.
+const umaFila = async (...itens) => {
+  const f = await q.loadCurationQueue();
+  f.items = itens;
+  await q.saveCurationQueue(f);
+};
+const marcaDeApagado = (previousShopifyProductId) => ({
+  at: "2026-10-01T00:00:00.000Z",
+  note: "apagado no admin",
+  previousShopifyProductId,
+  lastPriceWrite: null,
+});
+await check("DBG-49: apagado no admin grava origem humano e a fonte admin-shopify", async () => {
+  await umaFila(mk("D49", "PUBLISHED", { origem: "regra", shopifyProductId: "gid://shopify/Product/49" }));
+  await q.markQueueItemDeletedInAdmin("D49");
+  const e = await q.getCurationQueueEntry("D49");
+  assert.equal(e.status, "PENDING");
+  assert.equal(e.metadata.origem, "humano");
+  assert.equal(e.metadata.deletedInAdmin.fonte, "admin-shopify");
+});
+await check("DBG-57: undo com snapshot APPROVED sobre item apagado fica skipped com o motivo 'apagado no admin'; o resto do lote segue", async () => {
+  await umaFila(
+    mk("D57A", "PENDING", { origem: "humano", deletedInAdmin: marcaDeApagado("gid://shopify/Product/57"), wasPublished: true }),
+    mk("D57B", "APPROVED", { origem: "humano" })
+  );
+  const r = await q.restoreQueueSnapshots([
+    { sku: "D57A", status: "APPROVED", shopifyStatus: "ACTIVE", metadata: { origem: "regra" } },
+    { sku: "D57B", status: "PENDING", shopifyStatus: "DRAFT", metadata: { origem: "regra" } },
+  ]);
+  assert.deepEqual(r.skipped, ["D57A"]);
+  assert.equal(r.skippedMotivo.D57A, "apagado no admin");
+  const a = await q.getCurationQueueEntry("D57A");
+  assert.equal(a.status, "PENDING", "um apagado não volta a APPROVED pelo undo");
+  assert.ok(a.metadata.deletedInAdmin, "a marca de apagado tem de ficar");
+  assert.equal((await q.getCurationQueueEntry("D57B")).status, "PENDING", "os restantes itens do lote seguem");
+});
+await check("DBG-57: undo com snapshot REJECTED sobre item apagado fica skipped e a marca fica", async () => {
+  await umaFila(mk("D57C", "PENDING", { origem: "humano", deletedInAdmin: marcaDeApagado("gid://shopify/Product/59"), wasPublished: true }));
+  const r = await q.restoreQueueSnapshots([{ sku: "D57C", status: "REJECTED", shopifyStatus: "DRAFT", metadata: { origem: "humano" } }]);
+  assert.deepEqual(r.skipped, ["D57C"]);
+  const c = await q.getCurationQueueEntry("D57C");
+  assert.equal(c.status, "PENDING");
+  assert.ok(c.metadata.deletedInAdmin, "a marca de apagado tem de ficar");
+});
+await check("DBG-57: undo com snapshot PENDING sem marca preserva deletedInAdmin e wasPublished", async () => {
+  await umaFila(mk("D57D", "PENDING", { origem: "humano", deletedInAdmin: marcaDeApagado("gid://shopify/Product/60"), wasPublished: true }));
+  await q.restoreQueueSnapshots([{ sku: "D57D", status: "PENDING", shopifyStatus: "DRAFT", metadata: {} }]);
+  const d = await q.getCurationQueueEntry("D57D");
+  assert.ok(d.metadata.deletedInAdmin, "a marca de apagado não pode desaparecer");
+  assert.equal(d.metadata.wasPublished, true);
+});
+
 fs.rmSync(tmp, { recursive: true, force: true });
 if (failures) {
   console.error(`\n${failures} falha(s)`);

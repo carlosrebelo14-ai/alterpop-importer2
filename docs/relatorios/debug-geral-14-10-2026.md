@@ -230,14 +230,17 @@ Registada aqui para ficar no relatório. A causa, a linha, a correção, o teste
 
 | ID | Estado | Descrição resumida |
 |---|---|---|
-| DBG-43 | 2b-2 | Purga de elite bloqueada até o 2b-2. Continua proibida em produção. |
-| DBG-44 | 2b-2 | `approvedAt` e `rejectedAt` são repostos a null em reindex. |
+| DBG-43 | corrigido | Purga de elite só sai do que não tem decisão humana. Dry-run por omissão. A execução continua bloqueada até OK do arquiteto: a rota responde 409 e a CLI recusa `--execute`. Corrigido no 2b-2 (`c79fb02`). Ligar a execução fica para um PR à parte. |
+| DBG-44 | corrigido | `approvedAt` e `rejectedAt` deixam de ser repostos a null em reindex de decisão humana. Corrigido no 2b-2 (`59f1e8c`). |
 | DBG-45 | 2b-2 | Assimetria entre reset e ciclo. |
-| DBG-46 | 2b-2 | Fila justa entre processos e lock por lote no `upsertOne`. O arquiteto fixou o título "lock por lote no upsertOne e justiça do lock". |
+| DBG-46 | parcial | Parte A corrigida no 2b-2 (`b98272f`): o lote da importação grava a fila numa escrita, com um lock. A escrita por registo no `upsertOne` fica como DBG-78. A justiça do lock fica como DBG-46B, baixa. |
 | DBG-47 | 2c | Decisão 28 nas rotas: nenhuma sessão de leitura em paralelo com a publicação. |
 | DBG-48 | 2b-2 | Flag `DB_DEGRADED` sem leitor. |
-| DBG-49 | 2b-2 | Item apagado no admin sem origem própria. Vai junto com DBG-57. |
+| DBG-49 | corrigido | Item apagado no admin sem origem própria. Corrigido no 2b-2 (`6c3a25e`), junto com DBG-57. |
 | DBG-50 | corrigido | Sync de catálogo punha ACTIVE por regra sem aprovação na fila. Corrigido em [#112](https://github.com/carlosrebelo14-ai/alterpop-importer2/pull/112), `727f44a`. |
+| DBG-56 | corrigido | Espera em processo sem prazo. Corrigido no 2b-2 (`0f56066`): rotas do painel 30 s, processos de fundo 10 min. |
+| DBG-57 | corrigido | Item apagado no admin reposto pelo undo. Corrigido no 2b-2 (`6c3a25e`). |
+| DBG-73 | corrigido | Dry-run gravava a fila. Corrigido no 2b-2 (`56bae86`). |
 
 ### Achados do delta `220e6fc..3b6b6bf` (lente de concorrência, 16/10)
 
@@ -248,7 +251,111 @@ Registada aqui para ficar no relatório. A causa, a linha, a correção, o teste
 | DBG-76 | Baixa | delta | `streamImport.js:149-154` | O log `[fila] lote de N itens em X ms` mede desde antes de `comLockDaFila`. Soma a espera na fila em processo e a espera pelo lock de ficheiro, por isso X não é só o tempo de escrita. |
 | DBG-77 | Baixa | delta | `scripts/tests/curation-atividade-app.test.js:180` e `:202-214` | O comentário diz "recusam … e sem gravar", mas o caso só verifica o código 1 e a palavra "Recusado". Não compara a fila em disco antes e depois. |
 
-**Dívida baixa do diff** (lista para a descrição do PR #111): DBG-53, DBG-54, DBG-55, DBG-60, DBG-61, DBG-64, DBG-65, DBG-66, DBG-67 e DBG-68. O DBG-69 sai desta lista, corrigido no 2b-1.
+### Achados do 2b-2 (16/10)
+
+Achados das lentes e da implementação do 2b-2. Os itens de dívida anterior ao 2b-1 estão na tabela acima.
+
+| ID | Sev | Origem | Local | Achado |
+|---|---|---|---|---|
+| DBG-78 | Baixa | pré-existente | `ProductImporter.js:523` (`upsertOne`) | O `upsertOne` grava a fila por registo, depois do lote. Parte de DBG-75, que o 2b-2 não tira. Para a remover é preciso separar a preparação do registo da decisão de Shopify, porque o `upsertOne` precisa da entrada gravada para decidir. Aceite como baixa pelo arquiteto. O override de título fica como está, porque o estado final é igual. |
+| DBG-79 | Média | pré-existente, latente | `eliteCuration.server.js`, purga de `origin/main` | A purga reavaliava a fila com registos parciais (só `vendor` e `netPrice`, sem categoria). Sem categoria, a regra dava outro resultado que o catálogo: uma entrada APPROVED continuava na fila depois de a linha sair do catálogo. Latente, porque a purga está bloqueada em produção. Corrigido no 2b-2 (`c79fb02`): a decisão vem da leitura do catálogo. Aceite pelo arquiteto. |
+| DBG-80 | Baixa | pré-existente, latente | `scripts/curation/elite-curation-purge.js`, versão de `origin/main` | O domínio por omissão da CLI da purga é `alterpop-store.myshopify.com`, a loja de desenvolvimento. A loja real é `jyr17t-wr.myshopify.com`, que é o domínio que os outros scripts usam. Corrigido na CLI e na tarefa `elite_purge_dry_run`. Sem efeito em produção, porque a CLI estava bloqueada. |
+| DBG-46B | Baixa | pré-existente | `curationQueue.server.js`, `withCurationQueueLock` | Justiça do lock entre processos: um processo pode ficar à espera de forma indefinida. Não corrigido no 2b-2. |
+| DBG-81 | Média | delta | `api.curation.queue.bulk.jsx`, `api.curation.queue.undo.jsx` | Com o timeout do lock, bulk e undo respondiam 500 com a mensagem técnica "[fila] espera esgotada…". Só approve e reject respondiam 503. Corrigido no 2b-2: os dois traduzem o timeout para 503 "fila ocupada, tenta de novo", e o teste R2 verifica o ramo. |
+| DBG-82 | Média | delta | `curationQueue.server.js`, `recoverCorruptedQueueJson` | Numa fila com caracteres de controlo, a recuperação espera pelo lock. Se a espera estoura, o `catch` engolia o erro, devolvia `null`, e `degradeUnrecoverableQueue` gravava a flag `DB_DEGRADED`. Uma espera de lock passava a bloquear todas as escritas até restauro manual. Corrigido no 2b-2: o timeout é relançado, e o teste R1 verifica que a flag não fica gravada e que o ficheiro não muda. |
+| DBG-83 | Baixa | delta | `api.products.import-edits.jsx:211` e `:215` | A importação de edições faz duas escritas com dois locks: o override e a aprovação. Se a aprovação expira, o override já ficou gravado, e a linha sai como rejeitada com "Nada foi escrito". Repetir é idempotente. Não corrigido. |
+| DBG-84 | Baixa | pré-existente | `curationQueue.server.js:340-363` e `:521` | Um leitor fora do lock que abre o ficheiro antes do `rename` e acaba depois do `invalidate` pode repor conteúdo antigo na cache. `loadCurationQueueCached`, usado nas margens do catálogo, devolve esse conteúdo até à próxima escrita. Traçado por leitura, não reproduzido. Confirmado em `origin/main`. Não corrigido. |
+| DBG-85 | Média | delta | `curationQueue.server.js`, `recoverCorruptedQueueJson` | O backup da fila corrompida era escrito antes de esperar pelo lock. Cada tentativa que estourava gravava um backup novo, de cerca de 15 MB, e o volume da Fly enchia. Corrigido: o backup grava-se uma vez por conteúdo (tamanho e SHA-256). Teste `curation-backup-fila-corrompida`: três leituras seguidas com o lock ocupado produzem um só ficheiro. |
+
+**Tarefa nova `elite_purge_dry_run` (maintenance).** Só lê e só faz dry-run. Imprime contagens, sem SKU: candidatos, retidos por decisão humana, retidos por estado da fila e quantos sairiam por estado. A opção `execute` é recusada pelo `maintenance.sh` para esta tarefa, mesmo com o environment `production`, porque a tarefa não está no job de escrita. Ligar a execução fica para um PR à parte, depois de o arquiteto rever um dry-run em produção.
+
+### Achados das lentes 2 e 3 (16/10)
+
+Lente 2 (integridade da fila e decisões) e lente 3 (publicação, leitura e gates). Cada achado foi verificado por um agente adversarial, sem cap. Os médios e altos causados pelo diff estão corrigidos neste commit. Os anteriores ao diff entram com DBG próprio, sem bloquear. As refutações estão no fim.
+
+| ID | Sev | Origem | Local | Achado e estado |
+|---|---|---|---|---|
+| DBG-86 | Média | delta | `scripts/maintenance/elite-purge-dry-run.mjs`, `eliteCuration.server.js` | A tarefa de dry-run gravava a flag `DB_DEGRADED` numa BD corrompida, por causa do `safePrisma` das leituras do catálogo. Corrigido: as leituras por omissão da purga são diretas, e a tarefa não passa por `safePrisma`. Prova P1 e P2 em `elite-purge-dry-run-prova`: mtime, tamanho e hash de todos os ficheiros iguais antes e depois, e flag ausente. |
+| DBG-87 | Média | delta | `scripts/maintenance/elite-purge-dry-run.mjs` | Sem BD no volume, a tarefa criava um SQLite vazio e respondia `catalogo_total=0` com código 0. Corrigido: a tarefa sai com `EPD: erro=bd_em_falta` antes de ligar. Prova P3. |
+| DBG-88 | Alta | delta | `eliteCuration.server.js`, `avaliarPurgaDeEntrada` | A purga tratava como candidato um PENDING com `statusChangedAt`, que é marca de decisão humana (D2), quando não tinha origem. Caminho: aprovação humana desfeita por snapshot sem origem. Corrigido: `statusChangedAt` conta como decisão humana. Teste T1, linha da tabela. |
+| DBG-89 | Média | delta | `curationQueue.server.js`, `aplicarLoteNaFila` | Regressão do DBG-46A: o caminho em lote não preservava os campos de disco (C12) dos itens não fixados. `lastElitePurgeAt`, `shopifyProductId` e outros saíam na escrita em lote. Corrigido. Caso de disco no L5 de `curation-queue-lote-lock`. |
+| DBG-90 | Média | pré | `curationQueue.server.js:618`, `fundirItemDoWorker` | O flush do worker repõe uma decisão humana depois de um undo com origem regra, elite ou reset, que apagou `statusChangedAt`. Reproduzido com o módulo real. Linhas idênticas em `origin/main`. Fica para o 2b-3. |
+| DBG-91 | Baixa | pré | `shopifyReset.server.js:246` | O reset trata como publicado qualquer item com `shopifyProductId`, mesmo REJECTED por decisão humana, e repõe APPROVED de origem reset. O verificador reduziu o âmbito: o reset da app não republica. Confirmar com o arquiteto se é intencional. |
+| DBG-92 | Baixa | pré | `eliteCuration.server.js`, `avaliarPurgaDeEntrada` | A purga não protege um item com `alertaPublicadoNaShopify`. Um PENDING com alerta sai do catálogo com o produto vivo na Shopify. Mesma raiz que o DBG-95. |
+| DBG-93 | Baixa | delta | `eliteCuration.server.js`, purga com execução | Janela entre o lock (a fila já está escrita) e o apagar do catálogo. Uma aprovação humana nessa janela fica sem linha de catálogo, e a sincronização passa-a a `SYNC_ERROR`. Latente: a execução está bloqueada. Fica na dívida baixa do PR. |
+| DBG-94 | Média | delta | `eliteCuration.server.js`, `aplicarPurgaNaFila` | Um PENDING sem origem rejeitado pela purga ficava `REJECTED` sem origem. A purga seguinte retinha o item como `sem_origem`, e a linha do catálogo não saía. Corrigido: a rejeição da purga grava origem `elite`, e não grava `statusChangedAt`. Teste `elite-purge-origem-elite`, com duas purgas seguidas. |
+| DBG-95 | Média | pré | `eliteCuration.server.js`, `avaliarPurgaDeEntrada` | Um REJECTED de origem regra com `alertaPublicadoNaShopify` devolve `pode: true`, e a purga pode tirar a linha do catálogo com o produto vivo na Shopify. Variante do DBG-92. Verificado por sonda. |
+| DBG-96 | Média | pré | `eliteCuration.server.js`, `apagarLote` | O `apagarLote` usa `safePrisma` sem `rethrow`. Uma falha do `deleteMany` devolve `undefined`, e a purga soma as linhas como removidas: "Removidos 200", com 200 linhas por sair. Latente: a execução está bloqueada. |
+| DBG-97 | Média | pré | `catalogProductsDb.server.js:966`, `getCatalogProductTotal` | Uma falha de leitura do count vira zero. O dry-run respondia "Concluída sem erros" com 0 produtos. Corrigido nas leituras por omissão da purga, que são as da CLI e da tarefa. `getCatalogProductTotal` fica como está para os outros chamadores. Confirmado de novo pela lente 3 (`eliteCuration.server.js:159`). |
+| DBG-98 | Baixa | delta | `eliteCuration.server.js:298` | Na execução, um candidato que perde elegibilidade no lock conta em `decisao_mudou`, mas não em `retidosPorEstado`. A soma por estado fica abaixo de `retidos`. Só afeta o resumo. |
+| DBG-99 | Baixa | delta | `curationQueue.server.js:1499`, `api.curation.queue.undo.jsx` | O motivo "apagado no admin" não chega ao cliente: a rota responde só `ok`, `restored`, `skippedCount` e `skipped`. O toast diz "já publicado na Shopify", o que é falso para um item apagado no admin. |
+| DBG-100 | Baixa | pré | `eliteCuration.server.js:137` | `metadata.shop`, gravado pela purga, não está em `CAMPOS_DO_DISCO`, e perde-se na escrita seguinte. Sem leitores. |
+| DBG-101 | Baixa | pré | `curationQueue.server.js:973` | `upsertCurationQueueBatchFromRecords` com `saveFile: false` e sem fila externa altera o objeto da cache sem gravar. Nenhum chamador atual usa esta combinação. |
+| DBG-102 | Baixa | pré | `curationQueue.server.js:1082` | Um reindex com registo lite sobrepõe `title_es`, `category_es` e `availableQuantity`, também em itens fixados por decisão humana. Sem leitores destes campos. |
+| DBG-103 | Baixa | pré | `curationQueue.server.js:1029` | `approvedAt` de itens de regra é reposto a agora em cada reindex. `pre-pilot-verify` mede a idade por `approvedAt`, por isso nunca apanha um item de regra parado. |
+| DBG-104 | Baixa | pré | `curationQueue.server.js:1465` | O undo de uma ação em massa apaga a entrada que ela criou, se ainda estiver APPROVED com o mesmo motivo, mesmo que um humano a tenha aprovado de novo depois. |
+| DBG-105 | Alta | pré | `api.trigger-sync.jsx:217`, `shopifyApprovedSync` | Duas corridas de publicação podem correr em simultâneo. O ciclo agendado nunca grava `running`, por isso o portão manual não o vê, e não há exclusão mútua. Reproduzido com o motor real: duplicados no publicador falso e alerta "publicado" que bloqueia o undo. Atenuante: a recusa do lote em `shopifyApprovedSync.server.js:173`. Decisão do arquiteto. |
+| DBG-106 | Média | pré | `shopifyApprovedSync.server.js:423` | O `break` do erro de autenticação só sai do ciclo de itens do lote. A corrida continua, marca um SKU por lote como `SYNC_ERROR`, e o job acaba `completed`. Sonda: 25 APPROVED, 3 com erro, 17 sem tentativa. |
+| DBG-107 | Baixa | pré | `shopifyProductPublisher.server.js:568` | Um produto novo é criado `ACTIVE` antes de a variante ter preço. Se a falha seguinte acontecer, fica `ACTIVE` a 0,00, sem o passo DRAFT. |
+| DBG-108 | Baixa | pré | `curationQueue.server.js:404` | Perda do lock durante a recuperação de JSON (`CURATION_QUEUE_LOCK_LOST`) é engolida no `catch` e grava `DB_DEGRADED`. O DBG-82 cobriu só o timeout. |
+| DBG-109 | Baixa | pré | `app/routes/app._index.jsx:118` | O loader do painel usa o prazo de fundo de 10 min, sem `comPrazoDeRota`, quando a fila precisa de recuperação. Sonda: 32,8 s com a fila reparada. |
+| DBG-110 | Média | delta | `api.products.import-edits.jsx:221` | Timeout do lock depois de o override já ter sido gravado: a linha saía como rejeitada com "Nada foi escrito". Corrigido: a linha diz que o override foi gravado e a aprovação ou rejeição não. Teste S2 em `curation-fila-prazo-rota`. |
+| DBG-111 | Baixa | pré | `indexingStream.server.js:178` | Dois arranques concorrentes do mesmo shop lançam dois workers, e o segundo substitui o primeiro no mapa de filhos. Janela de um tick. |
+| DBG-112 | Baixa | pré | `check-no-indexing.mjs:53` | A sonda de indexação lê só o disco. O arranque escreve em memória nos primeiros segundos. Variante do DBG-64. |
+| DBG-113 | Baixa | pré | `catalogRebuildStatus.server.js:54` | A leitura do estado para publicar cai no `completed` antigo do disco quando o flush falha. Variante do DBG-64. |
+| DBG-114 | Baixa | pré | `scripts/maintenance/elite-purge-dry-run.mjs:77` | A guarda de atividade corre só no arranque, e a fila e o catálogo são lidos depois. Mesmo desenho da CLI, que já está em `origin/main`, e aceite na D7. |
+| DBG-115 | Baixa | delta | `app/routes/api.curation.elite-purge.jsx:38` | Em modo degradado, a rota da purga respondia 500, e `approve` respondia 503 para o mesmo código. Corrigido: 503 com a causa, como `approve` e `reject`. |
+
+**Reconfirmados, sem número novo.** DBG-47 (`api.trigger-sync.jsx:120`, backlog D17). DBG-58 (o undo substitui os overrides, lente 2). DBG-71 (publicação manual sem o portão, backlog). DBG-84 (cache de leitura fora do lock): a lente 3 confirmou e subiu para média (`curationQueue.server.js:360`).
+
+**Refutados pelo verificador, sem número.** `curationQueue.server.js:1509`: o `origem humano` desaparece, mas `statusChangedAt` e `deletedInAdmin` ficam, e o item continua fixado, sem resultado errado. `scripts/catalog/full-catalog-reindex.js:58`: o reindex usa `skipSmartRules`, e não escreve na fila.
+
+### Achados da lente do delta (fca914f..26218be, 16/10)
+
+Dezasseis achados. Quinze passaram pelo verificador adversarial, que os confirmou todos. O DBG-125 não passou pelo verificador: reproduzi-o à mão, com uma fila corrompida, e confirmei no git que a rota é nova neste PR.
+
+Origem: `delta` é correção desta rodada. `PR` é código deste PR anterior à rodada. `main` já existe em `origin/main`. Só média causada por `delta` ou `PR` bloqueia a convergência. Os médios bloqueantes estão corrigidos neste commit: DBG-116, DBG-124, DBG-125 e DBG-126.
+
+| ID | Sev | Origem | Local | Achado e estado |
+|---|---|---|---|---|
+| DBG-116 | Média | delta | `app/routes/api.curation.elite-purge.jsx:35` | As leituras da purga deixaram de passar por `safePrisma`. Numa corrupção SQLite, a rota deixou de marcar `DB_DEGRADED` (Decisão 34) e devolvia o erro cru do Prisma. Corrigido: as leituras por omissão voltam a ser `safePrisma` com `rethrow`. A tarefa e a CLI usam `leiturasDoCatalogoSemEfeitos`. Prova P4 e mutação. |
+| DBG-116b | Baixa | delta | `scripts/maintenance/elite-purge-dry-run.mjs`, guarda `bd_em_falta` | Com `DATABASE_URL` relativo, a guarda olhava para `./dev.sqlite` no cwd, e o Prisma abria `prisma/dev.sqlite`. Sem ficheiro no cwd, a tarefa recusava com `bd_em_falta` mesmo com a BD real. Com ficheiro no cwd, o Prisma criava uma BD vazia e a leitura falhava com `catalogo_falhou`. A produção não é afetada, porque `fly.toml` usa URL absoluto. Corrigido: `caminhoDaBd` resolve o caminho como o Prisma. Teste (e) e mutação. |
+| DBG-117 | Baixa | delta | `lib/importer/curation/eliteCuration.server.js:305` | A contagem final passou a ler sem fallback. Uma falha depois da escrita da fila e dos apagamentos lança a purga antes de escrever o log. Latente, porque a execução está bloqueada. Não corrigido. |
+| DBG-118 | Baixa | PR | `scripts/maintenance/elite-purge-dry-run.mjs`, hook de `prismaSafe` | SIGINT ou SIGTERM a meio da tarefa saem com código 0 e sem linhas `EPD`, e `maintenance.sh` regista "Concluída sem erros". Reproduzido no commit anterior, com SIGTERM aos 160 ms e 200 ms de uma execução de cerca de 260 ms. Não corrigido. |
+| DBG-119 | Baixa | PR | `scripts/maintenance/elite-purge-dry-run.mjs`, leitura do catálogo | A leitura pelo cliente da app aplica WAL à BD e imprime linhas `[prisma]`. Nos bytes 18-19 do cabeçalho, a BD passa de 1 para 2 em 4 de 5 execuções. O cliente da app faz o mesmo na primeira query. A prova P1 não apanha, porque cria a BD em WAL antes do snapshot. Não corrigido. |
+| DBG-120 | Baixa | PR | `scripts/maintenance/elite-purge-dry-run.mjs`, função `executar` | Qualquer erro da purga vira `catalogo_falhou`, mesmo que não seja da BD. A manutenção diz "não consegui ler o catálogo na base de dados". Exemplo reproduzido: `config/curation.json` em falta. Não corrigido. |
+| DBG-121 | Baixa | delta | `lib/curation/curationQueue.server.js:381` | A leitura do backup candidato (`readFile`) fica fora do `catch`. Uma entrada de mesmo tamanho que a fila, e ilegível, faz uma fila recuperável cair em `DB_DEGRADED`. Reproduzido com uma entrada que é um diretório. Caso raro. Não corrigido. |
+| DBG-122 | Baixa | PR | `lib/curation/curationQueue.server.js:378` | A dedupe do backup verifica e só depois grava, sem criação atómica. Duas recuperações concorrentes que não se veem gravam dois backups iguais. Numa sonda, 7 de 9 tentativas, com duas instâncias a arrancar juntas sobre uma fila de 15 MB. Antes desta rodada, 6 de 6. Não corrigido. |
+| DBG-123 | Média | main | `app/routes/api.products.import-edits.jsx:227` | Quando a aprovação falha por outro motivo (por exemplo `APPROVE_PUBLISHED`), o override já ficou gravado, e a linha só diz a recusa. O aviso do DBG-110 cobre só o timeout. A rota já existia em `origin/main`, por isso não bloqueia. Vai para o 2c, junto do DBG-47, por decisão do arquiteto. Não corrigido. |
+| DBG-124 | Média | delta | `lib/importer/curation/eliteCuration.server.js:100` | O `statusChangedAt` tinha precedência sobre a origem `reset`. Um item de reset contava como decisão humana no dry-run, e `retidos_decisao_humana` ficava errado. Corrigido: a origem `reset` vem primeiro. Teste T16 e mutação. |
+| DBG-125 | Média | PR | `app/routes/api.curation.elite-purge.jsx:35` | A rota de dry-run lia a fila com o loader por omissão. Numa fila corrompida, o loader gravava um backup e a flag `DB_DEGRADED`, numa rota que diz que não escreve nada. A rota é deste PR e não existe em `origin/main`, por isso bloqueia. Corrigido: a rota lê com `lerFilaSemEfeitos`. Teste S4, prova P5 e mutação. |
+| DBG-126 | Média | delta | `scripts/tests/curation-fila-prazo-rota.test.js` (S2) | O S2 do DBG-110 só verificava texto, e passava com uma mutação em `try/finally`. Corrigido: a verificação exige `gravou = true` logo depois do `await` do override. Mutação `gravou = false`, vermelha. |
+| DBG-127 | Baixa | delta | `scripts/maintenance/elite-purge-dry-run.mjs`, cabeçalho | O comentário dizia que a tarefa saía antes de ligar ao Prisma, e que sem a guarda sairia "0 produtos". Ambas as afirmações estavam erradas. Corrigido ao reescrever o cabeçalho. |
+| DBG-128 | Baixa | delta | `scripts/tests/elite-purge-dbg43.test.js` | O parâmetro `apagarNada` do helper não tinha caso que o usasse. Código morto, removido. Corrigido. |
+| DBG-129 | Baixa | PR | `lib/importer/curation/eliteCuration.server.js:105` | `avaliarPurgaDeEntrada` lê `metadata.origem` em bruto. Um REJECTED de elite sem origem, legado, dá `sem_origem`, mesmo que a fila o trate como elite. Só afeta itens antigos. Não corrigido. |
+| DBG-130 | Baixa | main | `prisma/migrations` (esquema) | `prisma/migrations` não cobre o schema atual (`resolvedCharacters`). O projeto usa `db push`. Qualquer alteração de esquema exige a tarefa `db_push` com execute. Já estava em `origin/main`. Não corrigido. |
+
+**Reconfirmado, sem número novo.** DBG-96 (`apagarLote` com `safePrisma` sem `rethrow`): a lente do delta confirmou, e o achado continua latente, porque a execução está bloqueada.
+
+### Achados da lente final (26218be..63c8b56, 16/10)
+
+Uma lente, aplicada a cada um dos nove ficheiros de código do delta. Saíram quinze achados. Todos foram verificados por um agente adversarial, e todos se confirmaram. Nenhum ficou médio ou alto no veredito. Três achados que o revisor deu como médios foram rebaixados pelo verificador, com a razão registada: DBG-133, DBG-135 e DBG-137. Pela regra de convergência, o ciclo fecha sem correções.
+
+Origem: `delta` é correção desta rodada. `PR` é código deste PR anterior à rodada. `main` já existe em `origin/main`.
+
+| ID | Sev | Origem | Local | Achado e estado |
+|---|---|---|---|---|
+| DBG-131 | Baixa | delta | `app/routes/api.curation.elite-purge.jsx:35` | Com a fila já degradada, a rota de dry-run deixou de ver `DB_DEGRADED`, porque lê a fila sem o loader. Responde 500 com o erro cru, em vez de 503 com a causa. Só dry-run, sem escrita. Não corrigido. |
+| DBG-132 | Baixa | delta | `app/routes/api.curation.elite-purge.jsx:42`, `lib/curation/curationQueue.server.js:218` | Fila em falta ou ilegível: a rota responde 500 com `err.message` cru (caminho do ficheiro ou erro de JSON). Nenhum teste fixa essa resposta. Não corrigido. |
+| DBG-133 | Baixa | delta | `lib/curation/curationQueue.server.js:217-218` | `lerFicheiroDaFilaSemEfeitos` faz `readFile` e `JSON.parse` por pedido, sem cache nem partilha de leitura. Medido com uma fila de 15,6 MB e 29.600 itens: cerca de 225 ms de bloqueio do event loop por pedido, e cerca de 55 MB de heap extra por pedido. O OOM não foi reproduzido. O revisor deu média. O verificador deu baixa. Não corrigido. |
+| DBG-134 | Baixa | delta | `lib/curation/curationQueue.server.js:219` | Ficheiro com JSON válido e `items` que não é array passa como fila vazia. A rota responde `ok: true` com `sem_entrada`. A tarefa de manutenção responde `fila_ilegivel`. Não corrigido. |
+| DBG-135 | Baixa | delta | `app/routes/api.curation.elite-purge.jsx:35`, `lib/importer/curation/eliteCuration.server.js:154` | A rota de dry-run usa as leituras do catálogo com `rethrow`. Numa corrupção grava `DB_DEGRADED` e copia `-wal` e `-shm`, contra o docstring "não escreve nada". É o comportamento do DBG-116, e o docstring está desatualizado. O revisor deu média. O verificador deu baixa. Não corrigido. |
+| DBG-136 | Baixa | delta | `lib/importer/curation/eliteCuration.server.js:100` | Com a origem `reset` antes de `statusChangedAt` (DBG-124), os itens reset saem de `retidos_decisao_humana`. O comentário da Decisão 5 ainda os descreve como decisão humana. Não corrigido. |
+| DBG-137 | Baixa | PR | `scripts/curation/elite-curation-purge.js:24` | A CLI de dry-run não tem a guarda de BD em falta da tarefa. Com a BD em falta, sai com código 1 e stack P2021 crua, e deixa `dev.sqlite` criado, apesar de dizer que nada é escrito. O teste P5 corre o mesmo import sem verificar os ficheiros. O revisor deu média. O verificador deu baixa. Não corrigido. |
+| DBG-138 | Baixa | delta | `scripts/tests/elite-purge-dbg43.test.js` (T13) | Nenhum teste exercita a ligação da CLI às leituras sem efeitos. T13 passa com ou sem ela. Reverter para o loader com efeitos não falha nenhum teste. Não corrigido. |
+| DBG-139 | Baixa | delta | `scripts/tests/elite-purge-dry-run.test.js:293` | O teste (e) exercita `caminhoDaBd` com ambiente explícito. A chamada sem argumentos em `main()` não está coberta. Reverter para a forma relativa ao cwd passa todos os testes. Não corrigido. |
+
+**Dívida baixa do diff** (lista para a descrição do PR #111): DBG-53, DBG-54, DBG-55, DBG-60, DBG-61, DBG-64, DBG-65, DBG-66, DBG-67, DBG-68, DBG-93, DBG-98, DBG-99, DBG-117 a DBG-122, DBG-129, DBG-130 e DBG-131 a DBG-139. O DBG-69 sai desta lista, corrigido no 2b-1.
 
 **Numeração.** DBG-56 é usado: o blame mostrou que a espera em processo sem prazo é anterior ao diff. Os DBG-57 e DBG-49 vão para o 2b-2 juntos, porque ambos tratam de itens apagados no admin.
 

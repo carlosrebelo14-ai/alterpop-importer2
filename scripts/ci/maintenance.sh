@@ -4,7 +4,7 @@
 #   bash scripts/ci/maintenance.sh <tarefa> <fase>
 #
 # tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push
-#         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue   (estas quatro só leem; nenhuma aceita execute)
+#         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run   (estas cinco só leem; nenhuma aceita execute)
 # db_push recusa-se com a flag DB_DEGRADED presente no volume (Decisão 34), em dry-run e em execute.
 # fase    dry-run  só lê (ou lista o que mudaria)
 #         execute  escreve (só tags_cleanup, character_pages_sync e db_push; nas outras é igual ao dry-run)
@@ -42,12 +42,12 @@ RESTORE_OUT="$(mktemp)"
 LOG_SUM=""
 
 case "$TASK" in
-  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue) ;;
+  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
 esac
 # As tarefas novas só leem: nenhuma aceita execute, nem como no-op.
 case "$TASK" in
-  db_flag_check | logs_recent | restore_dry_run | active_vs_queue)
+  db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
 case "$PHASE" in
@@ -299,6 +299,19 @@ case "$TASK" in
       fi
     fi
     ;;
+  elite_purge_dry_run)
+    # DBG-43: dry-run da purga de elite na Fly (scripts/maintenance/elite-purge-dry-run.mjs). Só lê: não escreve a fila, o catálogo nem o log.
+    DESC="Conta o que a purga de elite tiraria do catálogo e o que ficaria retido, por estado da fila e por decisão humana. Só lê. Não mostra SKUs."
+    remote "node scripts/maintenance/elite-purge-dry-run.mjs"; RC=$?
+    if [ "$RC" -ne 0 ]; then
+      if grep -q 'EPD: erro=fila_em_falta' "$OUT"; then CAUSE="a fila de curadoria não existe no volume: não contei nada."
+      elif grep -q 'EPD: erro=fila_ilegivel' "$OUT"; then CAUSE="a fila de curadoria existe mas não se lê: não contei nada."
+      elif grep -q 'EPD: erro=catalogo_falhou' "$OUT"; then CAUSE="não consegui ler o catálogo na base de dados: não contei nada."
+      elif grep -q 'EPD: erro=bd_em_falta' "$OUT"; then CAUSE="a base de dados não está no volume: não contei nada."
+      elif grep -q 'Recusado: a app tem atividade em curso' "$OUT"; then CAUSE="a app tem atividade em curso (indexação ou publicação): não contei nada. Repetir depois."
+      fi
+    fi
+    ;;
 esac
 
 # ── resumo em português, só contagens e estados ───────────────────────
@@ -452,6 +465,19 @@ case "$TASK" in
         bullets="$bullets"$'\n'"- Processos node na máquina: **$(an processos_node)**${procs:+ ($procs)}."
       fi
       KEY="$(an total) ACTIVE: $(an APPROVED) APPROVED, $(an PUBLISHED) PUBLISHED, $(an PENDING) PENDING, $(an REJECTED) REJECTED, $(an outro_estado) outro, $(an sem_entrada) sem entrada"
+    fi
+    ;;
+  elite_purge_dry_run)
+    epd() { echo "$CLEAN" | grep -E "^EPD: $1=" | head -1 | sed -E "s/^EPD: $1=//"; }
+    en() { local v; v="$(epd "$1")"; echo "${v:-0}"; }
+    if [ -z "$(epd catalogo_total)" ]; then
+      bullets=""; KEY="sem leitura"
+    else
+      bullets="- Produtos no catálogo: **$(en catalogo_total)**."
+      bullets="$bullets"$'\n'"- Sairiam: **$(en candidatos)** (PENDING **$(en sairiam_PENDING)**, APPROVED **$(en sairiam_APPROVED)**, REJECTED **$(en sairiam_REJECTED)**, outros estados **$(en sairiam_outro)**)."
+      bullets="$bullets"$'\n'"- Retidos: **$(en retidos)**, dos quais por decisão humana **$(en retidos_decisao_humana)** e por outros motivos **$(en retidos_outros_motivos)**."
+      bullets="$bullets"$'\n'"- Retidos por estado da fila: PUBLISHED **$(en retidos_PUBLISHED)**, SYNC_ERROR **$(en retidos_SYNC_ERROR)**, APPROVED **$(en retidos_APPROVED)**, PENDING **$(en retidos_PENDING)**, REJECTED **$(en retidos_REJECTED)**, sem entrada **$(en retidos_sem_entrada)**, outro **$(en retidos_outro)**."
+      KEY="$(en candidatos) sairiam, $(en retidos) retidos (decisão humana $(en retidos_decisao_humana))"
     fi
     ;;
 esac
