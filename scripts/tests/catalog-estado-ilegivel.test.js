@@ -8,7 +8,7 @@
  * - Ficheiro existente que não se lê, ou cujo JSON não é um objeto, é failed com a mensagem
  *   "estado de indexação ilegível" (b). O arranque e o ciclo leem pela mesma função, por isso o
  *   estado é o mesmo nos dois (c).
- * - podePublicarDepoisDaIndexacao: false para failed e para estado ilegível, true para idle (c).
+ * - podePublicarDepoisDaIndexacao: só true para completed sem erro (decisão 7); false para tudo o resto.
  *   Ilegível não retoma.
  * - Estático (d): o ciclo automático (api.trigger-sync.jsx) testa a função antes de publicar e o
  *   ramo de recusa tem a marca "[ciclo] publicação recusada: estado de indexação falhado".
@@ -91,7 +91,7 @@ await caso("(b) ficheiro com JSON inválido, JSON que não é objeto, ou não le
   }
 });
 
-await caso("(c) podePublicarDepoisDaIndexacao: false para failed e para estado ilegível, true para idle", async () => {
+await caso("(c) podePublicarDepoisDaIndexacao: só completed publica (decisão 7)", async () => {
   assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "failed", error: "falha do worker" }), false);
   assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "failed", error: null }), false, "failed sem mensagem também recusa");
   assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "completed", error: "algo correu mal" }), false);
@@ -100,13 +100,45 @@ await caso("(c) podePublicarDepoisDaIndexacao: false para failed e para estado i
   assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "completed", error: null }), true);
 
   const sem = await estado.readCatalogRebuildStatus(SEM_FICHEIRO);
-  assert.equal(estado.podePublicarDepoisDaIndexacao(sem), true, "idle deixa publicar");
+  assert.equal(estado.podePublicarDepoisDaIndexacao(sem), false, "idle não publica (decisão 7)");
 
   for (const loja of ILEGIVEIS) {
     const leitura = await estado.readCatalogRebuildStatus(loja);
     assert.equal(estado.podePublicarDepoisDaIndexacao(leitura), false, `${loja}: estado ilegível recusa publicar`);
     assert.equal(estado.canResumeCatalogRebuild(leitura), false, `${loja}: estado ilegível não retoma a indexação`);
   }
+});
+
+await caso("(c-idle) estado idle não publica (decisão 7)", () => {
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "idle", error: null }), false);
+});
+
+await caso("(c-running) estado running não publica (decisão 7)", () => {
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "running", error: null }), false);
+});
+
+await caso("(c-paused) estado paused não publica (decisão 7)", () => {
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "paused", error: null }), false);
+});
+
+await caso("(c-interrupted) estado interrupted não publica (decisão 7)", () => {
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "interrupted", error: null }), false);
+});
+
+await caso("(c-failed) estado failed não publica (decisão 7)", () => {
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "failed", error: null }), false);
+});
+
+await caso("(c-aborted) estado aborted não publica (decisão 7)", () => {
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "aborted", error: null }), false);
+});
+
+await caso("(c-done) estado done não publica (decisão 7)", () => {
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ state: "done", error: null }), false);
+});
+
+await caso("(c-ausente) estado ausente não publica (decisão 7)", () => {
+  assert.equal(estado.podePublicarDepoisDaIndexacao({ error: null }), false);
 });
 
 await caso("(d) o ciclo automático testa a função antes de publicar, e o ramo de recusa tem a marca e não publica", async () => {

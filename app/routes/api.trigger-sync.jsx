@@ -185,11 +185,11 @@ export const action = async ({ request }) => {
           await new Promise((r) => setTimeout(r, INDEXING_POLL_MS));
         }
 
-        // Decisão 6. Estado ilegível ou falhado recusa a publicação. A recusa fica no log com a marca
+        // Decisão 7. Só o estado completed publica. Qualquer outro estado recusa a publicação. A recusa fica no log com a marca
         // estável e em Relatórios, como "não correu".
         const status = await readCatalogRebuildStatus(shop);
         if (!podePublicarDepoisDaIndexacao(status)) {
-          const motivo = status?.error || "estado de indexação falhado";
+          const motivo = status?.error || `estado ${status?.state ?? "ausente"}`;
           console.error(`[ciclo] publicação recusada: estado de indexação falhado (${motivo}).`);
           await markMarginErosionCycleSkipped(shop, `indexação terminou com erro (${motivo})`);
           return;

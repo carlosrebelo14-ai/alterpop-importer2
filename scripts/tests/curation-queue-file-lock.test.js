@@ -23,6 +23,8 @@
  *      como perdido.
  *   K  O titular perde o lock a meio de uma operação: a operação lança CURATION_QUEUE_LOCK_LOST,
  *      regista "[fila] operação abortada: lock perdido" e não escreve a fila.
+ *   L  Token confirmado antes de cada escrita: sem renovação no prazo, um token alheio no ficheiro
+ *      aborta a escrita com CURATION_QUEUE_LOCK_LOST e nada é gravado.
  *
  * Os limites de tempo vêm de variáveis de ambiente só de teste (CURATION_QUEUE_LOCK_*).
  *
@@ -481,6 +483,38 @@ async function casoPerdaDoLockAbortaSemEscrever() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// L: token confirmado no ficheiro antes de cada escrita
+// ---------------------------------------------------------------------------
+async function casoTokenConfirmadoAntesDeEscrever() {
+  escreverFila([item("X")]);
+  const antes = fs.readFileSync(QUEUE_PATH, "utf8");
+  const erroOriginal = console.error;
+  console.error = () => {};
+  let erro = null;
+  try {
+    // Renovação a 60 s: no prazo do teste não corre nenhuma. Só a confirmação no ficheiro pode ver o token alheio.
+    await comEnv({ CURATION_QUEUE_LOCK_RENOVA_MS: 60000 }, () =>
+      comPrazo(
+        q.mutateCurationQueue(async (fila) => {
+          escreverLock({ pid: process.pid, em: new Date().toISOString(), token: "outro-titular" });
+          fila.items.find((i) => i.sku === "X").status = "APPROVED";
+          return { gravar: true, valor: undefined };
+        }),
+        20000,
+        "escrita com token alheio"
+      ).catch((e) => {
+        erro = e;
+      })
+    );
+  } finally {
+    console.error = erroOriginal;
+  }
+  assert.ok(erro, "a escrita tem de falhar quando o token no ficheiro já não é o do titular");
+  assert.equal(erro.code, "CURATION_QUEUE_LOCK_LOST", `código do erro: ${erro.code}`);
+  assert.equal(fs.readFileSync(QUEUE_PATH, "utf8"), antes, "nada pode ser gravado com token alheio");
+}
+
 async function main() {
   await caso("A  dois processos a alternar aprovações, nenhuma perdida", casoAlternarEscritasEntreProcessos);
   await caso("B  lock com PID morto é libertado", casoPidMortoLibertado);
@@ -493,6 +527,7 @@ async function main() {
   await caso("I  limite de 10 min por omissão: 5 min não é libertado, 10 min e 30 s é", casoLimiteDeDezMinutos);
   await caso("J  renovação não reescreve o lock de outro token e marca o titular como perdido", casoRenovacaoNaoSobrescreveLockAlheio);
   await caso("K  titular que perde o lock a meio aborta sem escrever", casoPerdaDoLockAbortaSemEscrever);
+  await caso("L  token confirmado no ficheiro antes de cada escrita", casoTokenConfirmadoAntesDeEscrever);
 
   console.log("\nRESUMO");
   for (const r of resultados) console.log(`  ${r.resultado.padEnd(6)} ${r.nome}`);
