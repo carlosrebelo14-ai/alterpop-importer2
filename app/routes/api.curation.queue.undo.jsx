@@ -28,9 +28,12 @@ export const action = async ({ request }) => {
   try {
     const result = await restoreQueueSnapshots(snapshots);
     invalidateCurationQueueCache();
+    // Decisão 3: os ignorados (já publicados na Shopify) vêm na resposta, com a contagem e os SKU.
     return Response.json({
       ok: true,
       restored: result.restored.length,
+      skippedCount: result.skippedCount,
+      skipped: result.skipped.slice(0, 50),
     });
   } catch (err) {
     return Response.json({ ok: false, error: err?.message || String(err) }, { status: 500 });

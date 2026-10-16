@@ -118,6 +118,45 @@ await check("restoreQueueSnapshots com APPROVED sobre PUBLISHED é ignorado e re
   assert.equal(item.shopifyProductId, "gid://shopify/Product/2");
 });
 
+console.log("DBG-04, decisão 3 — o undo ignora itens com shopifyProductId e reporta-os");
+await check("PUBLISHED com shopifyProductId e snapshot PENDING: o undo não o altera e reporta-o como ignorado", async () => {
+  writeQueue([
+    { sku: "PUB3", status: "PUBLISHED", shopifyStatus: "ACTIVE", metadata: { shopifyProductId: "gid://shopify/Product/3", publishedAt: "2026-10-10T00:00:00.000Z" } },
+  ]);
+  const r = await q.restoreQueueSnapshots([{ sku: "PUB3", status: "PENDING", shopifyStatus: "DRAFT", metadata: {} }]);
+  assert.deepEqual(r.skipped, ["PUB3"]);
+  assert.equal(r.skippedCount, 1);
+  assert.equal(r.restored.length, 0);
+  const item = (await q.loadCurationQueue()).items.find((i) => i.sku === "PUB3");
+  assert.equal(item.status, "PUBLISHED");
+  assert.equal(item.metadata.shopifyProductId, "gid://shopify/Product/3");
+});
+
+await check("controlo: um APPROVED sem shopifyProductId é restaurado e não é reportado como ignorado", async () => {
+  writeQueue([
+    { sku: "PUB3b", status: "PUBLISHED", shopifyStatus: "ACTIVE", metadata: { shopifyProductId: "gid://shopify/Product/31" } },
+    { sku: "NP3", status: "APPROVED", shopifyStatus: "ACTIVE", metadata: { origem: "humano" } },
+  ]);
+  const r = await q.restoreQueueSnapshots([
+    { sku: "PUB3b", status: "PENDING", shopifyStatus: "DRAFT", metadata: {} },
+    { sku: "NP3", status: "PENDING", shopifyStatus: "DRAFT", metadata: {} },
+  ]);
+  assert.deepEqual(r.skipped, ["PUB3b"]);
+  assert.equal(r.skippedCount, 1);
+  assert.deepEqual(r.restored.map((i) => i.sku), ["NP3"]);
+  assert.equal(await statusOf("NP3"), "PENDING");
+  assert.equal(await statusOf("PUB3b"), "PUBLISHED");
+});
+
+await check("a resposta da rota e a mensagem do painel mostram os ignorados (contagem e SKU)", () => {
+  const rota = fs.readFileSync(path.join(ROOT, "app/routes/api.curation.queue.undo.jsx"), "utf8");
+  const painel = fs.readFileSync(path.join(ROOT, "app/routes/app._index.jsx"), "utf8");
+  assert.match(rota, /skippedCount: result\.skippedCount/);
+  assert.match(rota, /skipped: result\.skipped\.slice\(0, 50\)/);
+  assert.match(painel, /data\.skippedCount/);
+  assert.match(painel, /ignorado\(s\), já publicado\(s\) na Shopify/);
+});
+
 console.log("DBG-03 — o motor recusa SKUs fora de APPROVED antes da Shopify");
 await check("runApprovedShopifySync com SKU PENDING: ok false, rejected, job falha, Shopify não chamada", async () => {
   clearFlag();

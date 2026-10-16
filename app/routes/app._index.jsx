@@ -489,7 +489,11 @@ export default function CurationDashboard() {
         setToast({ content: data?.error || "Não foi possível desfazer ação", error: true });
         return;
       }
-      setToast({ content: "Ação desfeita com sucesso" });
+      // Decisão 3: itens já publicados na Shopify não são desfeitos e vêm reportados.
+      const ignorados = data.skippedCount
+        ? ` ${data.skippedCount} ignorado(s), já publicado(s) na Shopify (${(data.skipped || []).slice(0, 5).join(", ")}).`
+        : "";
+      setToast({ content: `Ação desfeita com sucesso.${ignorados}` });
       setUndoSnapshots([]);
       setListRefreshKey((k) => k + 1);
       refreshDashboardStats();

@@ -345,7 +345,8 @@ async function main() {
     assert.equal(item.metadata.origem, "humano");
   });
 
-  await caso("H10d desfazer para APPROVED grava origem 'humano', mesmo quando o snapshot era de regra", async () => {
+  // H10d (Decisão 4): o desfazer repõe a origem do snapshot. Um snapshot de regra volta com origem "regra".
+  await caso("H10d desfazer para APPROVED repõe a origem do snapshot (regra), não grava humano", async () => {
     escreverRegras([]);
     escreverFila([{ sku: "H10d", title_en: "H10d", status: "REJECTED", reason: "manual_dashboard", shopifyStatus: "DRAFT", statusChangedAt: DECIDIDO, metadata: { origem: "humano", rejectedAt: DECIDIDO, approvedAt: null } }]);
     await q.restoreQueueSnapshots([
@@ -353,7 +354,73 @@ async function main() {
     ]);
     const item = await q.getCurationQueueEntry("H10d");
     assert.equal(item.status, "APPROVED");
-    assert.equal(item.metadata.origem, "humano");
+    assert.equal(item.metadata.origem, "regra");
+  });
+
+  // D4 (Decisão 4): um APPROVED de regra desfeito fica de regra e volta a recalcular-se quando a regra muda.
+  await caso("D4 desfazer de um APPROVED de regra mantém origem 'regra' e recalcula-se quando a regra muda", async () => {
+    escreverRegras([REGRA_APROVA_LEGO]);
+    escreverFila([]);
+    await q.upsertCurationQueueFromRecord(registo("D4"));
+    assert.equal((await q.getCurationQueueEntry("D4")).metadata.origem, "regra", "pré-condição: nasce de regra");
+    const { previousSnapshots } = await q.bulkSetQueueStatus(["D4"], "REJECTED");
+    assert.equal((await q.getCurationQueueEntry("D4")).metadata.origem, "humano", "pré-condição: a rejeição é humana");
+    await q.restoreQueueSnapshots(previousSnapshots);
+    const desfeito = await q.getCurationQueueEntry("D4");
+    assert.equal(desfeito.status, "APPROVED");
+    assert.equal(desfeito.metadata.origem, "regra");
+    // A regra passa a rejeitar: o item desfeito recalcula-se, porque não está fixado por decisão humana.
+    escreverRegras([{ id: "rule_painel_lego_rej", action: "AUTO_REJECT", brand: "LEGO" }]);
+    await q.upsertCurationQueueFromRecord(registo("D4"));
+    const recalculado = await q.getCurationQueueEntry("D4");
+    assert.equal(recalculado.status, "REJECTED");
+    assert.equal(recalculado.metadata.origem, "regra");
+  });
+
+  // D5 (Decisão 5): item legado sem origem. Regra só quando o estado bate com smartAction.
+  await caso("D5 legado com smartAction AUTO_APPROVE e estado REJECTED (decisão humana antiga) fica humano e congelado", async () => {
+    escreverRegras([REGRA_APROVA_LEGO]);
+    escreverFila([
+      { sku: "D5a", title_en: "D5a", status: "REJECTED", reason: "manual_dashboard", shopifyStatus: "DRAFT", metadata: { smartRule: true, smartAction: "AUTO_APPROVE", smartRuleId: "rule_painel_lego", approvedAt: null, rejectedAt: DECIDIDO } },
+    ]);
+    await q.upsertCurationQueueFromRecord(registo("D5a"));
+    const item = await q.getCurationQueueEntry("D5a");
+    assert.equal(item.status, "REJECTED", "a regra de aprovação não pode reverter uma decisão humana antiga");
+    assert.equal(item.metadata.origem, undefined);
+  });
+
+  await caso("D5 legado coerente (smartAction AUTO_REJECT e estado REJECTED) fica de regra e recalcula-se", async () => {
+    escreverRegras([REGRA_APROVA_LEGO]);
+    escreverFila([
+      { sku: "D5b", title_en: "D5b", status: "REJECTED", reason: "smart_rule:rule_painel_lego_rej", shopifyStatus: "DRAFT", metadata: { smartRule: true, smartAction: "AUTO_REJECT", smartRuleId: "rule_painel_lego_rej", approvedAt: null, rejectedAt: DECIDIDO } },
+    ]);
+    await q.upsertCurationQueueFromRecord(registo("D5b"));
+    const item = await q.getCurationQueueEntry("D5b");
+    assert.equal(item.status, "APPROVED");
+    assert.equal(item.metadata.origem, "regra");
+  });
+
+  await caso("D5 legado elite (eliteAction AUTO_REJECT e estado REJECTED) sem origem recalcula-se como elite", async () => {
+    escreverRegras([]);
+    escreverFila([
+      { sku: "D5c", title_en: "D5c", status: "REJECTED", reason: "elite_auto_reject", shopifyStatus: "DRAFT", metadata: { eliteCuration: true, eliteAction: "AUTO_REJECT", approvedAt: null, rejectedAt: DECIDIDO } },
+    ]);
+    // Marca premium (LEGO) e preço normal: a elite já não exclui o item, por isso recalcula-se para PENDING.
+    await q.upsertCurationQueueFromRecord(registo("D5c"));
+    const item = await q.getCurationQueueEntry("D5c");
+    assert.equal(item.status, "PENDING");
+    assert.equal(item.metadata.origem, undefined);
+  });
+
+  // D7 (Decisão 7): PENDING com decisão humana continua fora da regra, agora por fixadoPorDecisaoHumana.
+  await caso("D7 PENDING com decisão humana continua fora da regra de painel e da elite (lote e unitário)", async () => {
+    escreverRegras([REGRA_APROVA_LEGO]);
+    escreverFila([{ sku: "D7", title_en: "D7", status: "PENDING", reason: "pending_review", shopifyStatus: "DRAFT", statusChangedAt: DECIDIDO, metadata: {} }]);
+    const fila = await q.loadCurationQueue();
+    await q.upsertCurationQueueBatchFromRecords([registo("D7")], { queue: fila });
+    assert.equal(itemDe(fila, "D7").status, "PENDING");
+    await q.upsertCurationQueueFromRecord(registo("D7"));
+    assert.equal((await q.getCurationQueueEntry("D7")).status, "PENDING");
   });
 
   // H11: PENDING devolvido pelo reset (com statusChangedAt, sem marca de apagado) não é recalculado.
