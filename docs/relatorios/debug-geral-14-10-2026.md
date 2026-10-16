@@ -220,9 +220,33 @@ Três lentes, uma de cada vez, sobre o diff de `origin/main` a `36a9424` (69 fic
 - **D2 no reset (DBG-72).** Fica para o 2b-3. O reset continua proibido em produção até lá. Sem código neste PR.
 - **Lista de scripts D7.** Bloqueia, e a verificação mostrou que os seis já chamavam `recusarSeAtividadeApp` no início de `main` ou no nível do módulo: `run-approved-sync.js:26`, `verify-post-ai-removal.js:25`, `catalog-purge-reindex.js:20`, `price-reconcile-apply.js:119`, `curation-spot-check.js:491` e `stream-import-dry-run.js:13`. Ao todo são 18 escritores com guarda, não 15. O teste `curation-atividade-app.test.js` passou a correr os 18 com um marcador vivo: código 1 e mensagem da guarda. M6 (tirar a guarda de `run-approved-sync.js`) deixa o teste vermelho. `stream-import-dry-run.js` grava a fila mesmo com `dryRun=true`: DBG-73, para o 2b-2.
 - **D6 literal.** Aceita a leitura com regras. PENDING sem decisão humana continua governado por AUTO_APPROVE e AUTO_REJECT, e um item novo pode nascer APPROVED ou REJECTED pela regra. Sem código. O texto da Decisão 35 é corrigido no PR de documentação.
-- **D5 de ponta a ponta.** Verificado e não confirmado. O checkpoint só avança depois do flush confirmado. O bloco citado (`indexingStream.server.js:277-287`) é o `finishDone`, que grava `checkpointScanned: null`, e não avança o checkpoint. O avanço só existe em `catalog-index-worker.mjs:60-68`, chamado por `confirmarJanelaDaFila` depois do `await flush` (`syncCatalogWithProgress.server.js:81-86`, com chamadas em `:201`, `:267` e `:292`). O progresso do principal não traz checkpoint (`indexingStream.server.js:113-114`, `:355`). Quando não há fila em memória, o checkpoint segue o lote, depois do insert na BD (`syncCatalogWithProgress.server.js:265-267`), e não há fila para confirmar. A recusa de flush com checkpoint parado já está coberta por `catalog-checkpoint-ordem.test.js`, caso C2. Sem código.
+- **D5 de ponta a ponta.** Verificado e não confirmado. O checkpoint só avança depois do flush confirmado. O bloco citado (`indexingStream.server.js:277-287`) é o `finishDone`, que grava `checkpointScanned: null`, e não avança o checkpoint. O avanço só existe em `catalog-index-worker.mjs:65-71`, chamado por `confirmarJanelaDaFila` depois do `await flush` (`syncCatalogWithProgress.server.js:81-86`, com chamadas em `:201`, `:267` e `:292`). O progresso do principal não traz checkpoint (`indexingStream.server.js:113-114`, `:355`). Quando não há fila em memória, o checkpoint segue o lote, depois do insert na BD (`syncCatalogWithProgress.server.js:265-267`), e não há fila para confirmar. A recusa de flush com checkpoint parado já está coberta por `catalog-checkpoint-ordem.test.js`, caso C2. Sem código.
 - **Purga de elite.** Fica no DBG-43, 2b-2. A purga continua proibida em produção. Sem código.
 - **Custo no lock.** Log por lote no processo principal: `[fila] lote de N itens em X ms`, só com números. Medido na Fly depois do deploy.
+
+### Dívida anterior ao 2b-1, para o PR 2b-2
+
+Registada aqui para ficar no relatório. A causa, a linha, a correção, o teste e a mutação de cada item ficam no plano do 2b-2 (`docs/planos/plano-2b.md`), antes de qualquer código.
+
+| ID | Estado | Descrição resumida |
+|---|---|---|
+| DBG-43 | 2b-2 | Purga de elite bloqueada até o 2b-2. Continua proibida em produção. |
+| DBG-44 | 2b-2 | `approvedAt` e `rejectedAt` são repostos a null em reindex. |
+| DBG-45 | 2b-2 | Assimetria entre reset e ciclo. |
+| DBG-46 | 2b-2 | Fila justa entre processos e lock por lote no `upsertOne`. O arquiteto fixou o título "lock por lote no upsertOne e justiça do lock". |
+| DBG-47 | 2c | Decisão 28 nas rotas: nenhuma sessão de leitura em paralelo com a publicação. |
+| DBG-48 | 2b-2 | Flag `DB_DEGRADED` sem leitor. |
+| DBG-49 | 2b-2 | Item apagado no admin sem origem própria. Vai junto com DBG-57. |
+| DBG-50 | corrigido | Sync de catálogo punha ACTIVE por regra sem aprovação na fila. Corrigido em [#112](https://github.com/carlosrebelo14-ai/alterpop-importer2/pull/112), `727f44a`. |
+
+### Achados do delta `220e6fc..3b6b6bf` (lente de concorrência, 16/10)
+
+| ID | Sev | Origem | Local | Achado |
+|---|---|---|---|---|
+| DBG-74 | Média | pré-existente | `streamImport.js:155-171`, `:82-85`; `lib/importer/config.js:27` | O processamento do stream é serial. `trackTask` devolve a promessa quando `inFlight.size < maxInFlight`, e o ciclo faz `await` a cada registo. `pLimit` nunca passa de 1, e `STREAM_CONCURRENCY` e `SHOPIFY_GRAPHQL_CONCURRENCY` não têm efeito. Não afeta a correção, porque o lock não é mantido durante o processamento. |
+| DBG-75 | Média | pré-existente | `ProductImporter.js:523`; `streamImport.js:150-152`; `curationQueue.server.js` (`upsertCurationQueueFromRecord`) | Cada registo é escrito duas vezes na fila: uma no lote, dentro de `comLockDaFila`, e outra em `processRecord`, com novo lock. Com lote de 10, são 11 aquisições de lock e 20 reescritas completas do ficheiro por lote, em vez de 1 e 10. É leitura de código, não medição. Liga-se a DBG-46. |
+| DBG-76 | Baixa | delta | `streamImport.js:149-154` | O log `[fila] lote de N itens em X ms` mede desde antes de `comLockDaFila`. Soma a espera na fila em processo e a espera pelo lock de ficheiro, por isso X não é só o tempo de escrita. |
+| DBG-77 | Baixa | delta | `scripts/tests/curation-atividade-app.test.js:180` e `:202-214` | O comentário diz "recusam … e sem gravar", mas o caso só verifica o código 1 e a palavra "Recusado". Não compara a fila em disco antes e depois. |
 
 **Dívida baixa do diff** (lista para a descrição do PR #111): DBG-53, DBG-54, DBG-55, DBG-60, DBG-61, DBG-64, DBG-65, DBG-66, DBG-67 e DBG-68. O DBG-69 sai desta lista, corrigido no 2b-1.
 
