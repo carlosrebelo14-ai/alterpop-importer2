@@ -133,7 +133,8 @@ async function casoImportacaoUmLockPorLote() {
         validationOpts: { syncPrices: false },
       });
     });
-    const loteMaximo = Math.ceil(N / 50);
+    const { LOTE_DA_FILA } = await import(pathToFileURL(path.join(HERE, "..", "..", "lib", "importer", "core", "streamImport.js")).href);
+    const loteMaximo = Math.ceil(N / LOTE_DA_FILA);
     assert.ok(aquisicoes >= 1, "a importação tem de escrever na fila");
     assert.ok(aquisicoes <= loteMaximo, `aquisições do lock: ${aquisicoes} para ${N} registos (máximo ${loteMaximo}, um por lote)`);
     const doDisco = JSON.parse(fs.readFileSync(QUEUE_PATH, "utf8")).items;

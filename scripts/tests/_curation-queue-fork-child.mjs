@@ -10,6 +10,8 @@
  * Protocolo: se waitGo, envia { type: "ready" } depois de importar a fila e espera { type: "go" }.
  * Depois corre a operação e envia { type: "done" } ou { type: "error", message }. Sai sempre.
  */
+import { writeFileSync } from "node:fs";
+
 const payload = JSON.parse(process.argv[2] || "{}");
 process.env.CURATION_DATA_DIR = payload.dataDir;
 process.env.DATABASE_URL = payload.databaseUrl;
@@ -61,6 +63,10 @@ async function correr() {
       return;
     case "setManualOverride":
       await q.setManualOverride(payload.sku, payload.overrides, payload.meta);
+      return;
+    case "upsertRecord":
+      // O valor devolvido pelo principal (a entrada gravada) tem de chegar ao worker.
+      writeFileSync(payload.outFile, JSON.stringify(await q.upsertCurationQueueFromRecord(payload.record)), "utf8");
       return;
     case "bulkSetMarginPct":
       await q.bulkSetMarginPct(payload.skus, payload.marginPct);

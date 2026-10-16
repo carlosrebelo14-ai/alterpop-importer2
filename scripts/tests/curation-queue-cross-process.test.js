@@ -247,6 +247,23 @@ function atrasarPrimeiraEscritaDaFila() {
 
 const resultados = [];
 
+// Lacuna de IPC: o worker recebe do principal a entrada gravada, não só o ok.
+async function casoEntradaVoltaPelaIPC() {
+  const dir = fs.mkdtempSync(path.join(DATA_DIR, "entrada-ipc-"));
+  const outFile = path.join(dir, "entrada.json");
+  try {
+    const filho = startChild({ op: "upsertRecord", record: registo("IPC1"), outFile });
+    await comPrazo(filho.done, 20000, "upsertRecord no fork");
+    await comPrazo(filho.exited, 20000, "saída do fork");
+    const devolvida = JSON.parse(fs.readFileSync(outFile, "utf8"));
+    assert.equal(devolvida?.sku, "IPC1", `o worker não recebeu a entrada gravada: ${JSON.stringify(devolvida)}`);
+    assert.equal(devolvida.status, "PENDING");
+    assert.equal(itemDoDisco("IPC1").status, "PENDING", "a entrada tem de estar gravada em disco");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function caso(id, nome, fn) {
   try {
     await fn();
@@ -504,6 +521,7 @@ async function main() {
       })
   );
   await caso("F", "decisão humana depois da leitura do worker não é revertida pelo flush (D2)", casoF);
+  await caso("IPC1", "upsert pelo worker devolve a entrada gravada pelo principal (IPC)", casoEntradaVoltaPelaIPC);
   await caso("G", "reset sem apagado: cópia PUBLISHED lida antes do reset não repõe PUBLISHED nem o id", casoG);
   await caso("G-sem-id", "reset com apagado: cópia SYNC_ERROR sem id lida antes do reset não repõe SYNC_ERROR", casoGSemId);
   await caso("E-lote", "upsert em lote sobre SYNC_ERROR mantém o estado e o erro (fila em disco)", () => casoE("lote"));

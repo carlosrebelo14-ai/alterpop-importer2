@@ -25,6 +25,12 @@
  *      regista "[fila] operação abortada: lock perdido" e não escreve a fila.
  *   L  Token confirmado antes de cada escrita: sem renovação no prazo, um token alheio no ficheiro
  *      aborta a escrita com CURATION_QUEUE_LOCK_LOST e nada é gravado.
+ *   L-a e L-b  Depois de uma operação que falha (mutou e lançou, ou a gravação falhou), a leitura de fora da
+ *      secção devolve o estado anterior, não o da cache mutada.
+ *   M  A renovação não trunca o lock: 200 escritas com renovação de 1 ms, nenhuma perdida (stress).
+ *   R1 A renovação não expõe o lock vazio a um leitor, mesmo com a escrita interceptada (determinístico).
+ *   R2 Lock vazio numa leitura é indeterminado: uma leitura seguinte com o token repõe a posse.
+ *   R3 Lock vazio em todas as leituras (3) marca o titular como perdido.
  *
  * Os limites de tempo vêm de variáveis de ambiente só de teste (CURATION_QUEUE_LOCK_*).
  *
@@ -48,6 +54,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CHILD_PATH = path.join(HERE, "_curation-queue-lock-child.mjs");
 const QUEUE_MODULE = pathToFileURL(path.join(HERE, "..", "..", "lib", "curation", "curationQueue.server.js")).href;
 const LOCK_MODULE = pathToFileURL(path.join(HERE, "..", "..", "lib", "curation", "curationQueueFileLock.server.js")).href;
+const lockMod = await import(LOCK_MODULE);
 
 const q = await import(QUEUE_MODULE);
 
@@ -513,6 +520,168 @@ async function casoTokenConfirmadoAntesDeEscrever() {
   assert.ok(erro, "a escrita tem de falhar quando o token no ficheiro já não é o do titular");
   assert.equal(erro.code, "CURATION_QUEUE_LOCK_LOST", `código do erro: ${erro.code}`);
   assert.equal(fs.readFileSync(QUEUE_PATH, "utf8"), antes, "nada pode ser gravado com token alheio");
+  const aposAborto = await q.loadCurationQueue();
+  assert.equal(
+    aposAborto.items.find((i) => i.sku === "X").status,
+    "PENDING",
+    "depois do aborto, a leitura de fora tem de ver o disco e não o estado mutado na cache"
+  );
+}
+
+// ---------------------------------------------------------------------------
+// M: stress de renovação, sem escritas perdidas
+// ---------------------------------------------------------------------------
+async function casoRenovacaoNuncaTrunca() {
+  escreverFila([item("X")]);
+  let perdidas = 0;
+  const erroOriginal = console.error;
+  console.error = () => {};
+  try {
+    await comEnv({ CURATION_QUEUE_LOCK_RENOVA_MS: 1 }, async () => {
+      for (let i = 0; i < 200; i++) {
+        try {
+          await q.mutateCurationQueue(async (fila) => {
+            fila.items.find((it) => it.sku === "X").metadata = { n: i };
+            return { gravar: true, valor: undefined };
+          });
+        } catch (err) {
+          if (err.code !== "CURATION_QUEUE_LOCK_LOST") throw err;
+          perdidas += 1;
+        }
+      }
+    });
+  } finally {
+    console.error = erroOriginal;
+  }
+  assert.equal(perdidas, 0, `escritas com lock perdido durante a renovação: ${perdidas} de 200`);
+}
+
+// ---------------------------------------------------------------------------
+// R1: a renovação não expõe o lock vazio a um leitor (determinístico, escrita interceptada)
+// ---------------------------------------------------------------------------
+async function casoRenovacaoNaoTrunca() {
+  const titular = await lockMod.adquirirLockDoFicheiro(LOCK_PATH);
+  const escritaOriginal = fsp.writeFile;
+  fsp.writeFile = async (ficheiro, dados, opcoes) => {
+    if (ficheiro === LOCK_PATH) {
+      // Como o writeFile direto antigo: trunca o lock, e um leitor a meio vê o ficheiro vazio.
+      await escritaOriginal(ficheiro, "", opcoes);
+      await lockMod.titularAindaTemLock(titular);
+      return escritaOriginal(ficheiro, dados, opcoes);
+    }
+    return escritaOriginal(ficheiro, dados, opcoes);
+  };
+  try {
+    await lockMod.renovarParaTestes(titular);
+  } finally {
+    fsp.writeFile = escritaOriginal;
+  }
+  assert.equal(titular.perdido, false, "o leitor viu o lock vazio durante a renovação e marcou o titular como perdido");
+  await lockMod.libertarLockDoFicheiro(titular);
+}
+
+// ---------------------------------------------------------------------------
+// R2: lock vazio numa leitura é indeterminado, não perda
+// ---------------------------------------------------------------------------
+async function casoLockVazioUmaVezRecuperado() {
+  const titular = await lockMod.adquirirLockDoFicheiro(LOCK_PATH);
+  const leituraOriginal = fsp.readFile;
+  let primeira = true;
+  fsp.readFile = async (ficheiro, opcoes) => {
+    if (ficheiro === LOCK_PATH && primeira) {
+      primeira = false;
+      return "";
+    }
+    return leituraOriginal(ficheiro, opcoes);
+  };
+  let confirmado;
+  try {
+    confirmado = await lockMod.titularAindaTemLock(titular);
+  } finally {
+    fsp.readFile = leituraOriginal;
+  }
+  assert.equal(confirmado, true, "um lock vazio numa leitura não pode contar como perda");
+  assert.equal(titular.perdido, false, "o titular não pode ficar perdido com o token ainda no ficheiro");
+  await lockMod.libertarLockDoFicheiro(titular);
+}
+
+// ---------------------------------------------------------------------------
+// R3: lock vazio em todas as leituras marca o titular como perdido
+// ---------------------------------------------------------------------------
+async function casoLockVazioPersistenteMarcaPerdido() {
+  const titular = await lockMod.adquirirLockDoFicheiro(LOCK_PATH);
+  const leituraOriginal = fsp.readFile;
+  let leituras = 0;
+  fsp.readFile = async (ficheiro, opcoes) => {
+    if (ficheiro === LOCK_PATH) {
+      leituras += 1;
+      return "";
+    }
+    return leituraOriginal(ficheiro, opcoes);
+  };
+  let confirmado;
+  try {
+    confirmado = await lockMod.titularAindaTemLock(titular);
+  } finally {
+    fsp.readFile = leituraOriginal;
+  }
+  assert.equal(confirmado, false);
+  assert.equal(titular.perdido, true, "três leituras vazias seguidas têm de marcar o titular como perdido");
+  assert.equal(leituras, 3, `o número de leituras antes de desistir tem de ser 3, foi ${leituras}`);
+  await lockMod.libertarLockDoFicheiro(titular);
+}
+
+// ---------------------------------------------------------------------------
+// L-a: operação que muta e lança não deixa estado mutado na cache
+// ---------------------------------------------------------------------------
+async function casoOperacaoFalhaDepoisDeMutarNaoDeixaCache() {
+  escreverFila([item("X")]);
+  await assert.rejects(
+    q.mutateCurationQueue(async (fila) => {
+      fila.items.find((i) => i.sku === "X").status = "APPROVED";
+      throw new Error("falha depois de mutar");
+    }),
+    /falha depois de mutar/
+  );
+  const depois = await q.loadCurationQueue();
+  assert.equal(
+    depois.items.find((i) => i.sku === "X").status,
+    "PENDING",
+    "a leitura de fora depois da falha tem de devolver o estado anterior à operação"
+  );
+}
+
+// ---------------------------------------------------------------------------
+// L-b: gravação que falha não deixa estado mutado na cache
+// ---------------------------------------------------------------------------
+async function casoGravacaoFalhaNaoDeixaCache() {
+  escreverFila([item("X")]);
+  const renomearOriginal = fsp.rename;
+  let falhou = false;
+  fsp.rename = async (origem, destino) => {
+    if (destino === QUEUE_PATH && !falhou) {
+      falhou = true;
+      throw Object.assign(new Error("ENOSPC simulado"), { code: "ENOSPC" });
+    }
+    return renomearOriginal(origem, destino);
+  };
+  try {
+    await assert.rejects(
+      q.mutateCurationQueue(async (fila) => {
+        fila.items.find((i) => i.sku === "X").status = "APPROVED";
+        return { gravar: true, valor: undefined };
+      }),
+      /ENOSPC simulado/
+    );
+  } finally {
+    fsp.rename = renomearOriginal;
+  }
+  const depois = await q.loadCurationQueue();
+  assert.equal(
+    depois.items.find((i) => i.sku === "X").status,
+    "PENDING",
+    "a gravação falhou, por isso a leitura de fora tem de devolver o disco, não a cache mutada"
+  );
 }
 
 async function main() {
@@ -528,6 +697,12 @@ async function main() {
   await caso("J  renovação não reescreve o lock de outro token e marca o titular como perdido", casoRenovacaoNaoSobrescreveLockAlheio);
   await caso("K  titular que perde o lock a meio aborta sem escrever", casoPerdaDoLockAbortaSemEscrever);
   await caso("L  token confirmado no ficheiro antes de cada escrita", casoTokenConfirmadoAntesDeEscrever);
+  await caso("L-a operação que muta e lança não deixa estado mutado na cache", casoOperacaoFalhaDepoisDeMutarNaoDeixaCache);
+  await caso("L-b gravação que falha não deixa estado mutado na cache", casoGravacaoFalhaNaoDeixaCache);
+  await caso("M  renovação atómica: 200 escritas com renovação de 1 ms, nenhuma perdida", casoRenovacaoNuncaTrunca);
+  await caso("R1 renovação não expõe o lock vazio a um leitor", casoRenovacaoNaoTrunca);
+  await caso("R2 lock vazio numa leitura é indeterminado, não perda", casoLockVazioUmaVezRecuperado);
+  await caso("R3 lock vazio em três leituras marca perdido", casoLockVazioPersistenteMarcaPerdido);
 
   console.log("\nRESUMO");
   for (const r of resultados) console.log(`  ${r.resultado.padEnd(6)} ${r.nome}`);
