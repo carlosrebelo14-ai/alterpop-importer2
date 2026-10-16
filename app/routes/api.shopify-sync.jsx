@@ -7,6 +7,7 @@ import {
   failShopifySyncJob,
 } from "../../lib/importer/shopify/shopifySyncJob.server.js";
 import { startApprovedShopifySyncInBackground } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
+import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import { listApprovedSkusForShopifySync, loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { resolveSyncSkus } from "../../lib/importer/shopify/resolveSyncSkus.js";
 import {
@@ -198,8 +199,19 @@ export const action = async ({ request }) => {
     throw err;
   }
 
-  await initShopifySyncJob(session.shop, approvedSkus.length);
-  startApprovedShopifySyncInBackground(session, { skus: approvedSkus });
+  // DBG-105: a reserva é tomada aqui, sem await até ao arranque. Não depende de force: force só salta o gate de
+  // estado, acima. Se o ciclo já publica, responde 409.
+  const reserva = tentarReservarPublicacao();
+  if (!reserva) {
+    return Response.json({ ok: false, error: "Já existe uma sincronização Shopify em curso." }, { status: 409 });
+  }
+  try {
+    await initShopifySyncJob(session.shop, approvedSkus.length);
+    startApprovedShopifySyncInBackground(session, { skus: approvedSkus, reserva });
+  } catch (err) {
+    reserva.libertar();
+    throw err;
+  }
 
   const status = await readShopifySyncStatus(session.shop);
 
