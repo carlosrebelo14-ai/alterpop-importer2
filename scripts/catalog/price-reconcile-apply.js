@@ -30,7 +30,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
-import { listCurationQueueItems } from "../../lib/curation/curationQueue.server.js";
+import { comLockDaFila, listCurationQueueItems } from "../../lib/curation/curationQueue.server.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
@@ -249,28 +249,31 @@ async function main() {
   // do botão "aplicar aos publicados" como "sem última escrita". Falha lança no registo de erros.
   const itemBySku = new Map(published.map((i) => [i.sku, i]));
   let recordedWrites = 0;
-  for (const r of written) {
-    const now = verifyLive.get(r.sku);
-    if (!now || cents(now.price) !== cents(r.after)) continue;
-    const cat = catalogBySku.get(r.sku);
-    try {
-      const { marginPct: rowMargin } = evaluatePrice(cat?.distributorPrice, cat?.grossPrice, marginPct, itemBySku.get(r.sku));
-      const rec = await recordPriceWrite({
-        sku: r.sku,
-        price: r.after,
-        distributorPrice: cat?.distributorPrice,
-        grossPrice: cat?.grossPrice,
-        marginPct: rowMargin,
-        source: "reconcile",
-        shop: SHOP,
-      });
-      if (rec.historyError) errors.push(errorEntry("PRICE_HISTORY_NOT_RECORDED", r.sku, rec.historyError));
-      if (rec.recorded) recordedWrites += 1;
-      else errors.push(errorEntry("LAST_WRITE_NOT_RECORDED", r.sku, "SKU fora da fila — última escrita não gravada"));
-    } catch (err) {
-      errors.push(errorEntry("LAST_WRITE_NOT_RECORDED", r.sku, err?.message || String(err)));
+  // Um lock para o lote inteiro (DBG-04, decisão 1): cada recordPriceWrite reutiliza-o.
+  await comLockDaFila(async () => {
+    for (const r of written) {
+      const now = verifyLive.get(r.sku);
+      if (!now || cents(now.price) !== cents(r.after)) continue;
+      const cat = catalogBySku.get(r.sku);
+      try {
+        const { marginPct: rowMargin } = evaluatePrice(cat?.distributorPrice, cat?.grossPrice, marginPct, itemBySku.get(r.sku));
+        const rec = await recordPriceWrite({
+          sku: r.sku,
+          price: r.after,
+          distributorPrice: cat?.distributorPrice,
+          grossPrice: cat?.grossPrice,
+          marginPct: rowMargin,
+          source: "reconcile",
+          shop: SHOP,
+        });
+        if (rec.historyError) errors.push(errorEntry("PRICE_HISTORY_NOT_RECORDED", r.sku, rec.historyError));
+        if (rec.recorded) recordedWrites += 1;
+        else errors.push(errorEntry("LAST_WRITE_NOT_RECORDED", r.sku, "SKU fora da fila — última escrita não gravada"));
+      } catch (err) {
+        errors.push(errorEntry("LAST_WRITE_NOT_RECORDED", r.sku, err?.message || String(err)));
+      }
     }
-  }
+  });
   console.log(`Última escrita gravada: ${recordedWrites}/${written.length}`);
 
   // Resultado final por SKU — o plano CSV acima diz o que se ia fazer; este diz o que

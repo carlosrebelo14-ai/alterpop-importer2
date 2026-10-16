@@ -29,7 +29,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { loadCurationQueue, markQueueItemDeletedInAdmin } from "../../lib/curation/curationQueue.server.js";
+import { comLockDaFila, loadCurationQueue, markQueueItemDeletedInAdmin } from "../../lib/curation/curationQueue.server.js";
 import { readCatalogRebuildStatus } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
@@ -143,12 +143,15 @@ async function main() {
   const queue = await loadCurationQueue();
   const bySku = new Map(deleted.map((d) => [d.sku, d.pid]));
   let changed = 0;
-  for (const item of queue.items) {
-    const pid = bySku.get(item.sku);
-    if (!pid || item.status !== "PUBLISHED" || item.metadata?.shopifyProductId !== pid) continue;
-    await markQueueItemDeletedInAdmin(item.sku);
-    changed += 1;
-  }
+  // Um lock para o lote inteiro (DBG-04, decisão 1): as escritas por SKU reutilizam-no.
+  await comLockDaFila(async () => {
+    for (const item of queue.items) {
+      const pid = bySku.get(item.sku);
+      if (!pid || item.status !== "PUBLISHED" || item.metadata?.shopifyProductId !== pid) continue;
+      await markQueueItemDeletedInAdmin(item.sku);
+      changed += 1;
+    }
+  });
   if (changed !== deleted.length) {
     errors.push(
       errorEntry("queue_changed_since_read", null, `${deleted.length - changed} item(s) mudaram na fila entre a leitura e a escrita — não tocados`)
