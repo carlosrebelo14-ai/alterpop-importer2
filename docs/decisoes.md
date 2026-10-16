@@ -291,7 +291,7 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 **Estado:** fechada pelo arquiteto. Implementação nos PRs 2b-1, 2b-2 e 2b-3.
 **Origem:** plano `docs/planos/plano-2b.md` (secção 11) e relatório `docs/relatorios/debug-geral-14-10-2026.md` (secção 9, DBG-37 a DBG-39).
 
-**Já aceites, confirmadas aqui:** D1 (IPC, o principal é o único escritor), D2 (decisão humana ganha, com `statusChangedAt`), D6 (o worker não muda estado de APPROVED, PUBLISHED nem SYNC_ERROR), D30 (o `|| true` do WAL sai como DBG-37), D31 (a Decisão 34 mantém-se: leituras passam em modo degradado) e DBG-25 com as três condições do plano.
+**Já aceites, confirmadas aqui:** D1 (IPC, o principal é o único escritor), D2 (decisão humana ganha, com `statusChangedAt`), D6 (o worker não muda estado de APPROVED, PUBLISHED nem SYNC_ERROR; a leitura com regras do ponto 3 abaixo completa a frase), D30 (o `|| true` do WAL sai como DBG-37), D31 (a Decisão 34 mantém-se: leituras passam em modo degradado) e DBG-25 com as três condições do plano.
 
 **Escritores e indexação**
 
@@ -334,6 +334,19 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 28. D39. Batimento com expiração automática ao fim de 10 minutos sem sinal.
 29. D40. Gravação por produto.
 30. D42. O ciclo agendado salta a publicação enquanto houver reset em curso, e regista o salto.
+
+**Pendentes do PR 2b-1 (revisão de `37bab0e`, decisões de 16/10/2026)**
+
+1. D2 no reset. Fica como DBG-72, para o PR 2b-3. O reset continua proibido em produção até lá. Sem código.
+2. Lista de scripts D7. Bloqueia. Os seis scripts apontados pela lente já chamam `recusarSeAtividadeApp` no início de `main` ou no nível do módulo: `run-approved-sync.js`, `verify-post-ai-removal.js`, `catalog-purge-reindex.js`, `price-reconcile-apply.js`, `curation-spot-check.js` e `stream-import-dry-run.js`. Ao todo são 18 escritores com guarda. O teste `curation-atividade-app.test.js` corre os 18 com marcador vivo. `stream-import-dry-run.js` grava a fila mesmo com `dryRun=true`: DBG-73, para o PR 2b-2.
+3. D6 literal. Aceita a leitura com regras. PENDING sem decisão humana continua governado por AUTO_APPROVE e AUTO_REJECT, e um item novo pode nascer APPROVED ou REJECTED pela regra. Sem código. Esta leitura substitui a frase de `plano-2b.md:430` ("Só cria itens PENDING novos e atualiza metadados").
+4. D5 de ponta a ponta. Não confirmado. O checkpoint avança em `catalog-index-worker.mjs:65-71`, depois de o flush ser confirmado em `syncCatalogWithProgress.server.js:82-85`. Sem código.
+5. Purga de elite. Fica como DBG-43, para o PR 2b-2. Continua proibida em produção. Sem código.
+6. Custo no lock. Uma linha de log por lote no processo principal: `[fila] lote de N itens em X ms`, só com números. A medição fica para a primeira importação real, em `logs_recent`.
+
+**Exceção elite.** Um item com origem `elite` desfeito pelo undo não ganha `statusChangedAt`, como a origem `regra`. O recálculo da elite é das regras, não de decisão humana. A origem `reset` segue a mesma regra. Testes U2 e U3 em `scripts/tests/curation-undo-marca-origem.test.js`. Commit `df09a9e`.
+
+**Decisão 7, publicação do ciclo (PR 2b-1, DBG-69).** O ciclo só publica com estado `completed` e `totalRows > 0`. Qualquer outro caso recusa com a marca `[ciclo] publicação recusada` e o motivo: o estado, o erro ou `indexação sem linhas`. Esta Decisão 7 é a da publicação do ciclo. Não é a D7 da lista acima, que é dos scripts. Commit `220e6fc`.
 
 **Decisões do developer, aceites**
 
