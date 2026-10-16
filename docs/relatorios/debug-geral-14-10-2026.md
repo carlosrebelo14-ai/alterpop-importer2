@@ -230,14 +230,17 @@ Registada aqui para ficar no relatório. A causa, a linha, a correção, o teste
 
 | ID | Estado | Descrição resumida |
 |---|---|---|
-| DBG-43 | 2b-2 | Purga de elite bloqueada até o 2b-2. Continua proibida em produção. |
-| DBG-44 | 2b-2 | `approvedAt` e `rejectedAt` são repostos a null em reindex. |
+| DBG-43 | corrigido | Purga de elite só sai do que não tem decisão humana. Dry-run por omissão. A execução continua bloqueada até OK do arquiteto: a rota responde 409 e a CLI recusa `--execute`. Corrigido no 2b-2 (`c79fb02`). Ligar a execução fica para um PR à parte. |
+| DBG-44 | corrigido | `approvedAt` e `rejectedAt` deixam de ser repostos a null em reindex de decisão humana. Corrigido no 2b-2 (`59f1e8c`). |
 | DBG-45 | 2b-2 | Assimetria entre reset e ciclo. |
-| DBG-46 | 2b-2 | Fila justa entre processos e lock por lote no `upsertOne`. O arquiteto fixou o título "lock por lote no upsertOne e justiça do lock". |
+| DBG-46 | parcial | Parte A corrigida no 2b-2 (`b98272f`): o lote da importação grava a fila numa escrita, com um lock. A escrita por registo no `upsertOne` fica como DBG-78. A justiça do lock fica como DBG-46B, baixa. |
 | DBG-47 | 2c | Decisão 28 nas rotas: nenhuma sessão de leitura em paralelo com a publicação. |
 | DBG-48 | 2b-2 | Flag `DB_DEGRADED` sem leitor. |
-| DBG-49 | 2b-2 | Item apagado no admin sem origem própria. Vai junto com DBG-57. |
+| DBG-49 | corrigido | Item apagado no admin sem origem própria. Corrigido no 2b-2 (`6c3a25e`), junto com DBG-57. |
 | DBG-50 | corrigido | Sync de catálogo punha ACTIVE por regra sem aprovação na fila. Corrigido em [#112](https://github.com/carlosrebelo14-ai/alterpop-importer2/pull/112), `727f44a`. |
+| DBG-56 | corrigido | Espera em processo sem prazo. Corrigido no 2b-2 (`0f56066`): rotas do painel 30 s, processos de fundo 10 min. |
+| DBG-57 | corrigido | Item apagado no admin reposto pelo undo. Corrigido no 2b-2 (`6c3a25e`). |
+| DBG-73 | corrigido | Dry-run gravava a fila. Corrigido no 2b-2 (`56bae86`). |
 
 ### Achados do delta `220e6fc..3b6b6bf` (lente de concorrência, 16/10)
 
@@ -247,6 +250,24 @@ Registada aqui para ficar no relatório. A causa, a linha, a correção, o teste
 | DBG-75 | Média | pré-existente | `ProductImporter.js:523`; `streamImport.js:150-152`; `curationQueue.server.js` (`upsertCurationQueueFromRecord`) | Cada registo é escrito duas vezes na fila: uma no lote, dentro de `comLockDaFila`, e outra em `processRecord`, com novo lock. Com lote de 10, são 11 aquisições de lock e 20 reescritas completas do ficheiro por lote, em vez de 1 e 10. É leitura de código, não medição. Liga-se a DBG-46. |
 | DBG-76 | Baixa | delta | `streamImport.js:149-154` | O log `[fila] lote de N itens em X ms` mede desde antes de `comLockDaFila`. Soma a espera na fila em processo e a espera pelo lock de ficheiro, por isso X não é só o tempo de escrita. |
 | DBG-77 | Baixa | delta | `scripts/tests/curation-atividade-app.test.js:180` e `:202-214` | O comentário diz "recusam … e sem gravar", mas o caso só verifica o código 1 e a palavra "Recusado". Não compara a fila em disco antes e depois. |
+
+### Achados do 2b-2 (16/10)
+
+Achados das lentes e da implementação do 2b-2. Os itens de dívida anterior ao 2b-1 estão na tabela acima.
+
+| ID | Sev | Origem | Local | Achado |
+|---|---|---|---|---|
+| DBG-78 | Baixa | pré-existente | `ProductImporter.js:523` (`upsertOne`) | O `upsertOne` grava a fila por registo, depois do lote. Parte de DBG-75, que o 2b-2 não tira. Para a remover é preciso separar a preparação do registo da decisão de Shopify, porque o `upsertOne` precisa da entrada gravada para decidir. Aceite como baixa pelo arquiteto. O override de título fica como está, porque o estado final é igual. |
+| DBG-79 | Média | pré-existente, latente | `eliteCuration.server.js`, purga de `origin/main` | A purga reavaliava a fila com registos parciais (só `vendor` e `netPrice`, sem categoria). Sem categoria, a regra dava outro resultado que o catálogo: uma entrada APPROVED continuava na fila depois de a linha sair do catálogo. Latente, porque a purga está bloqueada em produção. Corrigido no 2b-2 (`c79fb02`): a decisão vem da leitura do catálogo. Aceite pelo arquiteto. |
+| DBG-80 | Baixa | pré-existente, latente | `scripts/curation/elite-curation-purge.js`, versão de `origin/main` | O domínio por omissão da CLI da purga é `alterpop-store.myshopify.com`, a loja de desenvolvimento. A loja real é `jyr17t-wr.myshopify.com`, que é o domínio que os outros scripts usam. Corrigido na CLI e na tarefa `elite_purge_dry_run`. Sem efeito em produção, porque a CLI estava bloqueada. |
+| DBG-46B | Baixa | pré-existente | `curationQueue.server.js`, `withCurationQueueLock` | Justiça do lock entre processos: um processo pode ficar à espera de forma indefinida. Não corrigido no 2b-2. |
+| DBG-81 | Média | delta | `api.curation.queue.bulk.jsx`, `api.curation.queue.undo.jsx` | Com o timeout do lock, bulk e undo respondiam 500 com a mensagem técnica "[fila] espera esgotada…". Só approve e reject respondiam 503. Corrigido no 2b-2: os dois traduzem o timeout para 503 "fila ocupada, tenta de novo", e o teste R2 verifica o ramo. |
+| DBG-82 | Média | delta | `curationQueue.server.js`, `recoverCorruptedQueueJson` | Numa fila com caracteres de controlo, a recuperação espera pelo lock. Se a espera estoura, o `catch` engolia o erro, devolvia `null`, e `degradeUnrecoverableQueue` gravava a flag `DB_DEGRADED`. Uma espera de lock passava a bloquear todas as escritas até restauro manual. Corrigido no 2b-2: o timeout é relançado, e o teste R1 verifica que a flag não fica gravada e que o ficheiro não muda. |
+| DBG-83 | Baixa | delta | `api.products.import-edits.jsx:211` e `:215` | A importação de edições faz duas escritas com dois locks: o override e a aprovação. Se a aprovação expira, o override já ficou gravado, e a linha sai como rejeitada com "Nada foi escrito". Repetir é idempotente. Não corrigido. |
+| DBG-84 | Baixa | pré-existente | `curationQueue.server.js:340-363` e `:521` | Um leitor fora do lock que abre o ficheiro antes do `rename` e acaba depois do `invalidate` pode repor conteúdo antigo na cache. `loadCurationQueueCached`, usado nas margens do catálogo, devolve esse conteúdo até à próxima escrita. Traçado por leitura, não reproduzido. Confirmado em `origin/main`. Não corrigido. |
+| DBG-85 | Baixa | delta | `curationQueue.server.js`, `recoverCorruptedQueueJson` | O backup da fila corrompida é escrito antes de esperar pelo lock. Cada tentativa de leitura que estoura grava um backup novo, de cerca de 15 MB. Com a fila corrompida e o painel a repetir, o volume enche. Só acontece com a fila corrompida. Não corrigido. |
+
+**Tarefa nova `elite_purge_dry_run` (maintenance).** Só lê e só faz dry-run. Imprime contagens, sem SKU: candidatos, retidos por decisão humana, retidos por estado da fila e quantos sairiam por estado. A opção `execute` é recusada pelo `maintenance.sh` para esta tarefa, mesmo com o environment `production`, porque a tarefa não está no job de escrita. Ligar a execução fica para um PR à parte, depois de o arquiteto rever um dry-run em produção.
 
 **Dívida baixa do diff** (lista para a descrição do PR #111): DBG-53, DBG-54, DBG-55, DBG-60, DBG-61, DBG-64, DBG-65, DBG-66, DBG-67 e DBG-68. O DBG-69 sai desta lista, corrigido no 2b-1.
 

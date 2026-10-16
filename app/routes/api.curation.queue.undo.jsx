@@ -36,6 +36,10 @@ export const action = async ({ request }) => {
       skipped: result.skipped.slice(0, 50),
     });
   } catch (err) {
+    // Prazo do lock da fila esgotado: nada foi escrito. Pede-se nova tentativa, não um erro (DBG-56).
+    if (err?.code === "CURATION_QUEUE_LOCK_TIMEOUT") {
+      return Response.json({ ok: false, error: "fila ocupada, tenta de novo" }, { status: 503 });
+    }
     return Response.json({ ok: false, error: err?.message || String(err) }, { status: 500 });
   }
 };

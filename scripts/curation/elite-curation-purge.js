@@ -8,7 +8,7 @@
  *
  * Uso:
  *   node scripts/curation/elite-curation-purge.js
- *   SHOP=alterpop-store.myshopify.com node scripts/curation/elite-curation-purge.js
+ *   SHOP=jyr17t-wr.myshopify.com node scripts/curation/elite-curation-purge.js
  */
 
 if (process.argv.slice(2).includes("--execute")) {
@@ -24,7 +24,7 @@ await import("dotenv/config");
 const { purgeEliteCatalog } = await import("../../lib/importer/curation/eliteCuration.server.js");
 const { recusarSeAtividadeApp } = await import("../../lib/curation/atividadeApp.js");
 
-const shop = process.env.SHOP || "alterpop-store.myshopify.com";
+const shop = process.env.SHOP || process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
 
 console.log(`[elite-purge] Loja: ${shop}`);
 console.log("[elite-purge] Dry-run: nada é escrito.");

@@ -243,6 +243,49 @@ function casoRotasEmbrulhamEscritas() {
   }
 }
 
+// R1: a recuperação de uma fila com caracteres de controlo espera pelo lock. Se a espera estoura,
+// a leitura tem de falhar com o timeout, sem gravar a flag DB_DEGRADED e sem reescrever o ficheiro.
+async function casoRecuperacaoNaoDegradaComTimeout() {
+  process.env.CURATION_QUEUE_LOCK_PRAZO_ROTA_MS = "300";
+  const { readDbDegraded } = await import(pathToFileURL(path.join(REPO, "lib", "health", "dbDegraded.js")).href);
+  // O caráter de controlo faz o JSON falhar, e a sanitização recupera a fila: é o caminho que escreve.
+  const bruto = '{"version":1,"updatedAt":null,"items":[{"sku":"SKU-R1\u0001","title_en":"Teste","status":"PENDING"}]}';
+  fs.writeFileSync(QUEUE_PATH, bruto, "utf8");
+  q.invalidateCurationMemoryCache();
+  const detentor = q.comLockDaFila(() => sleep(1500));
+  await sleep(50);
+  const erro = await q.comPrazoDeRota(() => q.loadCurationQueue()).then(
+    () => null,
+    (e) => e
+  );
+  await detentor;
+  assert.equal(erro?.code, "CURATION_QUEUE_LOCK_TIMEOUT", `a leitura tinha de desistir com o timeout: ${erro?.code ?? "sem erro"}`);
+  assert.equal(readDbDegraded(), null, "um timeout de lock não pode gravar a flag DB_DEGRADED");
+  assert.equal(fs.readFileSync(QUEUE_PATH, "utf8"), bruto, "o ficheiro não pode ser reescrito durante o timeout");
+  q.invalidateCurationMemoryCache();
+  const fila = await q.loadCurationQueue();
+  assert.equal(fila.items.length, 1, "com o lock libertado, a leitura recupera a fila");
+}
+
+// R2: bulk e undo traduzem o timeout para 503 "fila ocupada, tenta de novo", como approve e reject.
+const ROTAS_DE_503 = ["app/routes/api.curation.queue.bulk.jsx", "app/routes/api.curation.queue.undo.jsx"];
+
+function casoRotasTraduzemTimeoutPara503() {
+  for (const rota of ROTAS_DE_503) {
+    const codigo = semComentarios(fs.readFileSync(path.join(REPO, rota), "utf8"));
+    const catchGeral = codigo.lastIndexOf("catch (err)");
+    assert.ok(catchGeral > 0, `${rota}: falta o catch (err) do topo`);
+    const ramo = codigo.indexOf('err?.code === "CURATION_QUEUE_LOCK_TIMEOUT"', catchGeral);
+    assert.ok(ramo > catchGeral, `${rota}: falta o ramo CURATION_QUEUE_LOCK_TIMEOUT no catch`);
+    const mensagem = codigo.indexOf('"fila ocupada, tenta de novo"', ramo);
+    assert.ok(mensagem > ramo, `${rota}: a mensagem de fila ocupada tem de estar no ramo do prazo`);
+    const resposta = codigo.slice(mensagem, codigo.indexOf(");", mensagem));
+    assert.match(resposta, /status:\s*503/, `${rota}: o ramo do prazo tem de responder 503`);
+    const geral = codigo.indexOf("{ status: 500 }", catchGeral);
+    assert.ok(geral > mensagem, `${rota}: a resposta genérica 500 vem depois do ramo do prazo`);
+  }
+}
+
 async function main() {
   console.log("curation-fila-prazo-rota");
   await caso("P1 rota com a fila ocupada desiste no prazo de rota, com a marca de espera esgotada", casoRotaDesisteNoPrazo);
@@ -253,6 +296,8 @@ async function main() {
   await caso("P6 pedido que desiste enquanto espera o ficheiro não escreve e liberta o lock", casoDesisteAPesarDeTerTomadoOFicheiro);
   await caso("P7 prazos por omissão: rota 30 s, fundo 10 min", casoPrazosPorOmissao);
   await caso("S1 rotas de escrita do painel usam comPrazoDeRota e não têm chamadas nuas", casoRotasEmbrulhamEscritas);
+  await caso("R1 recuperação com timeout de lock não grava DB_DEGRADED e não reescreve a fila", casoRecuperacaoNaoDegradaComTimeout);
+  await caso("R2 bulk e undo traduzem o timeout para 503 fila ocupada", casoRotasTraduzemTimeoutPara503);
 
   console.log("\nRESUMO");
   for (const r of resultados) console.log(`  ${r.resultado.padEnd(6)} ${r.nome}`);
