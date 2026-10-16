@@ -21,6 +21,8 @@
  *      de 10 min e 30 s é.
  *   J  Lock tomado por outro token durante a posse: a renovação não o reescreve e marca o titular
  *      como perdido.
+ *   K  O titular perde o lock a meio de uma operação: a operação lança CURATION_QUEUE_LOCK_LOST,
+ *      regista "[fila] operação abortada: lock perdido" e não escreve a fila.
  *
  * Os limites de tempo vêm de variáveis de ambiente só de teste (CURATION_QUEUE_LOCK_*).
  *
@@ -435,6 +437,50 @@ async function casoCacheNaoUsadaDentroDoLock() {
   assert.equal(itemDoDisco("Y").status, "APPROVED", "a aprovação de Y tem de ficar gravada");
 }
 
+// ---------------------------------------------------------------------------
+// K: titular que perde o lock a meio não escreve a fila
+// ---------------------------------------------------------------------------
+async function casoPerdaDoLockAbortaSemEscrever() {
+  escreverFila([item("X"), item("Y")]);
+  const antes = fs.readFileSync(QUEUE_PATH, "utf8");
+  const registos = [];
+  const erroOriginal = console.error;
+  console.error = (...args) => registos.push(args.join(" "));
+  let erro = null;
+  try {
+    await comEnv({ CURATION_QUEUE_LOCK_RENOVA_MS: 20 }, () =>
+      comPrazo(
+        q.mutateCurationQueue(async (fila) => {
+          // Outro processo toma o lock: o token do titular sai do ficheiro. A renovação (20 ms)
+          // vê o token alheio e marca o titular como perdido. Só depois a operação escreve.
+          escreverLock({ pid: process.pid, em: new Date().toISOString(), token: "outro-titular" });
+          await sleep(200);
+          fila.items.find((i) => i.sku === "X").status = "APPROVED";
+          return { gravar: true, valor: undefined };
+        }),
+        20000,
+        "operação com lock perdido"
+      ).catch((e) => {
+        erro = e;
+      })
+    );
+  } finally {
+    console.error = erroOriginal;
+  }
+  assert.ok(erro, "a operação tem de falhar quando o titular perde o lock");
+  assert.equal(erro.code, "CURATION_QUEUE_LOCK_LOST", `código do erro: ${erro.code}`);
+  assert.equal(fs.readFileSync(QUEUE_PATH, "utf8"), antes, "a operação não pode gravar depois de perder o lock");
+  assert.ok(
+    registos.some((r) => r.includes("[fila] operação abortada: lock perdido")),
+    `falta o registo do aborto. Registos: ${registos.join(" | ")}`
+  );
+  assert.deepEqual(
+    fs.readdirSync(DATA_DIR).filter((f) => f.endsWith(".tmp")),
+    [],
+    "o aborto não pode deixar ficheiro temporário"
+  );
+}
+
 async function main() {
   await caso("A  dois processos a alternar aprovações, nenhuma perdida", casoAlternarEscritasEntreProcessos);
   await caso("B  lock com PID morto é libertado", casoPidMortoLibertado);
@@ -446,6 +492,7 @@ async function main() {
   await caso("H  lock com PID vivo escrito antes do arranque da máquina é libertado", casoLockAnteriorAoArranqueLibertado);
   await caso("I  limite de 10 min por omissão: 5 min não é libertado, 10 min e 30 s é", casoLimiteDeDezMinutos);
   await caso("J  renovação não reescreve o lock de outro token e marca o titular como perdido", casoRenovacaoNaoSobrescreveLockAlheio);
+  await caso("K  titular que perde o lock a meio aborta sem escrever", casoPerdaDoLockAbortaSemEscrever);
 
   console.log("\nRESUMO");
   for (const r of resultados) console.log(`  ${r.resultado.padEnd(6)} ${r.nome}`);
