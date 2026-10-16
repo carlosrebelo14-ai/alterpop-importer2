@@ -40,6 +40,7 @@ import {
 } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { loadCurationQueueForPanel } from "../../lib/curation/curationQueue.server.js";
 import { partitionPublishSelection, describeLeftOut } from "../../lib/curation/publishSelection.js";
+import { mostrarAlertaPublicado } from "../../lib/curation/alertaPublicado.js";
 import { countSmartRuleDecisions } from "../../lib/importer/curation/smartRules.server.js";
 import { formatEur } from "../../lib/importer/catalog/categoryLabel.js";
 import { translateCategoryLabel } from "../../lib/importer/catalog/categoryLabel.js";
@@ -2735,7 +2736,7 @@ export default function CurationDashboard() {
                                       <Badge tone="info">Já esteve publicado</Badge>
                                     </Tooltip>
                                   )}
-                                  {publicadoNaShopifyAlerta && (
+                                  {mostrarAlertaPublicado(item) && (
                                     <Tooltip content={`Criado na Shopify em ${new Date(publicadoNaShopifyAlerta.em).toLocaleDateString("pt-PT")}. Chegou uma decisão humana durante a corrida, por isso não ficou publicado. Sem despublicação automática: retirar à mão na Shopify se for preciso.`}>
                                       <Badge tone="critical">Publicado na Shopify</Badge>
                                     </Tooltip>

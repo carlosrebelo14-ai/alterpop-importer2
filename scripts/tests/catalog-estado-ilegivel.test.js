@@ -43,14 +43,20 @@ const ficheiroDe = (loja) => path.join(DIR_ESTADO, `${loja}-rebuild-status.json`
 const SEM_FICHEIRO = "loja-sem-estado.myshopify.com";
 const JSON_INVALIDO = "loja-json-invalido.myshopify.com";
 const NAO_OBJETO = "loja-json-nulo.myshopify.com";
+// JSON válido que não é um objeto: um array e um número. Um array é objeto para typeof, por isso só
+// Array.isArray o apanha.
+const ARRAY = "loja-json-array.myshopify.com";
+const NUMERO = "loja-json-numero.myshopify.com";
 // Um diretório no lugar do ficheiro dá EISDIR ao ler: existe, mas não se lê.
 const ILEGIVEL = "loja-ilegivel.myshopify.com";
-const ILEGIVEIS = [JSON_INVALIDO, NAO_OBJETO, ILEGIVEL];
+const ILEGIVEIS = [JSON_INVALIDO, NAO_OBJETO, ARRAY, NUMERO, ILEGIVEL];
 const MENSAGEM = /estado de indexação ilegível/;
 
 fs.mkdirSync(DIR_ESTADO, { recursive: true });
 fs.writeFileSync(ficheiroDe(JSON_INVALIDO), '{"state": "completed", ', "utf8");
 fs.writeFileSync(ficheiroDe(NAO_OBJETO), "null", "utf8");
+fs.writeFileSync(ficheiroDe(ARRAY), '[{"state": "completed", "error": null}]', "utf8");
+fs.writeFileSync(ficheiroDe(NUMERO), "42", "utf8");
 fs.mkdirSync(ficheiroDe(ILEGIVEL), { recursive: true });
 
 let falhas = 0;

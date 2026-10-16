@@ -8,7 +8,11 @@
  *   (b) rejeição depois da criação: o item fica REJECTED, nunca PUBLISHED, com alerta no metadata;
  *   (c) o erro de sincronização não sobrepõe uma decisão humana;
  *   (d) caminhos normais continuam: APPROVED publicado fica PUBLISHED, erro sem decisão fica SYNC_ERROR;
- *   (e) a leitura antes de criar é do disco, não da cache em memória.
+ *   (e) a leitura antes de criar é do disco, não da cache em memória;
+ *   (g) o alerta 'Publicado na Shopify' depende só de haver alerta registado (função pura do painel);
+ *   (i) lock ocupado na releitura (caminho normal e nova tentativa): a corrida aborta, o item fica APPROVED
+ *       e não grava SYNC_ERROR (Decisão 30);
+ *   (k) PENDING e SYNC_ERROR não são publicados: no arranque, durante a corrida e antes da marcação.
  * Uso: node scripts/tests/shopify-publish-human-decision.test.js
  */
 import assert from "node:assert/strict";
@@ -224,13 +228,141 @@ await check("(h) o alerta sobrevive à escrita do worker (flush) num item rejeit
   assert.deepEqual((await itemNaFila("H1")).metadata.alertaPublicadoNaShopify, alerta);
 });
 
-await check("(g) painel: a linha mostra 'Publicado na Shopify' com o alerta vindo da fila", () => {
-  const painel = fs.readFileSync(path.join(ROOT, "app/routes/app._index.jsx"), "utf8");
+await check("(g) painel: a linha mostra 'Publicado na Shopify' só quando há alerta registado", async () => {
+  const { mostrarAlertaPublicado } = await import(path.join(ROOT, "lib/curation/alertaPublicado.js"));
+  const alerta = { shopifyProductId: "gid://shopify/Product/9", em: "2026-10-16T12:00:00.000Z" };
+  assert.equal(mostrarAlertaPublicado({ status: "REJECTED", publicadoNaShopifyAlerta: alerta }), true, "alerta presente com REJECTED mostra o alerta");
+  assert.equal(mostrarAlertaPublicado({ status: "REJECTED", publicadoNaShopifyAlerta: null }), false, "sem alerta não mostra");
+  assert.equal(mostrarAlertaPublicado({ status: "REJECTED" }), false, "linha sem o campo não mostra");
+  assert.equal(mostrarAlertaPublicado(null), false, "linha ausente não mostra");
+  // Ligação: a linha do painel recebe o alerta da fila, e a rota chama a função (não repete a condição).
   const linhas = fs.readFileSync(path.join(ROOT, "lib/importer/catalog/catalogProductsDb.server.js"), "utf8");
+  const painel = fs.readFileSync(path.join(ROOT, "app/routes/app._index.jsx"), "utf8");
   assert.match(linhas, /publicadoNaShopifyAlerta: queueEntries\.get\(p\.sku\)\?\.metadata\?\.alertaPublicadoNaShopify/);
-  assert.match(painel, /publicadoNaShopifyAlerta,/);
-  assert.match(painel, /\{publicadoNaShopifyAlerta && \(/);
-  assert.match(painel, /<Badge tone="critical">Publicado na Shopify<\/Badge>/);
+  assert.match(painel, /\{mostrarAlertaPublicado\(item\) && \(/);
+});
+
+console.log("Leitura com lock ocupado (Decisão 30)");
+
+// A releitura espera PRAZO_LOCK_MS e falha. O lock só é libertado depois (LIBERTA_LOCK_MS), a tempo de
+// uma escrita de SYNC_ERROR que a versão errada tentaria logo a seguir. Sem a libertação, essa escrita
+// também falharia e o teste não distinguiria as duas versões.
+const PRAZO_LOCK_MS = 500;
+const LIBERTA_LOCK_MS = 800;
+let timerDoLock = null;
+
+/** Ocupa o lock de ficheiro da fila com um titular vivo e fresco (este próprio processo). Liberta-o ao fim de libertaEmMs. */
+function ocuparLock(libertaEmMs) {
+  const lockFile = path.join(tmp, "curation-queue.lock");
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, em: new Date().toISOString(), token: "lock-ocupado-teste" }), "utf8");
+  clearTimeout(timerDoLock);
+  timerDoLock = setTimeout(() => fs.rmSync(lockFile, { force: true }), libertaEmMs);
+}
+
+/** Corre fn com o prazo de lock curto e repõe o ambiente, o timer e o lock no fim. */
+async function comPrazoDeLockCurto(fn) {
+  const anterior = process.env.CURATION_QUEUE_LOCK_PRAZO_MS;
+  process.env.CURATION_QUEUE_LOCK_PRAZO_MS = String(PRAZO_LOCK_MS);
+  try {
+    return await fn();
+  } finally {
+    if (anterior === undefined) delete process.env.CURATION_QUEUE_LOCK_PRAZO_MS;
+    else process.env.CURATION_QUEUE_LOCK_PRAZO_MS = anterior;
+    clearTimeout(timerDoLock);
+    timerDoLock = null;
+    fs.rmSync(path.join(tmp, "curation-queue.lock"), { force: true });
+  }
+}
+
+await check("(i) lock ocupado na releitura antes de criar: a corrida aborta com erro, o item fica APPROVED sem SYNC_ERROR", async () => {
+  escreverFila([item("L1")]);
+  const criados = [];
+  const publicar = async (_client, row) => {
+    criados.push(row.sku);
+    return { shopifyProductId: `gid://shopify/Product/${row.sku}` };
+  };
+  // O lock é ocupado depois de a corrida ler o catálogo e antes do primeiro ciclo: é aí que se relê o estado.
+  const deps = {
+    ...dependencias(publicar),
+    garantirMetafields: async () => {
+      ocuparLock(LIBERTA_LOCK_MS);
+      return false;
+    },
+  };
+  await comPrazoDeLockCurto(async () => {
+    await assert.rejects(engine.runApprovedShopifySync(SESSAO, { dependencias: deps }), /fila de curadoria ocupada/, "a corrida tem de devolver o erro da releitura");
+  });
+  assert.deepEqual(criados, [], "sem releitura não há criação de produto");
+  const l1 = await itemNaFila("L1");
+  assert.equal(l1.status, "APPROVED", "o item fica APPROVED");
+  assert.equal(l1.metadata.syncError ?? null, null, "a releitura não grava SYNC_ERROR");
+});
+
+await check("(i2) lock ocupado na releitura de uma nova tentativa: a corrida aborta, o item fica APPROVED sem SYNC_ERROR", async () => {
+  escreverFila([item("L2")]);
+  const chamadas = [];
+  const publicar = async (_client, row) => {
+    chamadas.push(row.sku);
+    // Sessão inválida na primeira criação, e o lock fica ocupado antes da nova tentativa.
+    ocuparLock(LIBERTA_LOCK_MS);
+    throw new Error("401 Unauthorized (teste)");
+  };
+  await comPrazoDeLockCurto(async () => {
+    await assert.rejects(engine.runApprovedShopifySync(SESSAO, { dependencias: dependencias(publicar) }), /fila de curadoria ocupada/, "a corrida tem de devolver o erro da releitura");
+  });
+  assert.deepEqual(chamadas, ["L2"], "a nova tentativa não chega a criar produto");
+  const l2 = await itemNaFila("L2");
+  assert.equal(l2.status, "APPROVED", "o item fica APPROVED");
+  assert.equal(l2.metadata.syncError ?? null, null, "a releitura da nova tentativa não grava SYNC_ERROR");
+});
+
+console.log("Estado do item durante a corrida: PENDING e SYNC_ERROR (Decisão 2 e 30)");
+
+await check("(k0) PENDING e SYNC_ERROR no arranque não entram na corrida e não são publicados", async () => {
+  escreverFila([item("KP", "PENDING"), item("KE", "SYNC_ERROR"), item("KA")]);
+  const criados = [];
+  const publicar = async (_client, row) => {
+    criados.push(row.sku);
+    return { shopifyProductId: `gid://shopify/Product/${row.sku}` };
+  };
+  const res = await engine.runApprovedShopifySync(SESSAO, { dependencias: dependencias(publicar) });
+  assert.equal(res.ok, true);
+  assert.deepEqual(criados, ["KA"], "só o APPROVED é publicado");
+  assert.equal((await itemNaFila("KP")).status, "PENDING");
+  assert.equal((await itemNaFila("KE")).status, "SYNC_ERROR");
+});
+
+await check("(k1) PENDING durante a corrida: a releitura salta o SKU e não o cria na Shopify", async () => {
+  escreverFila([item("K0"), item("K1")]);
+  const criados = [];
+  const publicar = async (_client, row) => {
+    criados.push(row.sku);
+    if (row.sku === "K0") {
+      // Uma desaprovação durante a corrida volta K1 a PENDING antes da releitura dele.
+      await q.mutateCurationQueue((fila) => {
+        fila.items.find((i) => i.sku === "K1").status = "PENDING";
+        return { gravar: true, valor: null };
+      });
+    }
+    return { shopifyProductId: `gid://shopify/Product/${row.sku}` };
+  };
+  const res = await engine.runApprovedShopifySync(SESSAO, { dependencias: dependencias(publicar) });
+  assert.deepEqual(criados, ["K0"], "K1 em PENDING na releitura não pode ser criado na Shopify");
+  assert.equal(res.saltados, 1, "K1 conta como saltado");
+  assert.equal((await itemNaFila("K1")).status, "PENDING");
+});
+
+await check("(k2) SYNC_ERROR durante a publicação: o produto criado não marca o item PUBLISHED sem nova aprovação", async () => {
+  escreverFila([item("S1")]);
+  const publicar = async (_client, row) => {
+    // Erro de sincronização gravado depois da releitura e antes da marcação de PUBLISHED.
+    await q.markQueueItemSyncError(row.sku, "erro concorrente (teste)");
+    return { shopifyProductId: `gid://shopify/Product/${row.sku}` };
+  };
+  await engine.runApprovedShopifySync(SESSAO, { dependencias: dependencias(publicar) });
+  const s1 = await itemNaFila("S1");
+  assert.equal(s1.status, "SYNC_ERROR", "sem nova aprovação o item fica SYNC_ERROR");
+  assert.notEqual(s1.status, "PUBLISHED");
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });

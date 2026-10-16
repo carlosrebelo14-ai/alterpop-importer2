@@ -15,6 +15,12 @@
  *   F  O lock é libertado mesmo quando a operação falha (aprovar um PUBLISHED).
  *   G  Dentro do lock, a cache em memória não é usada. Uma gravação de outro processo com o mesmo
  *      mtime é vista pela aprovação seguinte.
+ *   H  Lock com PID vivo, escrito antes do arranque da máquina (PID reutilizado depois de reinício):
+ *      é libertado.
+ *   I  Limite de 10 min com os valores por omissão: lock de 5 min com PID vivo não é libertado; lock
+ *      de 10 min e 30 s é.
+ *   J  Lock tomado por outro token durante a posse: a renovação não o reescreve e marca o titular
+ *      como perdido.
  *
  * Os limites de tempo vêm de variáveis de ambiente só de teste (CURATION_QUEUE_LOCK_*).
  *
@@ -24,6 +30,7 @@ import "./_isolate-curation.js";
 
 import fs from "node:fs";
 import fsp from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { fork, spawn } from "node:child_process";
@@ -36,6 +43,7 @@ const LOCK_PATH = path.join(DATA_DIR, "curation-queue.lock");
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CHILD_PATH = path.join(HERE, "_curation-queue-lock-child.mjs");
 const QUEUE_MODULE = pathToFileURL(path.join(HERE, "..", "..", "lib", "curation", "curationQueue.server.js")).href;
+const LOCK_MODULE = pathToFileURL(path.join(HERE, "..", "..", "lib", "curation", "curationQueueFileLock.server.js")).href;
 
 const q = await import(QUEUE_MODULE);
 
@@ -63,6 +71,17 @@ function adiado() {
   });
   promessa.catch(() => {});
   return { promessa, resolve, reject };
+}
+
+/** Corre fn com o uptime da máquina fixado em segundos. Repõe o original no fim. */
+async function comUptime(segundos, fn) {
+  const real = os.uptime;
+  os.uptime = () => segundos;
+  try {
+    return await fn();
+  } finally {
+    os.uptime = real;
+  }
 }
 
 /** Corre fn com as variáveis de ambiente dadas e repõe o ambiente anterior no fim. */
@@ -237,7 +256,7 @@ async function casoAlternarEscritasEntreProcessos() {
 async function casoPidMortoLibertado() {
   escreverFila([item("X")]);
   escreverLock({ pid: await pidMorto(), em: new Date().toISOString(), token: "morto" });
-  await comEnv({ CURATION_QUEUE_LOCK_PRAZO_MS: 2000 }, () => q.approveProduct("X"));
+  await comEnv({ CURATION_QUEUE_LOCK_PRAZO_MS: 2000 }, () => comPrazo(q.approveProduct("X"), 20000, "aprovação com lock de PID morto"));
   assert.equal(itemDoDisco("X").status, "APPROVED", "com PID morto a aprovação tem de passar");
   assert.equal(lockExiste(), false, "o lock de PID morto tem de ser libertado");
 }
@@ -249,9 +268,81 @@ async function casoLockAntigoLibertado() {
   try {
     const antigo = new Date(Date.now() - DEZ_MINUTOS_MS - 60_000).toISOString();
     escreverLock({ pid: vivo.pid, em: antigo, token: "antigo" });
-    await comEnv({ CURATION_QUEUE_LOCK_PRAZO_MS: 2000 }, () => q.approveProduct("X"));
+    await comEnv({ CURATION_QUEUE_LOCK_PRAZO_MS: 2000 }, () => comPrazo(q.approveProduct("X"), 20000, "aprovação com lock antigo"));
     assert.equal(itemDoDisco("X").status, "APPROVED", "com hora de há mais de 10 min a aprovação tem de passar");
     assert.equal(lockExiste(), false, "o lock obsoleto tem de ser libertado");
+  } finally {
+    vivo.kill("SIGKILL");
+    filhos.delete(vivo);
+  }
+}
+
+// H: lock de PID vivo escrito antes do arranque da máquina é libertado (C1). Só o arranque o torna
+// obsoleto: a hora tem 60 s, bem dentro dos 10 min.
+async function casoLockAnteriorAoArranqueLibertado() {
+  escreverFila([item("X")]);
+  const vivo = processoVivo();
+  filhos.add(vivo);
+  try {
+    const anterior = new Date(Date.now() - 60_000).toISOString();
+    escreverLock({ pid: vivo.pid, em: anterior, token: "anterior-ao-arranque" });
+    await comUptime(30, () =>
+      comEnv({ CURATION_QUEUE_LOCK_PRAZO_MS: 2000 }, () => comPrazo(q.approveProduct("X"), 20000, "aprovação com lock anterior ao arranque"))
+    );
+    assert.equal(itemDoDisco("X").status, "APPROVED", "com lock escrito antes do arranque a aprovação tem de passar");
+    assert.equal(lockExiste(), false, "o lock anterior ao arranque tem de ser libertado");
+  } finally {
+    vivo.kill("SIGKILL");
+    filhos.delete(vivo);
+  }
+}
+
+// J: a renovação não reescreve o lock de outro token (C3). Outro processo toma o lock durante a posse.
+// A renovação vê o token diferente, não escreve, marca o titular como perdido e para de renovar.
+async function casoRenovacaoNaoSobrescreveLockAlheio() {
+  const lockMod = await import(LOCK_MODULE);
+  const titular = await comEnv({ CURATION_QUEUE_LOCK_RENOVA_MS: 50 }, () =>
+    comPrazo(lockMod.adquirirLockDoFicheiro(LOCK_PATH), 20000, "aquisição do lock na renovação")
+  );
+  const alheio = { pid: process.pid, em: new Date().toISOString(), token: "lock-de-outro-processo" };
+  try {
+    escreverLock(alheio);
+    await sleep(400);
+    assert.equal(titular.perdido, true, "com o lock tomado por outro token, a renovação tem de marcar o titular como perdido");
+    assert.deepEqual(JSON.parse(fs.readFileSync(LOCK_PATH, "utf8")), alheio, "a renovação não pode reescrever o lock de outro token");
+  } finally {
+    await lockMod.libertarLockDoFicheiro(titular);
+  }
+  assert.equal(lockExiste(), true, "libertar um titular perdido não pode remover o lock de outro token");
+}
+
+// I: limite de 10 min com os valores por omissão (sem CURATION_QUEUE_LOCK_OBSOLETO_MS). Só o prazo de
+// espera é curto. Com arranque anterior, só a hora do lock decide. Um lock de 5 min (PID vivo) não é
+// libertado. Um lock de 10 min e 30 s é libertado (apanha um limite de 11 min).
+async function casoLimiteDeDezMinutos() {
+  escreverFila([item("X")]);
+  const vivo = processoVivo();
+  filhos.add(vivo);
+  try {
+    const cincoMin = { pid: vivo.pid, em: new Date(Date.now() - 5 * 60_000).toISOString(), token: "cinco-minutos" };
+    escreverLock(cincoMin);
+    let erro = null;
+    await comUptime(3600, () =>
+      comEnv({ CURATION_QUEUE_LOCK_PRAZO_MS: 300 }, () => comPrazo(q.approveProduct("X"), 20000, "aprovação com lock de 5 min"))
+    ).catch((e) => {
+      erro = e;
+    });
+    assert.ok(erro, "com lock de 5 min (PID vivo, arranque anterior) a escrita tem de falhar, não libertar o lock");
+    assert.equal(erro.code, "CURATION_QUEUE_LOCK_TIMEOUT", `erro inesperado: ${erro.message}`);
+    assert.equal(itemDoDisco("X").status, "PENDING", "sem lock nada pode ser gravado");
+    assert.deepEqual(JSON.parse(fs.readFileSync(LOCK_PATH, "utf8")), cincoMin, "o lock de 5 min não pode ser tocado");
+
+    escreverLock({ pid: vivo.pid, em: new Date(Date.now() - (DEZ_MINUTOS_MS + 30_000)).toISOString(), token: "dez-minutos-e-meio" });
+    await comUptime(3600, () =>
+      comEnv({ CURATION_QUEUE_LOCK_PRAZO_MS: 2000 }, () => comPrazo(q.approveProduct("X"), 20000, "aprovação com lock de 10 min e 30 s"))
+    );
+    assert.equal(itemDoDisco("X").status, "APPROVED", "com lock de mais de 10 min a aprovação tem de passar");
+    assert.equal(lockExiste(), false, "o lock de mais de 10 min tem de ser libertado");
   } finally {
     vivo.kill("SIGKILL");
     filhos.delete(vivo);
@@ -266,7 +357,7 @@ async function casoLockVivoEFrescoFalhaFechado() {
     const conteudo = { pid: vivo.pid, em: new Date().toISOString(), token: "fresco" };
     escreverLock(conteudo);
     let erro = null;
-    await comEnv({ CURATION_QUEUE_LOCK_PRAZO_MS: 300 }, () => q.approveProduct("X")).catch((e) => {
+    await comEnv({ CURATION_QUEUE_LOCK_PRAZO_MS: 300 }, () => comPrazo(q.approveProduct("X"), 20000, "aprovação com lock vivo e fresco")).catch((e) => {
       erro = e;
     });
     assert.ok(erro, "com lock de PID vivo e fresco a escrita tem de falhar");
@@ -309,12 +400,12 @@ async function casoRenovacaoImpedeRoubo() {
 async function casoLibertaMesmoComFalha() {
   escreverFila([item("PUB", "PUBLISHED", { shopifyProductId: "gid://shopify/Product/9" }), item("X")]);
   let erro = null;
-  await q.approveProduct("PUB").catch((e) => {
+  await comPrazo(q.approveProduct("PUB"), 20000, "aprovação de PUBLISHED").catch((e) => {
     erro = e;
   });
   assert.ok(erro, "pré-condição: aprovar um PUBLISHED tem de falhar");
   assert.equal(lockExiste(), false, "o lock tem de ser libertado depois de a operação falhar");
-  await comEnv({ CURATION_QUEUE_LOCK_PRAZO_MS: 500 }, () => q.approveProduct("X"));
+  await comEnv({ CURATION_QUEUE_LOCK_PRAZO_MS: 500 }, () => comPrazo(q.approveProduct("X"), 20000, "aprovação depois de falha"));
   assert.equal(itemDoDisco("X").status, "APPROVED", "a operação seguinte tem de passar sem esperar pelo prazo");
 }
 
@@ -336,7 +427,7 @@ async function casoCacheNaoUsadaDentroDoLock() {
   };
   try {
     fs.writeFileSync(QUEUE_PATH, JSON.stringify({ version: 1, updatedAt: null, items: [item("X", "APPROVED"), item("Y")] }), "utf8");
-    await q.approveProduct("Y");
+    await comPrazo(q.approveProduct("Y"), 20000, "aprovação de Y com cache");
   } finally {
     fsp.stat = statReal;
   }
@@ -352,6 +443,9 @@ async function main() {
   await caso("E  o titular renova o lock e um segundo processo não o rouba", casoRenovacaoImpedeRoubo);
   await caso("F  o lock é libertado quando a operação falha", casoLibertaMesmoComFalha);
   await caso("G  dentro do lock não se usa a cache em memória", casoCacheNaoUsadaDentroDoLock);
+  await caso("H  lock com PID vivo escrito antes do arranque da máquina é libertado", casoLockAnteriorAoArranqueLibertado);
+  await caso("I  limite de 10 min por omissão: 5 min não é libertado, 10 min e 30 s é", casoLimiteDeDezMinutos);
+  await caso("J  renovação não reescreve o lock de outro token e marca o titular como perdido", casoRenovacaoNaoSobrescreveLockAlheio);
 
   console.log("\nRESUMO");
   for (const r of resultados) console.log(`  ${r.resultado.padEnd(6)} ${r.nome}`);

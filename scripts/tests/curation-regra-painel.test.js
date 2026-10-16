@@ -17,6 +17,8 @@
  *   statusChangedAt (devolvido pelo reset) fica fora da elite, como fica fora das regras (H11d).
  * - approveProduct e rejectProduct gravam origem "humano" e seguem a última decisão (H10).
  * - PENDING devolvido pelo reset ou apagado no admin não é recalculado (H11, regra de 09/10).
+ * - Alerta de publicado no lote sem flush (H12). Fronteira statusChangedAt >= leitura do worker (H13). Overrides
+ *   do disco no flush (H14). Campos do disco no caminho único (H15).
  *
  * Usa PROJECT_ROOT e CURATION_DATA_DIR em diretórios temporários. Não toca nos dados reais.
  *
@@ -497,6 +499,116 @@ async function main() {
     const item = itemDe(fila, "E1b");
     assert.equal(item.status, "REJECTED");
     assert.equal(item.metadata.origem, "elite");
+  });
+
+  // C7: caminho em lote, escrito no disco e sem flush. Um item rejeitado que já tem alerta de publicado
+  // mantém o alerta quando o lote o rejeita pela elite.
+  await caso("H12 lote sem flush: alerta de publicado sobrevive quando o item é rejeitado", async () => {
+    escreverRegras([]);
+    const alerta = { shopifyProductId: "gid://shopify/Product/12", em: DECIDIDO };
+    escreverFila([
+      {
+        sku: "H12",
+        title_en: "H12",
+        status: "REJECTED",
+        reason: "smart_rule:rule_painel_lego_rej",
+        shopifyStatus: "DRAFT",
+        metadata: { smartRule: true, smartAction: "AUTO_REJECT", smartRuleId: "rule_painel_lego_rej", origem: "regra", approvedAt: null, rejectedAt: DECIDIDO, alertaPublicadoNaShopify: alerta },
+      },
+    ]);
+    await q.upsertCurationQueueBatchFromRecords([{ ...registo("H12", "TESTVENDOR"), netPrice: 1 }]);
+    const item = await q.getCurationQueueEntry("H12");
+    assert.equal(item.status, "REJECTED");
+    assert.equal(item.metadata.origem, "elite", "o lote recalcula a origem pela elite");
+    assert.deepEqual(item.metadata.alertaPublicadoNaShopify, alerta, "o alerta tem de sobreviver à escrita em lote");
+  });
+
+  // C10: fronteira de fundirItemDoWorker. Uma decisão com statusChangedAt exatamente igual à leitura do
+  // worker é posterior a ela (>=) e protege o item. Um milissegundo antes, não protege.
+  const DECIDIDO_RECENTE = "2026-10-14T10:00:00.000Z";
+  const APROVADO_DE_REGRA_DECIDIDO = (sku) => ({
+    sku,
+    title_en: sku,
+    status: "APPROVED",
+    reason: "smart_rule:rule_painel_lego",
+    shopifyStatus: "ACTIVE",
+    statusChangedAt: DECIDIDO_RECENTE,
+    metadata: { origem: "regra", smartRule: true, smartAction: "AUTO_APPROVE", smartRuleId: "rule_painel_lego", approvedAt: DECIDIDO_RECENTE, rejectedAt: null },
+  });
+  const RECEBIDO_DO_WORKER = (sku) => ({ sku, title_en: sku, status: "PENDING", reason: "pending_review", shopifyStatus: "DRAFT", metadata: {} });
+
+  await caso("H13 flush: statusChangedAt igual à leitura do worker protege o item", async () => {
+    escreverFila([APROVADO_DE_REGRA_DECIDIDO("H13")]);
+    await q.flushCurationQueueItems([RECEBIDO_DO_WORKER("H13")], { readAt: Date.parse(DECIDIDO_RECENTE) });
+    const item = await q.getCurationQueueEntry("H13");
+    assert.equal(item.status, "APPROVED", "decisão no próprio instante da leitura é posterior: o item fica protegido");
+    assert.equal(item.shopifyStatus, "ACTIVE");
+  });
+
+  await caso("H13b flush: statusChangedAt um milissegundo antes da leitura não protege o item", async () => {
+    escreverFila([APROVADO_DE_REGRA_DECIDIDO("H13b")]);
+    await q.flushCurationQueueItems([RECEBIDO_DO_WORKER("H13b")], { readAt: Date.parse(DECIDIDO_RECENTE) + 1 });
+    const item = await q.getCurationQueueEntry("H13b");
+    assert.equal(item.status, "PENDING", "decisão anterior à leitura não protege: o worker recalcula");
+  });
+
+  // C11: flush do worker sobre item não protegido. Os overrides do disco ganham aos da cópia antiga do worker.
+  await caso("H14 flush: item não protegido mantém os overrides do disco, não os da cópia antiga do worker", async () => {
+    escreverFila([
+      {
+        sku: "H14",
+        title_en: "H14",
+        status: "PENDING",
+        reason: "pending_review",
+        shopifyStatus: "DRAFT",
+        metadata: { overrides: { marginPct: 99 }, overridesUpdatedAt: "2026-10-14T12:00:00.000Z" },
+      },
+    ]);
+    await q.flushCurationQueueItems(
+      [
+        {
+          sku: "H14",
+          title_en: "H14",
+          status: "PENDING",
+          reason: "pending_review",
+          shopifyStatus: "DRAFT",
+          metadata: { overrides: { marginPct: 50 }, overridesUpdatedAt: "2026-10-01T00:00:00.000Z" },
+        },
+      ],
+      { readAt: Date.parse("2026-10-01T00:00:00.000Z") }
+    );
+    const item = await q.getCurationQueueEntry("H14");
+    assert.deepEqual(item.metadata.overrides, { marginPct: 99 }, "os overrides do disco são os da decisão, não os da cópia antiga");
+    assert.equal(item.metadata.overridesUpdatedAt, "2026-10-14T12:00:00.000Z");
+  });
+
+  // C12: caminho único (upsertCurationQueueFromRecord). Num item de regra não fixado, os campos que só o disco
+  // escreve ficam os do disco, como no caminho do worker.
+  await caso("H15 reindex pelo caminho único mantém os campos do disco num item de regra", async () => {
+    escreverRegras([]);
+    const disco = {
+      costAtPublish: 7.5,
+      publishedAt: "2026-10-14T09:00:00.000Z",
+      shopifyResetAt: "2026-10-13T08:00:00.000Z",
+      shopifyProductId: "gid://shopify/Product/77",
+      syncError: "erro de publicação antigo",
+      syncErrorAt: "2026-10-14T09:30:00.000Z",
+    };
+    escreverFila([
+      {
+        sku: "H15",
+        title_en: "H15",
+        status: "APPROVED",
+        reason: "smart_rule:rule_painel_lego",
+        shopifyStatus: "ACTIVE",
+        metadata: { origem: "regra", smartRule: true, smartAction: "AUTO_APPROVE", smartRuleId: "rule_painel_lego", approvedAt: DECIDIDO, rejectedAt: null, ...disco },
+      },
+    ]);
+    await q.upsertCurationQueueFromRecord(registo("H15"));
+    const item = await q.getCurationQueueEntry("H15");
+    for (const [campo, valor] of Object.entries(disco)) {
+      assert.deepEqual(item.metadata[campo], valor, `${campo} tem de ser o do disco`);
+    }
   });
 
   fs.rmSync(projectRoot, { recursive: true, force: true });
