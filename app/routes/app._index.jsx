@@ -31,6 +31,7 @@ import { MARKET_STORE_SUGGESTIONS } from "../../lib/importer/pricing/marketPrice
 import { getCurationLiteStats } from "../../lib/importer/dashboard/getDashboardStats.server.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
 import { motivoDeRecusaPorScript, scriptDeIndexacaoEmCurso } from "../../lib/curation/atividadeApp.js";
+import { publicacaoOuResetEmCurso } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import {
   startCatalogCleanupInBackground,
   startCatalogRebuildInBackground,
@@ -203,6 +204,10 @@ export const action = async ({ request }) => {
     if (recusaScript) {
       console.log(`[painel] indexação recusada: ${recusaScript}`);
       return { ok: false, error: recusaScript };
+    }
+    if (publicacaoOuResetEmCurso()) {
+      console.log("[painel] indexação recusada: há uma publicação ou um reset Shopify em curso.");
+      return { ok: false, error: "Aguarda que a publicação ou o reset Shopify em curso termine antes de reindexar." };
     }
     let settings;
     try {

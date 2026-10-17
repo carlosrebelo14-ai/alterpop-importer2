@@ -84,7 +84,7 @@ async function corrida(ind, shop, depois) {
   console.log = (...a) => saida.push(a.map(String).join(" "));
   console.error = (...a) => saida.push(a.map(String).join(" "));
   try {
-    await ind.startCatalogIndexingWorker(shop, {}, { causa: "script" });
+    await ind.startCatalogIndexingWorker(shop, {}, { causa: "painel" });
     depois(filhos[0]);
     await esperarAte(() => eventos.some((e) => e.type === "closed"));
     return { eventos, saida: saida.join("\n") };

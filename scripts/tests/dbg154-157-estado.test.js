@@ -257,7 +257,7 @@ async function terminarComFlush(ind, shop, { bloquear }) {
   const eventos = [];
   const parar = ind.subscribeIndexingEvents(shop, (e) => eventos.push(e));
   try {
-    await ind.startCatalogIndexingWorker(shop, {}, { causa: "script" });
+    await ind.startCatalogIndexingWorker(shop, {}, { causa: "painel" });
     if (bloquear) bloquearEscrita();
     filhos[0].emit("message", { type: "done", indexed: 3, scanned: 3 });
     await esperarAte(() => eventos.some((e) => e.type === "closed"));
@@ -304,8 +304,8 @@ await caso("dois arranques no mesmo tick dão um só fork e a mesma promessa", a
     return new FakeChild();
   });
   try {
-    const p1 = indexacao.startCatalogIndexingWorker("loja-tick.myshopify.com", {}, { causa: "script" });
-    const p2 = indexacao.startCatalogIndexingWorker("loja-tick.myshopify.com", {}, { causa: "script" });
+    const p1 = indexacao.startCatalogIndexingWorker("loja-tick.myshopify.com", {}, { causa: "painel" });
+    const p2 = indexacao.startCatalogIndexingWorker("loja-tick.myshopify.com", {}, { causa: "painel" });
     assert.equal(p1, p2, "o segundo arranque tem de receber a mesma promessa");
     await Promise.all([p1, p2]);
     assert.equal(forks, 1, "tem de haver um só fork");
@@ -327,8 +327,8 @@ await caso("mutação: sem a reserva, dois arranques no mesmo tick fazem dois fo
       forks += 1;
       return new FakeChild();
     });
-    const p1 = mutado.startCatalogIndexingWorker("loja-tick-mut.myshopify.com", {}, { causa: "script" });
-    const p2 = mutado.startCatalogIndexingWorker("loja-tick-mut.myshopify.com", {}, { causa: "script" });
+    const p1 = mutado.startCatalogIndexingWorker("loja-tick-mut.myshopify.com", {}, { causa: "painel" });
+    const p2 = mutado.startCatalogIndexingWorker("loja-tick-mut.myshopify.com", {}, { causa: "painel" });
     await Promise.all([p1, p2]);
     assert.equal(forks, 2, "o mutante tem de fazer dois forks, como o código antigo");
     assert.throws(() => assert.equal(forks, 1));
@@ -348,11 +348,11 @@ await caso("flush do arranque com erro: não há fork, o arranque devolve null, 
   const shop = "loja-arranque-falha.myshopify.com";
   try {
     bloquearEscrita();
-    const r1 = await indexacao.startCatalogIndexingWorker(shop, {}, { causa: "script" });
+    const r1 = await indexacao.startCatalogIndexingWorker(shop, {}, { causa: "painel" });
     assert.equal(r1, null, "sem estado no disco, o arranque não se faz");
     assert.equal(forks, 0, "sem estado no disco, não pode haver fork");
     desbloquearEscrita();
-    const r2 = await indexacao.startCatalogIndexingWorker(shop, {}, { causa: "script" });
+    const r2 = await indexacao.startCatalogIndexingWorker(shop, {}, { causa: "painel" });
     assert.notEqual(r2, null, "a reserva tem de estar libertada: o arranque seguinte faz-se");
     assert.equal(forks, 1);
   } finally {
@@ -376,9 +376,9 @@ await caso("mutação: sem libertar a reserva, o arranque seguinte fica preso ao
     });
     const shop = "loja-arranque-falha-mut.myshopify.com";
     bloquearEscrita();
-    await mutado.startCatalogIndexingWorker(shop, {}, { causa: "script" });
+    await mutado.startCatalogIndexingWorker(shop, {}, { causa: "painel" });
     desbloquearEscrita();
-    const r2 = await mutado.startCatalogIndexingWorker(shop, {}, { causa: "script" });
+    const r2 = await mutado.startCatalogIndexingWorker(shop, {}, { causa: "painel" });
     assert.equal(r2, null, "o mutante tem de devolver o resultado antigo, como o código antigo");
     assert.throws(() => assert.notEqual(r2, null));
   } finally {

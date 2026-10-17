@@ -51,7 +51,7 @@ async function caso(nome, fn) {
 }
 
 await caso("sem marcador possível: a chamada não lança, não deixa indexação ativa e o estado fica falhado", async () => {
-  const devolvido = await indexacao.startCatalogIndexingWorker("loja-marcador.myshopify.com", {}, { causa: "script" });
+  const devolvido = await indexacao.startCatalogIndexingWorker("loja-marcador.myshopify.com", {}, { causa: "painel" });
   assert.equal(devolvido, null, "devolve null, sem lançar");
   assert.equal(indexacao.isCatalogIndexingRunning("loja-marcador.myshopify.com"), false, "não pode ficar indexação ativa");
 

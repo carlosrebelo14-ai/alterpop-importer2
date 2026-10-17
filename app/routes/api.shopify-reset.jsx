@@ -120,8 +120,9 @@ export const action = async ({ request }) => {
   // por isso o estado do job não o vê. A reserva vê o ciclo e a publicação manual. Sai no fim do reset.
   const reserva = tentarReservarPublicacao();
   if (!reserva) {
+    // Pode ser uma publicação (manual ou do ciclo) ou um reset que ainda não gravou o estado (pedido em paralelo).
     return Response.json(
-      { ok: false, error: "Aguarda que a publicação Shopify em curso termine antes do reset." },
+      { ok: false, error: "Já há uma publicação ou um reset Shopify em curso. Aguarda que termine antes do reset." },
       { status: 409 }
     );
   }

@@ -222,6 +222,18 @@ export const action = async ({ request }) => {
   if (!reserva) {
     return Response.json({ ok: false, error: "Já existe uma sincronização Shopify em curso." }, { status: 409 });
   }
+
+  // PR 5 (DBG-141): a indexação pode ter arrancado nos awaits acima, depois da verificação de indexação. Confirma-se aqui,
+  // sem await entre a reserva e a decisão. Uma indexação que arranque depois vê a reserva e recusa-se (indexingStream).
+  const motivoDepoisDaReserva = motivoDeRecusaDaPublicacaoManual({
+    indexacaoEmCurso: isCatalogIndexingRunning(session.shop) || atividadeAppEmCurso()?.tipo === "indexacao",
+    atividadeScript: scriptDeIndexacaoEmCurso(),
+  });
+  if (motivoDepoisDaReserva) {
+    reserva.libertar();
+    console.log(`[shopify-sync] publicação recusada: ${motivoDepoisDaReserva}`);
+    return Response.json({ ok: false, error: motivoDepoisDaReserva }, { status: 409 });
+  }
   try {
     await initShopifySyncJob(session.shop, approvedSkus.length);
     startApprovedShopifySyncInBackground(session, { skus: approvedSkus, reserva });

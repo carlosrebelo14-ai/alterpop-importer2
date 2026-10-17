@@ -177,6 +177,7 @@ async function cenarioMarcador(mod) {
 
 /** Arranque com fork falso. Devolve se a promessa resolveu antes de o worker fechar a corrida. */
 async function cenarioPromessa(mod) {
+  limparMarcadores();
   let filho = null;
   mod.definirForkParaTestes(() => {
     filho = new FakeChild();
@@ -193,6 +194,8 @@ async function cenarioPromessa(mod) {
     resolveuAntes = resolveu;
     filho.emit("message", { type: "done", indexed: 5, scanned: 5 });
     await promessa;
+    // O exit retira o marcador da corrida. Sem ele, a mutação seguinte veria um script ainda vivo e recusaria.
+    filho.emit("exit", 0, null);
     return resolveuAntes;
   } finally {
     mod.definirForkParaTestes(null);
@@ -291,7 +294,7 @@ await caso("(d) o marcador da corrida existe antes do fork e sai com o exit do w
 
 await caso("mutação: marcar depois do fork faz o caso (d) ficar vermelho", async () => {
   const m = mutanteDo("lib/importer/catalog/indexingStream.server.js", "marcador-depois", (t) => {
-    let novo = trocaUnica(t, 'retirarMarcador = marcarAtividadeApp({ tipo: "indexacao" });', "retirarMarcador = () => {};");
+    let novo = trocaUnica(t, 'retirarMarcador = marcarAtividadeApp({ tipo: "indexacao", origem: opts.causa === "script" ? "script" : "app" });', "retirarMarcador = () => {};");
     novo = trocaUnica(novo, "  activeChildren.set(shop, child);\n", '  activeChildren.set(shop, child);\n  retirarMarcador = marcarAtividadeApp({ tipo: "indexacao" });\n');
     return novo;
   });

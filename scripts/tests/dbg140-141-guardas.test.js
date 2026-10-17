@@ -11,6 +11,11 @@
  *       recusa antes de arrancar. Mutação em cada rota: tirar a chamada faz o caso ficar vermelho.
  *   (e) DBG-140: o reset toma a reserva da publicação e a rota devolve 409 enquanto ela está ocupada. A reserva sai no
  *       fim do reset. Mutação: tirar a reserva do reset ou a libertação no background faz o caso ficar vermelho.
+ *   (f) a corrida de um script leva origem script, e a da app leva origem app. Mutação: origem fixa faz o caso ficar vermelho.
+ *   (g) com uma publicação ou um reset com a reserva tomada, a indexação não arranca. Mutação: sem a recusa, há fork.
+ *   (h) a publicação manual confirma a indexação depois de tomar a reserva. Mutação: sem a confirmação, o caso fica vermelho.
+ *   (i) o ciclo para quando a indexação não arranca. Mutação: sem o aborto, o ciclo segue e o caso fica vermelho.
+ *   (j) um marcador ilegível conta enquanto é recente, e deixa de contar ao fim de 10 min. Mutação: sem o prazo, fica bloqueado.
  * Uso: node scripts/tests/dbg140-141-guardas.test.js
  */
 import "./_isolate-curation.js";
@@ -36,6 +41,8 @@ const dados = await modulo("lib/curation/dataDir.js");
 const publicacao = await modulo("lib/importer/shopify/publicacaoEmCurso.js");
 
 const SHOP = "loja-guardas.myshopify.com";
+// Loja própria da origem (f): um filho de outro caso ainda em activeChildren faria o arranque devolver-lhe a corrida.
+const SHOP_ORIGEM = "loja-origem-script.myshopify.com";
 const DIR_INDEX = path.join(raiz, "data", "catalog-index");
 const ficheiroDoEstado = (shop) => path.join(DIR_INDEX, `${shop.replace(/\//g, "_")}-rebuild-status.json`);
 
@@ -64,6 +71,14 @@ class FakeChild extends EventEmitter {
   kill() {
     this.killed = true;
     return true;
+  }
+}
+
+async function esperarAte(condicao, ms = 5000) {
+  const inicio = Date.now();
+  while (!condicao()) {
+    if (Date.now() - inicio > ms) throw new Error("tempo esgotado à espera de um evento");
+    await new Promise((r) => setTimeout(r, 10));
   }
 }
 
@@ -112,6 +127,24 @@ function verificarRotaPublicacaoManual(texto) {
   const recusa = posicao(texto, "if (motivoIndexacao) {", ROTA_PUBLICACAO);
   const reserva = posicao(texto, "const reserva = tentarReservarPublicacao();", ROTA_PUBLICACAO);
   assert.ok(decisao < recusa && recusa < reserva, "a decisão de indexação tem de ser tomada e aplicada antes da reserva");
+  assert.match(
+    texto.slice(recusa, reserva),
+    /return Response\.json\(\{ ok: false, error: motivoIndexacao \}, \{ status: 409 \}\);/,
+    "a recusa tem de ser um return com 409, não uma chamada solta"
+  );
+}
+
+/** A decisão é repetida depois da reserva, com return 409 e libertação da reserva. */
+function verificarRotaPublicacaoManualDepoisDaReserva(texto) {
+  const reserva = posicao(texto, "const reserva = tentarReservarPublicacao();", ROTA_PUBLICACAO);
+  const decisao = posicao(texto, "const motivoDepoisDaReserva = motivoDeRecusaDaPublicacaoManual({", ROTA_PUBLICACAO);
+  const recusa = posicao(texto, "if (motivoDepoisDaReserva) {", ROTA_PUBLICACAO);
+  assert.ok(reserva < decisao && decisao < recusa, "a confirmação tem de vir depois da reserva");
+  assert.match(
+    texto.slice(recusa, recusa + 400),
+    /reserva\.libertar\(\);[\s\S]*return Response\.json\(\{ ok: false, error: motivoDepoisDaReserva \}, \{ status: 409 \}\);/,
+    "a confirmação tem de libertar a reserva e responder 409"
+  );
 }
 
 const ROTA_CICLO = "app/routes/api.trigger-sync.jsx";
@@ -120,8 +153,20 @@ function verificarRotaCiclo(texto) {
   const iife = posicao(texto, "void (async () => {", ROTA_CICLO);
   assert.ok(decisao < iife, "o ciclo tem de recusar com script antes de arrancar o IIFE");
   const bloco = texto.slice(decisao, iife);
-  assert.match(bloco, /status: 409/, "a recusa do ciclo tem de responder 409");
-  assert.match(bloco, /reason: "script_indexing_running"/, "a recusa do ciclo tem de dizer a causa");
+  assert.match(
+    bloco,
+    /return Response\.json\(\s*\{ ok: true, skipped: true, reason: "script_indexing_running" \},\s*\{ status: 409/,
+    "a recusa do ciclo tem de ser um return com reason e 409"
+  );
+}
+
+/** O ciclo para quando a indexação não arranca, antes do IIFE seguir para a publicação. */
+function verificarCicloAbortaSemArranque(texto) {
+  const arranque = posicao(texto, "const arranque = await startCatalogIndexingWorker(", ROTA_CICLO);
+  const aborto = posicao(texto, "if (arranque === null) {", ROTA_CICLO);
+  const prazo = posicao(texto, "const deadline = Date.now() + INDEXING_TIMEOUT_MS;", ROTA_CICLO);
+  assert.ok(arranque < aborto && aborto < prazo, "o aborto tem de vir logo depois do arranque");
+  assert.match(texto.slice(aborto, prazo), /return;/, "o aborto tem de sair do IIFE");
 }
 
 const ROTA_PAINEL = "app/routes/app._index.jsx";
@@ -130,6 +175,11 @@ function verificarPainel(texto) {
   const retoma = posicao(texto, "startCatalogRebuildInBackground(session.shop", ROTA_PAINEL);
   const purga = posicao(texto, "startCatalogCleanupInBackground(session.shop", ROTA_PAINEL);
   assert.ok(recusa < retoma && recusa < purga, "o painel tem de recusar antes de arrancar a reindexação ou a purga");
+  assert.match(
+    texto.slice(recusa, retoma),
+    /return \{ ok: false, error: recusaScript \};/,
+    "o painel tem de devolver a causa com return"
+  );
 }
 
 const ROTA_RESET = "app/routes/api.shopify-reset.jsx";
@@ -321,6 +371,178 @@ await caso("mutação: o reset deixa de libertar a reserva no fim (o caso (e) do
   assert.throws(() =>
     verificarLibertacaoDoReset(trocaUnica(texto, "      .finally(() => opts.reserva?.libertar());", ""))
   );
+});
+
+// --- Casos novos (revisão adversarial do PR 5) ---
+
+/** Origens dos marcadores de indexação que existem neste instante. Lido dentro do fork, como o arranque os vê. */
+function origensDosMarcadores() {
+  const dir = dados.resolveCurationDataDir();
+  return marcadoresDeIndexacao()
+    .map((nome) => JSON.parse(fs.readFileSync(path.join(dir, nome), "utf8")).origem ?? "app")
+    .sort();
+}
+
+await caso("(f) a corrida de um script leva origem script; a da app leva origem app", async () => {
+  limparMarcadores();
+  const origens = [];
+  let filho = null;
+  indexacao.definirForkParaTestes(() => {
+    origens.push(origensDosMarcadores());
+    filho = new FakeChild();
+    return filho;
+  });
+  try {
+    const purga = indexacao.startCatalogCleanupInBackground(SHOP_ORIGEM, {}, { causa: "script" });
+    await esperarAte(() => filho !== null);
+    filho.emit("message", { type: "done", indexed: 1, scanned: 1 });
+    await purga;
+    filho.emit("exit", 0, null);
+    filho = null;
+
+    await indexacao.startCatalogIndexingWorker("loja-origem-app.myshopify.com", {}, { causa: "painel" });
+    await esperarAte(() => filho !== null);
+    filho.emit("exit", 0, null);
+  } finally {
+    indexacao.definirForkParaTestes(null);
+    limparMarcadores();
+  }
+  assert.deepEqual(origens, [["script"], ["app"]], "a purga por script tem de ser vista como script");
+});
+
+await caso("mutação: origem fixa em app faz o caso (f) ficar vermelho", async () => {
+  const m = mutanteDo("lib/importer/catalog/indexingStream.server.js", "origem-fixa", (t) =>
+    trocaUnica(t, 'origem: opts.causa === "script" ? "script" : "app" });', 'origem: "app" });')
+  );
+  limparMarcadores();
+  const origens = [];
+  let filho = null;
+  const mod = await import(pathToFileURL(m).href);
+  mod.definirForkParaTestes(() => {
+    origens.push(origensDosMarcadores());
+    filho = new FakeChild();
+    return filho;
+  });
+  try {
+    const purga = mod.startCatalogCleanupInBackground(SHOP_ORIGEM, {}, { causa: "script" });
+    await esperarAte(() => filho !== null);
+    filho.emit("message", { type: "done", indexed: 1, scanned: 1 });
+    await purga;
+    filho.emit("exit", 0, null);
+    assert.notDeepEqual(origens, [["script"]], "a mutação tem de deixar a purga como app, e o caso (f) tem de apanhar isso");
+  } finally {
+    mod.definirForkParaTestes(null);
+    limparMarcadores();
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(g) com uma publicação ou um reset com a reserva tomada, a indexação não arranca; livre, arranca", async () => {
+  const shop = "loja-reserva-indexacao.myshopify.com";
+  let forks = 0;
+  const filhos = [];
+  indexacao.definirForkParaTestes(() => {
+    forks += 1;
+    const c = new FakeChild();
+    filhos.push(c);
+    return c;
+  });
+  const reserva = publicacao.tentarReservarPublicacao();
+  try {
+    const recusado = await indexacao.startCatalogIndexingWorker(shop, {}, { causa: "ciclo" });
+    assert.equal(recusado, null, "com a reserva tomada, a indexação não arranca");
+    assert.equal(forks, 0, "sem reserva livre não pode haver fork");
+    assert.equal(fs.existsSync(ficheiroDoEstado(shop)), false, "a recusa não grava estado");
+    reserva.libertar();
+    const arrancou = await indexacao.startCatalogIndexingWorker(shop, {}, { causa: "ciclo" });
+    assert.notEqual(arrancou, null, "com a reserva livre, a indexação arranca");
+    assert.equal(forks, 1);
+    filhos[0].emit("exit", 0, null);
+  } finally {
+    reserva.libertar();
+    indexacao.definirForkParaTestes(null);
+  }
+});
+
+await caso("mutação: sem a recusa por publicação, a indexação faz fork com a reserva tomada (o caso (g) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/importer/catalog/indexingStream.server.js", "sem-recusa-publicacao", (t) =>
+    trocaUnica(t, "  if (publicacaoOuResetEmCurso()) {", "  if (false) {")
+  );
+  let forks = 0;
+  const filhos = [];
+  const mod = await import(pathToFileURL(m).href);
+  mod.definirForkParaTestes(() => {
+    forks += 1;
+    const c = new FakeChild();
+    filhos.push(c);
+    return c;
+  });
+  const reserva = publicacao.tentarReservarPublicacao();
+  try {
+    await mod.startCatalogIndexingWorker("loja-mutante-reserva.myshopify.com", {}, { causa: "ciclo" });
+    assert.notEqual(forks, 0, "a mutação tem de fazer fork com a reserva tomada, e o caso (g) tem de apanhar isso");
+  } finally {
+    reserva.libertar();
+    mod.definirForkParaTestes(null);
+    for (const c of filhos) c.emit("exit", 0, null);
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(h) a publicação manual confirma a indexação depois de tomar a reserva", () => {
+  verificarRotaPublicacaoManualDepoisDaReserva(ler(ROTA_PUBLICACAO));
+});
+
+await caso("mutação: sem a confirmação depois da reserva, o caso (h) tem de ficar vermelho", () => {
+  const texto = ler(ROTA_PUBLICACAO);
+  assert.throws(() =>
+    verificarRotaPublicacaoManualDepoisDaReserva(trocaUnica(texto, "if (motivoDepoisDaReserva) {", "if (false) {"))
+  );
+});
+
+await caso("(i) o ciclo para quando a indexação não arranca, antes da publicação", () => {
+  verificarCicloAbortaSemArranque(ler(ROTA_CICLO));
+});
+
+await caso("mutação: sem o aborto, o ciclo segue para a publicação e o caso (i) tem de ficar vermelho", () => {
+  const texto = ler(ROTA_CICLO);
+  assert.throws(() =>
+    verificarCicloAbortaSemArranque(trocaUnica(texto, "if (arranque === null) {", "if (false) {"))
+  );
+});
+
+await caso("(j) marcador ilegível: conta enquanto é recente, e deixa de contar ao fim de 10 min", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-ilegivel.json");
+  fs.writeFileSync(ficheiro, "{ truncado", "utf8");
+  try {
+    assert.equal(atividade.scriptDeIndexacaoEmCurso()?.tipo, "desconhecida", "recente: fail closed");
+    const antigo = new Date(Date.now() - 60 * 60 * 1000);
+    fs.utimesSync(ficheiro, antigo, antigo);
+    assert.equal(atividade.scriptDeIndexacaoEmCurso(), null, "com mais de 10 min é sobra e não bloqueia para sempre");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+  }
+});
+
+await caso("mutação: sem o prazo, o marcador ilegível antigo bloqueia para sempre (o caso (j) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "sem-prazo-de-sobra", (t) =>
+    trocaUnica(t, "      if (idadeDoFicheiroMs(ficheiro) > IDADE_DE_SOBRA_MS) continue;", "")
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-ilegivel.json");
+  fs.writeFileSync(ficheiro, "{ truncado", "utf8");
+  const antigo = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(ficheiro, antigo, antigo);
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    assert.notEqual(mod.scriptDeIndexacaoEmCurso(), null, "a mutação tem de bloquear com o marcador antigo, e o caso (j) tem de apanhar isso");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+    fs.rmSync(m, { force: true });
+  }
 });
 
 if (falhas) {

@@ -184,7 +184,14 @@ export const action = async ({ request }) => {
     try {
       console.log(`[trigger-sync] ciclo iniciado @ ${startedAt}`);
       if (!settingsError) {
-        await startCatalogIndexingWorker(shop, settings, { runPurge: false, resume: false, causa: "ciclo" });
+        // PR 5: null é recusa (script, publicação ou reset em curso) ou falha ao gravar o estado. O ciclo não segue,
+        // nem publica com o estado antigo do disco (que ainda diz completed com linhas).
+        const arranque = await startCatalogIndexingWorker(shop, settings, { runPurge: false, resume: false, causa: "ciclo" });
+        if (arranque === null) {
+          console.error("[ciclo] indexação não arrancou: ciclo parado antes da publicação.");
+          await markMarginErosionCycleSkipped(shop, "indexação não arrancou");
+          return;
+        }
 
         const deadline = Date.now() + INDEXING_TIMEOUT_MS;
         while (isCatalogIndexingRunning(shop)) {
