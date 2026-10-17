@@ -12,7 +12,7 @@ import "dotenv/config";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
 import { startCatalogCleanupInBackground } from "../../lib/importer/catalog/catalogRebuild.server.js";
 import { readCatalogRebuildStatus } from "../../lib/importer/catalog/catalogRebuild.server.js";
-import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
+import { marcarAtividadeApp, recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 const CONFIRM_WORD = "APAGAR";
 
@@ -38,14 +38,34 @@ if (process.env.CONFIRM !== CONFIRM_WORD) {
   process.exit(1);
 }
 
+// PR 5 (revisão): a purga marca-se como script antes de arrancar o worker. Sem isto, há uma janela entre a verificação
+// acima e a marca que o worker escreve, e a indexação da app arrancava nessa janela. O worker não se recusa a si
+// próprio, porque a guarda ignora marcas do próprio processo.
+let retirarMarcador;
+try {
+  retirarMarcador = marcarAtividadeApp({ tipo: "indexacao", origem: "script" });
+} catch {
+  console.error("[catalog-purge] Recusado: não foi possível marcar a atividade da app. Nada foi apagado.");
+  process.exit(1);
+}
+
 const settings = await loadShopSettings(shop);
 
 console.log(`[catalog-purge] Loja: ${shop}`);
 // DBG-155: a espera é pela corrida toda. Só depois de "closed" o estado final está no disco.
+let iniciou;
 try {
-  await startCatalogCleanupInBackground(shop, settings, { causa: "script" });
+  iniciou = await startCatalogCleanupInBackground(shop, settings, { causa: "script" });
 } catch (err) {
+  retirarMarcador();
   console.error("[catalog-purge] Falhou:", err?.message || err);
+  process.exit(1);
+}
+retirarMarcador();
+
+// PR 5 (revisão): a recusa do worker não é sucesso. Sem este teste, a purga saía com 0 e dizia "Concluído" sem apagar.
+if (iniciou === false) {
+  console.error("[catalog-purge] Recusado: a indexação não arrancou (script, publicação ou reset em curso). Nada foi apagado.");
   process.exit(1);
 }
 

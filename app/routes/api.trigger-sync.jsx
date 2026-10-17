@@ -9,7 +9,14 @@ import {
   readCatalogRebuildStatus,
 } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { runApprovedShopifySync } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
-import { motivoDeRecusaPorScript, scriptDeIndexacaoEmCurso } from "../../lib/curation/atividadeApp.js";
+import { publicacaoOuResetEmCurso } from "../../lib/importer/shopify/publicacaoEmCurso.js";
+import {
+  atividadeAppEmCurso,
+  marcarAtividadeApp,
+  motivoDeRecusaDaPublicacaoManual,
+  motivoDeRecusaPorScript,
+  scriptDeIndexacaoEmCurso,
+} from "../../lib/curation/atividadeApp.js";
 import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import { syncPublishedStockLevels } from "../../lib/importer/shopify/publishedStockSync.server.js";
 import { isShopifySyncRunning } from "../../lib/importer/shopify/shopifySyncJob.server.js";
@@ -128,6 +135,14 @@ export const action = async ({ request }) => {
       { status: 409, headers: JSON_HEADERS }
     );
   }
+  // PR 5 (revisão): um reset ou uma publicação com a reserva tomada faz o ciclo responder 409 já aqui, e não 202.
+  if (publicacaoOuResetEmCurso()) {
+    console.log("[trigger-sync] ciclo saltado: publicação ou reset Shopify em curso.");
+    return Response.json(
+      { ok: true, skipped: true, reason: "publish_or_reset_running" },
+      { status: 409, headers: JSON_HEADERS }
+    );
+  }
   if (await isShopifySyncRunning(shop)) {
     console.log("[trigger-sync] ciclo saltado: publicação já em curso.");
     return Response.json(
@@ -232,19 +247,45 @@ export const action = async ({ request }) => {
       if (!settingsError) {
         // DBG-105: a reserva é tomada logo antes da chamada, sem await pelo meio. Se a publicação manual já a tem,
         // o ciclo salta a publicação de aprovados.
-        const reserva = tentarReservarPublicacao();
-        if (reserva) {
-          console.log("[trigger-sync] a publicar aprovados…");
-          try {
-            await runApprovedShopifySync(session, { skipInit: true, reserva });
-            console.log("[trigger-sync] publicação de aprovados concluída.");
-          } catch (err) {
-            console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
-          }
-        } else {
+        // PR 5 (revisão): a reserva e a marca da app nascem no mesmo passo síncrono. Com a reserva na mão, confirma-se a
+        // indexação, que pode ter arrancado depois do arranque do ciclo. Se houver indexação ou script, a publicação salta.
+        let reserva = null;
+        let marcaFalhou = false;
+        try {
+          reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+        } catch (err) {
+          marcaFalhou = true;
+          console.error("[trigger-sync] publicação de aprovados saltada: não foi possível marcar a atividade da app.", err?.message || err);
+        }
+        if (marcaFalhou) {
+          // Já registado acima.
+        } else if (!reserva) {
           console.log(
             "[trigger-sync] publicação de aprovados saltada: a reserva está ocupada por uma publicação manual ou por um reset em curso."
           );
+        } else {
+          let motivoIndexacao = null;
+          try {
+            motivoIndexacao = motivoDeRecusaDaPublicacaoManual({
+              indexacaoEmCurso: isCatalogIndexingRunning(shop) || atividadeAppEmCurso()?.tipo === "indexacao",
+              atividadeScript: scriptDeIndexacaoEmCurso(),
+            });
+          } catch (err) {
+            reserva.libertar();
+            throw err;
+          }
+          if (motivoIndexacao) {
+            reserva.libertar();
+            console.log(`[trigger-sync] publicação de aprovados saltada: ${motivoIndexacao}`);
+          } else {
+            console.log("[trigger-sync] a publicar aprovados…");
+            try {
+              await runApprovedShopifySync(session, { skipInit: true, reserva });
+              console.log("[trigger-sync] publicação de aprovados concluída.");
+            } catch (err) {
+              console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
+            }
+          }
         }
       }
 

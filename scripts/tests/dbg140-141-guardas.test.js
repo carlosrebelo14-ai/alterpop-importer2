@@ -21,6 +21,7 @@
 import "./_isolate-curation.js";
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
@@ -74,6 +75,14 @@ class FakeChild extends EventEmitter {
   }
 }
 
+/**
+ * Processo vivo que não é este. A guarda ignora as marcas do próprio processo (a purga marca-se e arranca o worker),
+ * por isso um script de teste tem de ter outro pid para contar como script em curso. Quem chama mata-o.
+ */
+function processoAlheio() {
+  return spawn(process.execPath, ["-e", "setTimeout(() => {}, 120000)"], { stdio: "ignore" });
+}
+
 async function esperarAte(condicao, ms = 5000) {
   const inicio = Date.now();
   while (!condicao()) {
@@ -125,8 +134,9 @@ const ROTA_PUBLICACAO = "app/routes/api.shopify-sync.jsx";
 function verificarRotaPublicacaoManual(texto) {
   const decisao = posicao(texto, "const motivoIndexacao = motivoDeRecusaDaPublicacaoManual({", ROTA_PUBLICACAO);
   const recusa = posicao(texto, "if (motivoIndexacao) {", ROTA_PUBLICACAO);
-  const reserva = posicao(texto, "const reserva = tentarReservarPublicacao();", ROTA_PUBLICACAO);
+  const reserva = posicao(texto, "reserva = tentarReservarPublicacao({", ROTA_PUBLICACAO);
   assert.ok(decisao < recusa && recusa < reserva, "a decisão de indexação tem de ser tomada e aplicada antes da reserva");
+  posicao(texto, 'tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) })', ROTA_PUBLICACAO);
   assert.match(
     texto.slice(recusa, reserva),
     /return Response\.json\(\{ ok: false, error: motivoIndexacao \}, \{ status: 409 \}\);/,
@@ -136,7 +146,7 @@ function verificarRotaPublicacaoManual(texto) {
 
 /** A decisão é repetida depois da reserva, com return 409 e libertação da reserva. */
 function verificarRotaPublicacaoManualDepoisDaReserva(texto) {
-  const reserva = posicao(texto, "const reserva = tentarReservarPublicacao();", ROTA_PUBLICACAO);
+  const reserva = posicao(texto, "reserva = tentarReservarPublicacao({", ROTA_PUBLICACAO);
   const decisao = posicao(texto, "const motivoDepoisDaReserva = motivoDeRecusaDaPublicacaoManual({", ROTA_PUBLICACAO);
   const recusa = posicao(texto, "if (motivoDepoisDaReserva) {", ROTA_PUBLICACAO);
   assert.ok(reserva < decisao && decisao < recusa, "a confirmação tem de vir depois da reserva");
@@ -161,6 +171,26 @@ function verificarRotaCiclo(texto) {
 }
 
 /** O ciclo para quando a indexação não arranca, antes do IIFE seguir para a publicação. */
+function verificarCicloPublicacao(texto) {
+  const pos = posicao(texto, "if (publicacaoOuResetEmCurso()) {", ROTA_CICLO);
+  const sync = posicao(texto, "if (await isShopifySyncRunning(shop)) {", ROTA_CICLO);
+  assert.ok(pos < sync, "o POST tem de recusar com reset ou publicação antes do IIFE");
+  assert.match(texto.slice(pos, sync), /reason: "publish_or_reset_running" \},\s*\{ status: 409/, "a recusa tem de ser 409 com causa");
+  const marca = posicao(texto, 'reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', ROTA_CICLO);
+  const decisao = posicao(texto, "motivoIndexacao = motivoDeRecusaDaPublicacaoManual({", ROTA_CICLO);
+  assert.ok(marca < decisao, "a confirmação da indexação tem de vir depois da reserva com marca");
+}
+
+/** Purga: marca como script antes do arranque, e uma recusa do worker sai com código 1. */
+const PURGA = "scripts/catalog/catalog-purge-reindex.js";
+function verificarPurga(texto) {
+  const recusa = posicao(texto, 'recusarSeAtividadeApp("catalog-purge-reindex");', PURGA);
+  const marca = posicao(texto, 'marcarAtividadeApp({ tipo: "indexacao", origem: "script" })', PURGA);
+  const arranque = posicao(texto, "iniciou = await startCatalogCleanupInBackground(shop, settings", PURGA);
+  assert.ok(recusa < marca && marca < arranque, "a purga recusa, marca e só depois arranca o worker");
+  assert.match(texto, /if \(iniciou === false\) \{[\s\S]*?process\.exit\(1\);/, "uma recusa do worker sai com código 1");
+}
+
 function verificarCicloAbortaSemArranque(texto) {
   const arranque = posicao(texto, "const arranque = await startCatalogIndexingWorker(", ROTA_CICLO);
   const aborto = posicao(texto, "if (arranque === null) {", ROTA_CICLO);
@@ -175,6 +205,9 @@ function verificarPainel(texto) {
   const retoma = posicao(texto, "startCatalogRebuildInBackground(session.shop", ROTA_PAINEL);
   const purga = posicao(texto, "startCatalogCleanupInBackground(session.shop", ROTA_PAINEL);
   assert.ok(recusa < retoma && recusa < purga, "o painel tem de recusar antes de arrancar a reindexação ou a purga");
+  assert.ok(posicao(texto, "const fileStatus = await readCatalogRebuildStatus(session.shop);", ROTA_PAINEL) < recusa, "a recusa vem depois do último await");
+  assert.ok(!texto.slice(recusa, retoma).includes("await"), "sem await entre a recusa e o arranque");
+  assert.match(texto.slice(recusa, retoma), /if \(publicacaoOuResetEmCurso\(\)\) \{/, "a publicação ou o reset também recusa, na mesma verificação");
   assert.match(
     texto.slice(recusa, retoma),
     /return \{ ok: false, error: recusaScript \};/,
@@ -184,9 +217,13 @@ function verificarPainel(texto) {
 
 const ROTA_RESET = "app/routes/api.shopify-reset.jsx";
 function verificarRotaReset(texto) {
-  const reserva = posicao(texto, "const reserva = tentarReservarPublicacao();", ROTA_RESET);
+  const reserva = posicao(texto, "reserva = tentarReservarPublicacao({", ROTA_RESET);
   const arranque = posicao(texto, "startShopifyCatalogResetInBackground(session, { reserva });", ROTA_RESET);
   assert.ok(reserva < arranque, "o reset tem de tomar a reserva antes de arrancar o job");
+  posicao(texto, 'tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) })', ROTA_RESET);
+  const confirmacao = posicao(texto, "motivoDepoisDaReserva = motivoDeRecusaDoReset({", ROTA_RESET);
+  const aguarda = posicao(texto, "await loadOfflineSessionForShop(session.shop);", ROTA_RESET);
+  assert.ok(reserva < confirmacao && confirmacao < aguarda, "o reset confirma a indexação depois de tomar a reserva");
   const libertacoes = texto.split("reserva.libertar();").length - 1;
   assert.ok(libertacoes >= 2, "os caminhos de erro antes do job têm de libertar a reserva");
 }
@@ -212,12 +249,14 @@ await caso("(a) script primeiro, depois o ciclo: com script vivo não há fork n
     return c;
   });
   try {
-    const marca = atividade.marcarAtividadeApp({ tipo: "indexacao", pid: process.pid, origem: "script" });
+    const alheio = processoAlheio();
+    const marca = atividade.marcarAtividadeApp({ tipo: "indexacao", pid: alheio.pid, origem: "script" });
     let recusado;
     try {
       recusado = await indexacao.startCatalogIndexingWorker(shop, {}, { causa: "ciclo" });
     } finally {
       marca();
+      alheio.kill();
     }
     assert.equal(recusado, null, "o ciclo tem de recusar com script vivo");
     assert.equal(forks, 0, "com script vivo não pode haver fork");
@@ -248,11 +287,13 @@ await caso("mutação: sem a guarda central, o ciclo faz fork com o script vivo 
     return c;
   });
   try {
-    const marca = atividade.marcarAtividadeApp({ tipo: "indexacao", pid: process.pid, origem: "script" });
+    const alheio = processoAlheio();
+    const marca = atividade.marcarAtividadeApp({ tipo: "indexacao", pid: alheio.pid, origem: "script" });
     try {
       await mod.startCatalogIndexingWorker("loja-mutante.myshopify.com", {}, { causa: "ciclo" });
     } finally {
       marca();
+      alheio.kill();
     }
     assert.notEqual(forks, 0, "a mutação tem de fazer fork com o script vivo, e o caso (a) tem de apanhar isso");
   } finally {
@@ -294,13 +335,15 @@ await caso("(c) marcador de script lido com origem; marcador da app não conta; 
   } finally {
     marca();
   }
-  const marcaScript = atividade.marcarAtividadeApp({ tipo: "indexacao", pid: process.pid, origem: "script" });
+  const alheio = processoAlheio();
+  const marcaScript = atividade.marcarAtividadeApp({ tipo: "indexacao", pid: alheio.pid, origem: "script" });
   try {
     const script = atividade.scriptDeIndexacaoEmCurso();
     assert.equal(script?.tipo, "script");
-    assert.equal(script?.pid, process.pid);
+    assert.equal(script?.pid, alheio.pid);
   } finally {
     marcaScript();
+    alheio.kill();
   }
   fs.writeFileSync(path.join(dir, "catalog-busy-indexacao-1-ilegivel.json"), "{ truncado", "utf8");
   try {
@@ -362,7 +405,7 @@ await caso("(e) reset em background: a reserva sai no fim do job", () => {
 await caso("mutação: o reset deixa de tomar a reserva (o caso (e) da rota tem de ficar vermelho)", () => {
   const texto = ler(ROTA_RESET);
   assert.throws(() =>
-    verificarRotaReset(trocaUnica(texto, "const reserva = tentarReservarPublicacao();", "const reserva = { libertar() {} };"))
+    verificarRotaReset(trocaUnica(texto, "reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: \"publicacao\" }) });", "reserva = { libertar() {} };"))
   );
 });
 
@@ -528,7 +571,7 @@ await caso("(j) marcador ilegível: conta enquanto é recente, e deixa de contar
 
 await caso("mutação: sem o prazo, o marcador ilegível antigo bloqueia para sempre (o caso (j) tem de ficar vermelho)", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "sem-prazo-de-sobra", (t) =>
-    trocaUnica(t, "      if (idadeDoMarcadorMs(ficheiro) > IDADE_DE_SOBRA_MS) {", "      if (false) {")
+    trocaUnica(t, "  if (idadeDoMarcadorMs(ficheiro) <= IDADE_DE_SOBRA_MS) return false;", "  if (true) return false;")
   );
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
@@ -563,7 +606,7 @@ await caso("(k) a idade do marcador ilegível vem do relógio do ficheiro, não 
 
 await caso("mutação: idade pelo relógio de quem lê faz o caso (k) ficar vermelho", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "relogio-do-leitor", (t) =>
-    trocaUnica(t, "      if (idadeDoMarcadorMs(ficheiro) > IDADE_DE_SOBRA_MS) {", "      if (Date.now() - fs.statSync(ficheiro).mtimeMs > IDADE_DE_SOBRA_MS) {")
+    trocaUnica(t, "  if (idadeDoMarcadorMs(ficheiro) <= IDADE_DE_SOBRA_MS) return false;", "  if (Date.now() - fs.statSync(ficheiro).mtimeMs <= IDADE_DE_SOBRA_MS) return false;")
   );
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
@@ -603,7 +646,7 @@ await caso("(l) o marcador ilegível expirado deixa uma linha de aviso com a cau
 
 await caso("mutação: sem o aviso, o caso (l) tem de ficar vermelho", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "sem-aviso", (t) =>
-    trocaUnica(t, "        console.warn(`[atividade] causa=marcador_ilegivel_expirado: ${nome} ignorado (mais de 10 min).`);", "")
+    trocaUnica(t, "  console.warn(`[atividade] causa=marcador_ilegivel_expirado: ${nome} ignorado (mais de 10 min).`);", "")
   );
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
@@ -627,6 +670,192 @@ await caso("mutação: sem o aviso, o caso (l) tem de ficar vermelho", async () 
     /tem de haver aviso/,
     "a mutação não pode deixar o aviso, e o caso (l) tem de apanhar isso"
   );
+});
+
+// --- Revisão de convergência (PR 5, segunda rodada) ---
+
+const ROTA_CICLO_PUB = "app/routes/api.trigger-sync.jsx";
+
+await caso("(m) marcador ilegível expirado não bloqueia o reset nem os scripts de escrita, e deixa aviso", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-expirado.json");
+  fs.writeFileSync(ficheiro, "{ truncado", "utf8");
+  const antigo = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(ficheiro, antigo, antigo);
+  const avisos = [];
+  const original = console.warn;
+  console.warn = (...args) => avisos.push(args.join(" "));
+  try {
+    assert.equal(atividade.atividadeAppEmCurso(), null, "expirado não bloqueia o reset nem os scripts");
+  } finally {
+    console.warn = original;
+    fs.rmSync(ficheiro, { force: true });
+  }
+  assert.ok(avisos.some((l) => /causa=marcador_ilegivel_expirado/.test(l)), "tem de haver aviso com a causa");
+});
+
+await caso("mutação: o reset e os scripts continuam a bloquear com o marcador expirado (o caso (m) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "reset-sem-prazo", (t) =>
+    trocaUnica(t, '      if (marcadorIlegivelExpirou(path.join(dir, nome), nome)) continue;\n      return { tipo: "desconhecida"', '      return { tipo: "desconhecida"')
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-expirado.json");
+  fs.writeFileSync(ficheiro, "{ truncado", "utf8");
+  const antigo = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(ficheiro, antigo, antigo);
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    assert.notEqual(mod.atividadeAppEmCurso()?.tipo, null, "a mutação tem de continuar a bloquear, e o caso (m) tem de apanhar isso");
+    assert.equal(mod.atividadeAppEmCurso()?.tipo, "desconhecida");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(n) a guarda ignora a marca do próprio processo: a purga não se recusa a si própria", async () => {
+  limparMarcadores();
+  let forks = 0;
+  const filhos = [];
+  indexacao.definirForkParaTestes(() => {
+    forks += 1;
+    const c = new FakeChild();
+    filhos.push(c);
+    return c;
+  });
+  const marca = atividade.marcarAtividadeApp({ tipo: "indexacao", pid: process.pid, origem: "script" });
+  try {
+    const arrancou = await indexacao.startCatalogIndexingWorker("loja-propria.myshopify.com", {}, { causa: "script" });
+    assert.notEqual(arrancou, null, "a marca do próprio processo não recusa");
+    assert.equal(forks, 1);
+    filhos[0].emit("exit", 0, null);
+  } finally {
+    marca();
+    indexacao.definirForkParaTestes(null);
+  }
+});
+
+await caso("mutação: sem a exceção da marca própria, o script recusa-se a si próprio (o caso (n) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "sem-marca-propria", (t) =>
+    trocaUnica(t, "    if (dados.pid === process.pid) continue;\n", "")
+  );
+  limparMarcadores();
+  const marca = atividade.marcarAtividadeApp({ tipo: "indexacao", pid: process.pid, origem: "script" });
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    assert.notEqual(mod.scriptDeIndexacaoEmCurso(), null, "a mutação tem de achar a marca própria, e o caso (n) tem de apanhar isso");
+  } finally {
+    marca();
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(o) a reserva leva a marca da app: existe enquanto a reserva está tomada, e sai com libertar", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const marcas = () => fs.readdirSync(dir).filter((n) => n.startsWith("catalog-busy-publicacao-")).length;
+  const reserva = publicacao.tentarReservarPublicacao({ marcar: () => atividade.marcarAtividadeApp({ tipo: "publicacao" }) });
+  try {
+    assert.equal(publicacao.publicacaoOuResetEmCurso(), true);
+    assert.equal(marcas(), 1, "a marca existe com a reserva");
+  } finally {
+    reserva.libertar();
+  }
+  assert.equal(publicacao.publicacaoOuResetEmCurso(), false);
+  assert.equal(marcas(), 0, "libertar retira a marca");
+});
+
+await caso("(o) se a marca da app falhar, a reserva sai e o erro sobe (fail closed)", () => {
+  assert.throws(() => publicacao.tentarReservarPublicacao({ marcar: () => { throw new Error("sem marca"); } }), /sem marca/);
+  assert.equal(publicacao.publicacaoOuResetEmCurso(), false, "a reserva não pode ficar presa");
+});
+
+await caso("mutação: libertar não retira a marca (o caso (o) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/importer/shopify/publicacaoEmCurso.js", "libertar-sem-marca", (t) =>
+    trocaUnica(t, "      if (reservada === dona) reservada = null;\n      retirarMarca();", "      if (reservada === dona) reservada = null;")
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    const reserva = mod.tentarReservarPublicacao({ marcar: () => atividade.marcarAtividadeApp({ tipo: "publicacao" }) });
+    reserva.libertar();
+    const restantes = fs.readdirSync(dir).filter((n) => n.startsWith("catalog-busy-publicacao-")).length;
+    assert.notEqual(restantes, 0, "a mutação deixa a marca, e o caso (o) tem de apanhar isso");
+  } finally {
+    limparMarcadores();
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("mutação: a falha da marca deixa a reserva presa (o caso (o) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/importer/shopify/publicacaoEmCurso.js", "falha-presa", (t) =>
+    trocaUnica(t, "      if (reservada === dona) reservada = null;\n      throw err;", "      throw err;")
+  );
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    assert.throws(() => mod.tentarReservarPublicacao({ marcar: () => { throw new Error("sem marca"); } }), /sem marca/);
+    assert.notEqual(mod.publicacaoOuResetEmCurso(), false, "a mutação deixa a reserva presa, e o caso (o) tem de apanhar isso");
+  } finally {
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(p) a purga recusa, marca-se como script antes do arranque, e uma recusa do worker sai com código 1", () => {
+  verificarPurga(ler(PURGA));
+});
+
+await caso("mutação: a purga não se marca antes do arranque (o caso (p) tem de ficar vermelho)", () => {
+  const texto = ler(PURGA);
+  assert.throws(() =>
+    verificarPurga(trocaUnica(texto, '  retirarMarcador = marcarAtividadeApp({ tipo: "indexacao", origem: "script" });', "  retirarMarcador = () => {};"))
+  );
+});
+
+await caso("mutação: uma recusa do worker deixa de sair com código 1 (o caso (p) tem de ficar vermelho)", () => {
+  const texto = ler(PURGA);
+  assert.throws(() => verificarPurga(trocaUnica(texto, "if (iniciou === false) {", "if (iniciou === undefined) {")));
+});
+
+await caso("(q) ciclo: o POST responde 409 com reset ou publicação, e a indexação é confirmada depois da reserva com marca", () => {
+  verificarCicloPublicacao(ler(ROTA_CICLO_PUB));
+});
+
+await caso("mutação: o POST deixa de recusar com reset ou publicação (o caso (q) tem de ficar vermelho)", () => {
+  assert.throws(() => verificarCicloPublicacao(trocaUnica(ler(ROTA_CICLO_PUB), "if (publicacaoOuResetEmCurso()) {", "if (false) {")));
+});
+
+await caso("mutação: o POST responde 200 em vez de 409 (o caso (q) tem de ficar vermelho)", () => {
+  const texto = ler(ROTA_CICLO_PUB);
+  assert.throws(() =>
+    verificarCicloPublicacao(trocaUnica(texto, 'reason: "publish_or_reset_running" },\n      { status: 409', 'reason: "publish_or_reset_running" },\n      { status: 200'))
+  );
+});
+
+await caso("mutação: o ciclo confirma a indexação sem repetir a decisão depois da reserva (o caso (q) tem de ficar vermelho)", () => {
+  assert.throws(() => verificarCicloPublicacao(trocaUnica(ler(ROTA_CICLO_PUB), "motivoIndexacao = motivoDeRecusaDaPublicacaoManual({", "motivoIndexacao = null({")));
+});
+
+await caso("mutação: o ciclo reserva sem marca da app (o caso (q) tem de ficar vermelho)", () => {
+  assert.throws(() =>
+    verificarCicloPublicacao(trocaUnica(ler(ROTA_CICLO_PUB), 'reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', "reserva = tentarReservarPublicacao();"))
+  );
+});
+
+await caso("mutação: a publicação manual reserva sem marca da app (o caso (d) da rota tem de ficar vermelho)", () => {
+  assert.throws(() =>
+    verificarRotaPublicacaoManual(trocaUnica(ler(ROTA_PUBLICACAO), 'reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', "reserva = tentarReservarPublicacao();"))
+  );
+});
+
+await caso("mutação: o reset deixa de confirmar a indexação depois da reserva (o caso do reset tem de ficar vermelho)", () => {
+  assert.throws(() => verificarRotaReset(trocaUnica(ler(ROTA_RESET), "motivoDepoisDaReserva = motivoDeRecusaDoReset({", "motivoDepoisDaReserva = null({")));
+});
+
+await caso("mutação: o painel deixa de recusar com publicação em curso (o caso do painel tem de ficar vermelho)", () => {
+  assert.throws(() => verificarPainel(trocaUnica(ler(ROTA_PAINEL), "if (publicacaoOuResetEmCurso()) {", "if (false) {")));
 });
 
 if (falhas) {

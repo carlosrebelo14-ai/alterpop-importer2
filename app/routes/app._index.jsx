@@ -198,17 +198,6 @@ export const action = async ({ request }) => {
   }
 
   if (intent === "refresh-catalog" || intent === "purge-catalog" || intent === "force-reindex-catalog") {
-    // PR 5 (DBG-140 e DBG-141): com um script de reindexação vivo, o painel não arranca nada. A causa vai ao toast
-    // (fetcher.data.error) e ao log. Retoma, recomeço e purga passam todos por aqui.
-    const recusaScript = motivoDeRecusaPorScript(scriptDeIndexacaoEmCurso());
-    if (recusaScript) {
-      console.log(`[painel] indexação recusada: ${recusaScript}`);
-      return { ok: false, error: recusaScript };
-    }
-    if (publicacaoOuResetEmCurso()) {
-      console.log("[painel] indexação recusada: há uma publicação ou um reset Shopify em curso.");
-      return { ok: false, error: "Aguarda que a publicação ou o reset Shopify em curso termine antes de reindexar." };
-    }
     let settings;
     try {
       settings = await loadShopSettings(session.shop);
@@ -220,6 +209,18 @@ export const action = async ({ request }) => {
     const fileStatus = await readCatalogRebuildStatus(session.shop);
     const willResume =
       !purge && !forceFull && canResumeCatalogRebuild(fileStatus);
+
+    // PR 5 (revisão): a recusa é verificada logo antes do arranque, sem await pelo meio. Assim o worker não recusa depois
+    // de a resposta já ter dito "iniciada". A causa vai ao toast (fetcher.data.error) e ao log.
+    const recusaScript = motivoDeRecusaPorScript(scriptDeIndexacaoEmCurso());
+    if (recusaScript) {
+      console.log(`[painel] indexação recusada: ${recusaScript}`);
+      return { ok: false, error: recusaScript };
+    }
+    if (publicacaoOuResetEmCurso()) {
+      console.log("[painel] indexação recusada: há uma publicação ou um reset Shopify em curso.");
+      return { ok: false, error: "Aguarda que a publicação ou o reset Shopify em curso termine antes de reindexar." };
+    }
 
     if (purge) {
       startCatalogCleanupInBackground(session.shop, settings, { causa: "painel" });

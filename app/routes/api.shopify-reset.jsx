@@ -15,7 +15,7 @@ import {
 } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { readDbDegraded } from "../../lib/health/dbDegraded.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
-import { atividadeAppEmCurso, motivoDeRecusaDoReset } from "../../lib/curation/atividadeApp.js";
+import { atividadeAppEmCurso, marcarAtividadeApp, motivoDeRecusaDoReset } from "../../lib/curation/atividadeApp.js";
 import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 
 const CONFIRM_WORD = "APAGAR";
@@ -118,13 +118,37 @@ export const action = async ({ request }) => {
 
   // PR 5 (DBG-140): o reset toma a reserva da publicação, de forma síncrona. O ciclo publica sem gravar running,
   // por isso o estado do job não o vê. A reserva vê o ciclo e a publicação manual. Sai no fim do reset.
-  const reserva = tentarReservarPublicacao();
+  // PR 5 (revisão): a reserva e a marca da app nascem no mesmo passo síncrono.
+  let reserva = null;
+  try {
+    reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+  } catch {
+    return Response.json(
+      { ok: false, error: "Não foi possível marcar a atividade da app. Nada foi gravado." },
+      { status: 503 }
+    );
+  }
   if (!reserva) {
     // Pode ser uma publicação (manual ou do ciclo) ou um reset que ainda não gravou o estado (pedido em paralelo).
     return Response.json(
       { ok: false, error: "Já há uma publicação ou um reset Shopify em curso. Aguarda que termine antes do reset." },
       { status: 409 }
     );
+  }
+
+  // PR 5 (revisão): a indexação pode ter arrancado nos awaits acima. Confirma-se com a reserva na mão.
+  try {
+    const motivoDepoisDaReserva = motivoDeRecusaDoReset({
+      indexacaoEmCurso: isCatalogIndexingRunning(session.shop),
+      atividade: atividadeAppEmCurso(),
+    });
+    if (motivoDepoisDaReserva) {
+      reserva.libertar();
+      return Response.json({ ok: false, error: motivoDepoisDaReserva }, { status: 409 });
+    }
+  } catch (err) {
+    reserva.libertar();
+    throw err;
   }
 
   try {

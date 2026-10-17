@@ -8,6 +8,7 @@ import {
 } from "../../lib/importer/shopify/shopifySyncJob.server.js";
 import { startApprovedShopifySyncInBackground } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
 import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
+import { marcarAtividadeApp } from "../../lib/curation/atividadeApp.js";
 import { listApprovedSkusForShopifySync, loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { resolveSyncSkus } from "../../lib/importer/shopify/resolveSyncSkus.js";
 import {
@@ -218,21 +219,35 @@ export const action = async ({ request }) => {
 
   // DBG-105: a reserva é tomada aqui, sem await entre ela e o initShopifySyncJob, e segue com o job até ao arranque
   // em background. Não depende de force: force só salta o gate de estado, acima. Se o ciclo já publica, responde 409.
-  const reserva = tentarReservarPublicacao();
+  // PR 5 (revisão): a reserva e a marca da app nascem no mesmo passo síncrono. Um script que arranque depois já a vê.
+  let reserva = null;
+  try {
+    reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+  } catch {
+    return Response.json(
+      { ok: false, error: "Não foi possível marcar a atividade da app. Nada foi gravado." },
+      { status: 503 }
+    );
+  }
   if (!reserva) {
     return Response.json({ ok: false, error: "Já existe uma sincronização Shopify em curso." }, { status: 409 });
   }
 
   // PR 5 (DBG-141): a indexação pode ter arrancado nos awaits acima, depois da verificação de indexação. Confirma-se aqui,
-  // sem await entre a reserva e a decisão. Uma indexação que arranque depois vê a reserva e recusa-se (indexingStream).
-  const motivoDepoisDaReserva = motivoDeRecusaDaPublicacaoManual({
-    indexacaoEmCurso: isCatalogIndexingRunning(session.shop) || atividadeAppEmCurso()?.tipo === "indexacao",
-    atividadeScript: scriptDeIndexacaoEmCurso(),
-  });
-  if (motivoDepoisDaReserva) {
+  // com a reserva na mão. Se a decisão falhar, a reserva sai antes de o erro subir.
+  try {
+    const motivoDepoisDaReserva = motivoDeRecusaDaPublicacaoManual({
+      indexacaoEmCurso: isCatalogIndexingRunning(session.shop) || atividadeAppEmCurso()?.tipo === "indexacao",
+      atividadeScript: scriptDeIndexacaoEmCurso(),
+    });
+    if (motivoDepoisDaReserva) {
+      reserva.libertar();
+      console.log(`[shopify-sync] publicação recusada: ${motivoDepoisDaReserva}`);
+      return Response.json({ ok: false, error: motivoDepoisDaReserva }, { status: 409 });
+    }
+  } catch (err) {
     reserva.libertar();
-    console.log(`[shopify-sync] publicação recusada: ${motivoDepoisDaReserva}`);
-    return Response.json({ ok: false, error: motivoDepoisDaReserva }, { status: 409 });
+    throw err;
   }
   try {
     await initShopifySyncJob(session.shop, approvedSkus.length);

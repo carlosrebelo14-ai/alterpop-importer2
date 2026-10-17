@@ -17,7 +17,7 @@ import { semComentarios } from "./_sem-comentarios.js";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ler = (rel) => semComentarios(fs.readFileSync(path.join(REPO, rel), "utf8"));
-const RESERVA = "const reserva = tentarReservarPublicacao();";
+const RESERVA = "reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: \"publicacao\" }) });";
 
 let falhas = 0;
 function check(nome, fn) {
@@ -35,7 +35,7 @@ console.log("DBG-105 — reserva de publicação nas rotas e no motor");
 check("(R1) rota manual: reserva depois do gate de estado e antes de initShopifySyncJob, sem await pelo meio", () => {
   const manual = ler("app/routes/api.shopify-sync.jsx");
   const reserva = manual.indexOf(RESERVA);
-  assert.ok(reserva > 0, "a rota manual tem de reservar com a forma exata: const reserva = tentarReservarPublicacao();");
+  assert.ok(reserva > 0, "a rota manual tem de reservar com a marca da app: reserva = tentarReservarPublicacao({ marcar: ... })");
   const init = manual.indexOf("await initShopifySyncJob(session.shop");
   assert.ok(init > reserva, "a reserva fica antes do initShopifySyncJob");
   assert.doesNotMatch(manual.slice(reserva, init), /await/, "sem await entre a reserva e o arranque");
@@ -57,7 +57,7 @@ check("(F) force=1 não salta a reserva: a reserva está fora do bloco do gate d
 check("(R2) ciclo: reserva logo antes da chamada a runApprovedShopifySync, sem await pelo meio", () => {
   const ciclo = ler("app/routes/api.trigger-sync.jsx");
   const reserva = ciclo.indexOf(RESERVA);
-  assert.ok(reserva > 0, "o ciclo tem de reservar com a forma exata: const reserva = tentarReservarPublicacao();");
+  assert.ok(reserva > 0, "o ciclo tem de reservar com a marca da app: reserva = tentarReservarPublicacao({ marcar: ... })");
   const chamada = ciclo.indexOf("await runApprovedShopifySync(session, { skipInit: true, reserva });");
   assert.ok(chamada > reserva, "a reserva fica antes da chamada, e a chamada leva a reserva");
   assert.doesNotMatch(ciclo.slice(reserva, chamada), /await/, "sem await entre a reserva e a chamada");
