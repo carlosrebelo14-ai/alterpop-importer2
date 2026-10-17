@@ -112,13 +112,20 @@ function verificarFlushAntesDoFork(src) {
   const bloco = src.slice(inicio, src.indexOf("child = fork(", inicio));
   const flush = bloco.indexOf(FLUSH);
   assert.ok(flush >= 0, "o running tem de ir para o disco antes do fork (DBG-156)");
-  assert.ok(bloco.indexOf("setInMemoryStatus(shop, {") < flush, "o flush tem de vir depois de a memória ter o running");
+  const memoria = bloco.indexOf("setInMemoryStatus(shop, {");
+  assert.ok(memoria >= 0, "a memória tem de ter o running antes do flush (setInMemoryStatus em falta)");
+  assert.ok(memoria < flush, "o flush tem de vir depois de a memória ter o running");
 }
 const srcIndexing = fs.readFileSync(INDEXING, "utf8");
 check("o flush do running está antes do fork, depois da memória", () => verificarFlushAntesDoFork(srcIndexing));
 check("mutação: retirar o flush antes do fork faz a verificação falhar", () => {
   assert.ok(srcIndexing.includes(`${FLUSH}\n`), "o flush não existe no código");
   assert.throws(() => verificarFlushAntesDoFork(srcIndexing.replace(`${FLUSH}\n`, "")));
+});
+check("mutação: retirar a escrita do running em memória faz a verificação falhar", () => {
+  assert.ok(srcIndexing.includes("  setInMemoryStatus(shop, {"), "a escrita em memória não existe no código");
+  const semMemoria = srcIndexing.replace("  setInMemoryStatus(shop, {", "  outraFuncao(shop, {");
+  assert.throws(() => verificarFlushAntesDoFork(semMemoria), /setInMemoryStatus em falta/);
 });
 
 console.log("(b) portão: a sonda repete-se antes de dar o catálogo por livre");
