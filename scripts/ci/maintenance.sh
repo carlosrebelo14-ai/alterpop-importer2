@@ -4,7 +4,7 @@
 #   bash scripts/ci/maintenance.sh <tarefa> <fase>
 #
 # tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push
-#         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run   (estas cinco só leem; nenhuma aceita execute)
+#         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status   (estas só leem; nenhuma aceita execute)
 # db_push recusa-se com a flag DB_DEGRADED presente no volume (Decisão 34), em dry-run e em execute.
 # fase    dry-run  só lê (ou lista o que mudaria)
 #         execute  escreve (só tags_cleanup, character_pages_sync e db_push; nas outras é igual ao dry-run)
@@ -42,12 +42,17 @@ RESTORE_OUT="$(mktemp)"
 LOG_SUM=""
 
 case "$TASK" in
-  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run) ;;
+  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
 esac
 # As tarefas novas só leem: nenhuma aceita execute, nem como no-op.
 case "$TASK" in
   db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run)
+    if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
+esac
+# indexing_status fica numa guarda própria, para não tocar na linha das tarefas que já recusam execute.
+case "$TASK" in
+  indexing_status)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
 case "$PHASE" in
@@ -312,6 +317,13 @@ case "$TASK" in
       fi
     fi
     ;;
+  indexing_status)
+    # Estado da última indexação, do ficheiro que o V16 lê. Script enviado em base64 (não precisa de deploy de app).
+    # Só imprime uma linha IS: com classes e números. O texto do erro não sai daqui.
+    DESC="Lê o estado da última indexação do catálogo: estado, datas, linhas, checkpoint e a classe do erro, sem texto. Só lê."
+    IS64="$(base64 -w0 "$ROOT/scripts/maintenance/indexing-status.mjs")"
+    remote "echo $IS64 | base64 -d | node --input-type=module -"; RC=$?
+    ;;
 esac
 
 # ── resumo em português, só contagens e estados ───────────────────────
@@ -477,7 +489,26 @@ case "$TASK" in
       bullets="$bullets"$'\n'"- Sairiam: **$(en candidatos)** (PENDING **$(en sairiam_PENDING)**, APPROVED **$(en sairiam_APPROVED)**, REJECTED **$(en sairiam_REJECTED)**, outros estados **$(en sairiam_outro)**)."
       bullets="$bullets"$'\n'"- Retidos: **$(en retidos)**, dos quais por decisão humana **$(en retidos_decisao_humana)** e por outros motivos **$(en retidos_outros_motivos)**."
       bullets="$bullets"$'\n'"- Retidos por estado da fila: PUBLISHED **$(en retidos_PUBLISHED)**, SYNC_ERROR **$(en retidos_SYNC_ERROR)**, APPROVED **$(en retidos_APPROVED)**, PENDING **$(en retidos_PENDING)**, REJECTED **$(en retidos_REJECTED)**, sem entrada **$(en retidos_sem_entrada)**, outro **$(en retidos_outro)**."
+      # Retidos por motivo. As linhas motivo_ vêm da formatação nova, que corre na imagem da app: só aparecem depois
+      # de deploy. Antes disso não se mostram zeros, mostra-se n/d.
+      if [ -z "$(epd motivo_publicado_ou_erro)" ]; then
+        bullets="$bullets"$'\n'"- Retidos por motivo: **n/d** (a formatação por motivo só aparece depois do deploy da app)."
+      else
+        bullets="$bullets"$'\n'"- Retidos por motivo: publicado_ou_erro **$(en motivo_publicado_ou_erro)**, apagado_no_admin **$(en motivo_apagado_no_admin)**, reset **$(en motivo_reset)**, decisao_humana **$(en motivo_decisao_humana)**, sem_entrada **$(en motivo_sem_entrada)**, sem_origem **$(en motivo_sem_origem)**."
+      fi
       KEY="$(en candidatos) sairiam, $(en retidos) retidos (decisão humana $(en retidos_decisao_humana))"
+    fi
+    ;;
+  indexing_status)
+    # Lê a linha IS: que o script imprime. Cada campo é um token simples; o erro chega só como classe e tamanho.
+    isv() { echo "$CLEAN" | grep -E "^IS: " | head -1 | tr ' ' '\n' | grep -E "^$1=" | head -1 | cut -d= -f2-; }
+    if [ -z "$(isv state)" ]; then
+      bullets=""; KEY="sem leitura"
+    else
+      bullets="- Estado: **$(isv state)**. Erro: classe **$(isv erro)**, com **$(isv erro_tamanho)** caracteres. O texto do erro não sai daqui."
+      bullets="$bullets"$'\n'"- Início **$(isv startedAt)**, fim **$(isv finishedAt)**."
+      bullets="$bullets"$'\n'"- Linhas (totalRows; durante uma indexação são os indexados): **$(isv totalRows)**. Checkpoint (checkpointScanned): **$(isv checkpointScanned)**."
+      KEY="estado $(isv state), erro $(isv erro)"
     fi
     ;;
 esac
