@@ -271,8 +271,8 @@ export const action = async ({ request }) => {
               atividadeScript: scriptDeIndexacaoEmCurso(),
             });
           } catch (err) {
-            reserva.libertar();
-            throw err;
+            // Não aborta o ciclo inteiro: a publicação salta com a causa, e o stock, as franquias e a erosão seguem.
+            motivoIndexacao = `não foi possível confirmar a indexação (${err?.message || err})`;
           }
           if (motivoIndexacao) {
             reserva.libertar();

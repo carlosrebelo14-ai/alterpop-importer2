@@ -171,6 +171,13 @@ function verificarRotaCiclo(texto) {
 }
 
 /** O ciclo para quando a indexação não arranca, antes do IIFE seguir para a publicação. */
+function verificarCicloNaoAbortaComLeituraFalhada(texto) {
+  const inicio = posicao(texto, "let motivoIndexacao = null;", ROTA_CICLO);
+  const fim = posicao(texto, "if (motivoIndexacao) {", ROTA_CICLO);
+  assert.ok(inicio < fim, "a decisão de indexação do ciclo tem de vir antes da recusa");
+  assert.doesNotMatch(texto.slice(inicio, fim), /throw/, "o ciclo não pode lançar aqui: salta a publicação com a causa");
+}
+
 function verificarCicloPublicacao(texto) {
   const pos = posicao(texto, "if (publicacaoOuResetEmCurso()) {", ROTA_CICLO);
   const sync = posicao(texto, "if (await isShopifySyncRunning(shop)) {", ROTA_CICLO);
@@ -186,9 +193,9 @@ const PURGA = "scripts/catalog/catalog-purge-reindex.js";
 function verificarPurga(texto) {
   const recusa = posicao(texto, 'recusarSeAtividadeApp("catalog-purge-reindex");', PURGA);
   const marca = posicao(texto, 'marcarAtividadeApp({ tipo: "indexacao", origem: "script" })', PURGA);
-  const arranque = posicao(texto, "iniciou = await startCatalogCleanupInBackground(shop, settings", PURGA);
+  const arranque = posicao(texto, "concluiu = await startCatalogCleanupInBackground(shop, settings", PURGA);
   assert.ok(recusa < marca && marca < arranque, "a purga recusa, marca e só depois arranca o worker");
-  assert.match(texto, /if \(iniciou === false\) \{[\s\S]*?process\.exit\(1\);/, "uma recusa do worker sai com código 1");
+  assert.match(texto, /if \(concluiu === false\) \{[\s\S]*?process\.exit\(1\);/, "uma corrida que não concluiu sai com código 1");
 }
 
 function verificarCicloAbortaSemArranque(texto) {
@@ -274,7 +281,7 @@ await caso("(a) script primeiro, depois o ciclo: com script vivo não há fork n
 
 await caso("mutação: sem a guarda central, o ciclo faz fork com o script vivo (o caso (a) tem de ficar vermelho)", async () => {
   const m = mutanteDo("lib/importer/catalog/indexingStream.server.js", "sem-guarda-central", (t) =>
-    trocaUnica(t, "const recusaScript = motivoDeRecusaPorScript(scriptDeIndexacaoEmCurso());", "const recusaScript = null;")
+    trocaUnica(t, "  if (atividadeScript) {\n    const causa", "  if (false) {\n    const causa")
   );
   limparMarcadores();
   let forks = 0;
@@ -739,7 +746,7 @@ await caso("(n) a guarda ignora a marca do próprio processo: a purga não se re
 
 await caso("mutação: sem a exceção da marca própria, o script recusa-se a si próprio (o caso (n) tem de ficar vermelho)", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "sem-marca-propria", (t) =>
-    trocaUnica(t, "    if (dados.pid === process.pid) continue;\n", "")
+    trocaUnica(t, "    if (dados.pid === process.pid && dados.processo === PROCESSO_ID) continue;\n", "")
   );
   limparMarcadores();
   const marca = atividade.marcarAtividadeApp({ tipo: "indexacao", pid: process.pid, origem: "script" });
@@ -816,7 +823,7 @@ await caso("mutação: a purga não se marca antes do arranque (o caso (p) tem d
 
 await caso("mutação: uma recusa do worker deixa de sair com código 1 (o caso (p) tem de ficar vermelho)", () => {
   const texto = ler(PURGA);
-  assert.throws(() => verificarPurga(trocaUnica(texto, "if (iniciou === false) {", "if (iniciou === undefined) {")));
+  assert.throws(() => verificarPurga(trocaUnica(texto, "if (concluiu === false) {", "if (concluiu === undefined) {")));
 });
 
 await caso("(q) ciclo: o POST responde 409 com reset ou publicação, e a indexação é confirmada depois da reserva com marca", () => {
@@ -856,6 +863,196 @@ await caso("mutação: o reset deixa de confirmar a indexação depois da reserv
 
 await caso("mutação: o painel deixa de recusar com publicação em curso (o caso do painel tem de ficar vermelho)", () => {
   assert.throws(() => verificarPainel(trocaUnica(ler(ROTA_PAINEL), "if (publicacaoOuResetEmCurso()) {", "if (false) {")));
+});
+
+// --- Rodada 2 de convergência: leitura, identificador de processo, mensagem por tipo, marca falhada, purga ---
+
+await caso("(r) erro de leitura de marcador de script vivo há mais de 10 min continua a bloquear (não é conteúdo ilegível)", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const pasta = path.join(dir, "catalog-busy-indexacao-1-dirlido.json");
+  fs.mkdirSync(pasta);
+  const antigo = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(pasta, antigo, antigo);
+  try {
+    assert.equal(atividade.scriptDeIndexacaoEmCurso()?.tipo, "desconhecida", "erro de leitura não expira pelo prazo");
+    assert.equal(atividade.atividadeAppEmCurso()?.tipo, "desconhecida", "o reset também não expira com erro de leitura");
+  } finally {
+    fs.rmdirSync(pasta);
+  }
+});
+
+await caso("mutação: erro de leitura expira pelo prazo e deixa passar a indexação (o caso (r) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "leitura-expira", (t) =>
+    trocaUnica(t, '      return { tipo: "desconhecida", pid: null, motivo: `marcador de atividade não lido: ${nome}` };', '      if (marcadorIlegivelExpirou(ficheiro, nome)) continue;\n      return { tipo: "desconhecida", pid: null, motivo: `marcador de atividade não lido: ${nome}` };')
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const pasta = path.join(dir, "catalog-busy-indexacao-1-dirlido.json");
+  fs.mkdirSync(pasta);
+  const antigo = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(pasta, antigo, antigo);
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    assert.equal(mod.scriptDeIndexacaoEmCurso(), null, "a mutação deixa passar com erro de leitura antigo");
+    assert.throws(() => assert.equal(mod.scriptDeIndexacaoEmCurso()?.tipo, "desconhecida"), "o caso (r) tem de apanhar a mutação");
+  } finally {
+    fs.rmdirSync(pasta);
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(s) a mesma pid de outro processo (outro container) não é a marca própria: recusa", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-outro-container.json");
+  fs.writeFileSync(ficheiro, JSON.stringify({ tipo: "indexacao", pid: process.pid, origem: "script", processo: "outro-container", startedAt: new Date().toISOString() }), "utf8");
+  try {
+    assert.equal(atividade.scriptDeIndexacaoEmCurso()?.tipo, "script", "mesmo pid, outro processo: tem de recusar");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+  }
+});
+
+await caso("mutação: a exceção pelo pid apenas deixa passar a marca de outro container (o caso (s) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "pid-apenas", (t) =>
+    trocaUnica(t, "    if (dados.pid === process.pid && dados.processo === PROCESSO_ID) continue;", "    if (dados.pid === process.pid) continue;")
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-outro-container.json");
+  fs.writeFileSync(ficheiro, JSON.stringify({ tipo: "indexacao", pid: process.pid, origem: "script", processo: "outro-container", startedAt: new Date().toISOString() }), "utf8");
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    assert.equal(mod.scriptDeIndexacaoEmCurso(), null, "a mutação ignora a marca de outro container");
+    assert.throws(() => assert.equal(mod.scriptDeIndexacaoEmCurso()?.tipo, "script"), "o caso (s) tem de apanhar a mutação");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(t) marcador ilegível de publicação: a recusa diz marcador ilegível e a causa do log não é script", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-publicacao-1-parcial.json");
+  fs.writeFileSync(ficheiro, "{ truncado", "utf8");
+  try {
+    const motivo = atividade.motivoDeRecusaPorScript(atividade.scriptDeIndexacaoEmCurso());
+    assert.match(motivo, /ilegível/, "a mensagem tem de dizer que o marcador é ilegível");
+    assert.doesNotMatch(motivo, /Reindexação por script/, "não pode atribuir a recusa a um script que não existe");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+  }
+});
+
+await caso("mutação: a mensagem de marcador ilegível diz script (o caso (t) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "mensagem-script", (t) =>
+    trocaUnica(t, '  if (atividadeScript.tipo === "desconhecida") {', "  if (false) {")
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-publicacao-1-parcial.json");
+  fs.writeFileSync(ficheiro, "{ truncado", "utf8");
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    const motivo = mod.motivoDeRecusaPorScript(mod.scriptDeIndexacaoEmCurso());
+    assert.match(motivo, /Reindexação por script/, "a mutação diz script");
+    assert.throws(() => assert.doesNotMatch(motivo, /Reindexação por script/), "o caso (t) tem de apanhar a mutação");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(u) uma escrita de marca que falha não deixa ficheiro parcial (que bloquearia 10 min)", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const original = fs.writeFileSync;
+  fs.writeFileSync = (ficheiro, conteudo, opcoes) => {
+    if (String(ficheiro).includes("catalog-busy-")) {
+      original(ficheiro, "{ parcial", opcoes);
+      throw new Error("disco cheio");
+    }
+    return original(ficheiro, conteudo, opcoes);
+  };
+  try {
+    assert.throws(() => atividade.marcarAtividadeApp({ tipo: "indexacao" }), /disco cheio/);
+  } finally {
+    fs.writeFileSync = original;
+  }
+  assert.equal(marcadoresDeIndexacao().length, 0, "a escrita falhada não pode deixar marca");
+  assert.equal(atividade.scriptDeIndexacaoEmCurso(), null, "nem marca ilegível que bloqueie");
+});
+
+await caso("mutação: uma escrita de marca falhada deixa ficheiro parcial (o caso (u) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "marca-parcial", (t) =>
+    trocaUnica(t, "    fs.rmSync(ficheiro, { force: true });\n    throw err;", "    throw err;")
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const original = fs.writeFileSync;
+  fs.writeFileSync = (ficheiro, conteudo, opcoes) => {
+    if (String(ficheiro).includes("catalog-busy-")) {
+      original(ficheiro, "{ parcial", opcoes);
+      throw new Error("disco cheio");
+    }
+    return original(ficheiro, conteudo, opcoes);
+  };
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    assert.throws(() => mod.marcarAtividadeApp({ tipo: "indexacao" }), /disco cheio/);
+    assert.throws(() => assert.equal(marcadoresDeIndexacao().length, 0), "o caso (u) tem de apanhar a mutação");
+  } finally {
+    fs.writeFileSync = original;
+    limparMarcadores();
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(v) a purga só conta como concluída com done: marca falhada resolve false", async () => {
+  limparMarcadores();
+  const original = fs.writeFileSync;
+  fs.writeFileSync = (ficheiro, conteudo, opcoes) => {
+    if (String(ficheiro).includes("catalog-busy-")) throw new Error("sem marca");
+    return original(ficheiro, conteudo, opcoes);
+  };
+  try {
+    const concluiu = await indexacao.startCatalogCleanupInBackground("loja-marca-falhada.myshopify.com", {}, { causa: "script" });
+    assert.equal(concluiu, false, "uma corrida que não arrancou não é concluída");
+  } finally {
+    fs.writeFileSync = original;
+  }
+});
+
+await caso("mutação: resolver em closed sem olhar a done faz o caso (v) ficar vermelho", async () => {
+  const m = mutanteDo("lib/importer/catalog/indexingStream.server.js", "closed-sem-done", (t) =>
+    trocaUnica(t, "      resolve(concluiu);", "      resolve(true);")
+  );
+  limparMarcadores();
+  const original = fs.writeFileSync;
+  fs.writeFileSync = (ficheiro, conteudo, opcoes) => {
+    if (String(ficheiro).includes("catalog-busy-")) throw new Error("sem marca");
+    return original(ficheiro, conteudo, opcoes);
+  };
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    const concluiu = await mod.startCatalogCleanupInBackground("loja-marca-mutante.myshopify.com", {}, { causa: "script" });
+    assert.equal(concluiu, true, "a mutação resolve true sem concluir, e o caso (v) tem de apanhar isso");
+  } finally {
+    fs.writeFileSync = original;
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(w) o ciclo não aborta o resto quando a confirmação da indexação lança", () => {
+  verificarCicloNaoAbortaComLeituraFalhada(ler(ROTA_CICLO_PUB));
+});
+
+await caso("mutação: o ciclo volta a lançar na confirmação (o caso (w) tem de ficar vermelho)", () => {
+  assert.throws(() =>
+    verificarCicloNaoAbortaComLeituraFalhada(trocaUnica(ler(ROTA_CICLO_PUB), "motivoIndexacao = `não foi possível confirmar a indexação (${err?.message || err})`;", "reserva.libertar();\n            throw err;"))
+  );
 });
 
 if (falhas) {

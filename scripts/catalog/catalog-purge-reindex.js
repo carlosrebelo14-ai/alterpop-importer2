@@ -53,9 +53,9 @@ const settings = await loadShopSettings(shop);
 
 console.log(`[catalog-purge] Loja: ${shop}`);
 // DBG-155: a espera é pela corrida toda. Só depois de "closed" o estado final está no disco.
-let iniciou;
+let concluiu;
 try {
-  iniciou = await startCatalogCleanupInBackground(shop, settings, { causa: "script" });
+  concluiu = await startCatalogCleanupInBackground(shop, settings, { causa: "script" });
 } catch (err) {
   retirarMarcador();
   console.error("[catalog-purge] Falhou:", err?.message || err);
@@ -63,9 +63,9 @@ try {
 }
 retirarMarcador();
 
-// PR 5 (revisão): a recusa do worker não é sucesso. Sem este teste, a purga saía com 0 e dizia "Concluído" sem apagar.
-if (iniciou === false) {
-  console.error("[catalog-purge] Recusado: a indexação não arrancou (script, publicação ou reset em curso). Nada foi apagado.");
+// PR 5 (revisão): só "done" conta como concluída. Recusa, falha e falha de marcador não são sucesso.
+if (concluiu === false) {
+  console.error("[catalog-purge] Não concluiu: a indexação foi recusada, falhou ou não arrancou. Vê indexing_status antes de repetir.");
   process.exit(1);
 }
 
