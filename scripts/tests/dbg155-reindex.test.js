@@ -10,6 +10,8 @@
  *       Mutação: resolver no fork faz o caso ficar vermelho.
  *   (d) o marcador da corrida existe antes do fork e sai com o exit do worker. Mutação: marcar depois do fork
  *       faz o caso ficar vermelho.
+ *   (e) o flush do arranque falha: não há fork e o marcador sai. Mutação: não retirar o marcador na falha faz o
+ *       caso ficar vermelho.
  * Uso: node scripts/tests/dbg155-reindex.test.js
  */
 import "./_isolate-curation.js";
@@ -197,6 +199,36 @@ async function cenarioPromessa(mod) {
   }
 }
 
+/** Ocupa o diretório de estado com um ficheiro: o flush do arranque falha. Desbloquear remove o ficheiro. */
+function bloquearEscrita() {
+  fs.rmSync(DIR_INDEX, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(DIR_INDEX), { recursive: true });
+  fs.writeFileSync(DIR_INDEX, "bloqueado");
+}
+function desbloquearEscrita() {
+  fs.rmSync(DIR_INDEX, { recursive: true, force: true });
+}
+
+/**
+ * Arranque com o flush bloqueado. Devolve o resultado do arranque, quantos forks houve e quantos marcadores ficaram.
+ */
+async function cenarioFlushFalha(mod) {
+  limparMarcadores();
+  let forks = 0;
+  mod.definirForkParaTestes(() => {
+    forks += 1;
+    return new FakeChild();
+  });
+  try {
+    bloquearEscrita();
+    const resultado = await mod.startCatalogIndexingWorker(SHOP, {}, { causa: "script" });
+    return { resultado, forks, marcadores: marcadoresDeIndexacao().length };
+  } finally {
+    desbloquearEscrita();
+    mod.definirForkParaTestes(null);
+  }
+}
+
 console.log("dbg155 — reindexação completa e purga: recusa, falha gravada, espera pelo fim, marcador");
 
 await caso("(a) full-catalog-reindex recusa com atividade da app viva: código 1, e nada é gravado no estado", () => {
@@ -268,6 +300,32 @@ await caso("mutação: marcar depois do fork faz o caso (d) ficar vermelho", asy
     const viu = await cenarioMarcador(mod);
     assert.notEqual(viu, 1, "a mutação tem de deixar o fork sem marcador, e o caso (d) tem de apanhar isso");
   } finally {
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(e) flush do arranque com erro: não há fork, o arranque devolve null e o marcador sai", async () => {
+  const { resultado, forks, marcadores } = await cenarioFlushFalha(indexacao);
+  assert.equal(resultado, null, "sem estado no disco, o arranque não se faz");
+  assert.equal(forks, 0, "sem estado no disco, não pode haver fork");
+  assert.equal(marcadores, 0, "sem fork, o marcador não pode ficar a bloquear a fila");
+});
+
+await caso("mutação: sem retirar o marcador na falha do flush, o caso (e) tem de ficar vermelho", async () => {
+  const m = mutanteDo("lib/importer/catalog/indexingStream.server.js", "marcador-preso-no-flush", (t) =>
+    trocaUnica(
+      t,
+      "    retirarMarcador();\n    console.error(`[indexingStream] ${mensagem}`);\n    return null;",
+      "    console.error(`[indexingStream] ${mensagem}`);\n    return null;"
+    )
+  );
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    const { forks, marcadores } = await cenarioFlushFalha(mod);
+    assert.equal(forks, 0, "a mutação não pode fazer fork");
+    assert.notEqual(marcadores, 0, "a mutação tem de deixar o marcador, e o caso (e) tem de apanhar isso");
+  } finally {
+    limparMarcadores();
     fs.rmSync(m, { force: true });
   }
 });
