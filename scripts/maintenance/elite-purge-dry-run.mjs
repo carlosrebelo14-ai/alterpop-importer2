@@ -27,6 +27,8 @@ import { dbFilePath } from "../../lib/health/dbDegraded.js";
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ESTADOS = ["APPROVED", "PUBLISHED", "PENDING", "REJECTED", "SYNC_ERROR", "sem_entrada", "outro"];
+/** Motivos que retêm um item (avaliarPurgaDeEntrada). Prefixo motivo_, para não colidir com retidos_<estado>. */
+const MOTIVOS = ["publicado_ou_erro", "apagado_no_admin", "reset", "decisao_humana", "sem_entrada", "sem_origem"];
 
 /**
  * Caminho da BD como o Prisma o abre. Um caminho relativo resolve-se a partir de prisma/, onde está o schema.
@@ -54,6 +56,7 @@ export function formatarResumoEpd(r) {
   ];
   for (const estado of ESTADOS) linhas.push(`EPD: sairiam_${estado}=${r.candidatosPorEstado?.[estado] || 0}`);
   for (const estado of ESTADOS) linhas.push(`EPD: retidos_${estado}=${r.retidosPorEstado?.[estado] || 0}`);
+  for (const motivo of MOTIVOS) linhas.push(`EPD: motivo_${motivo}=${r.retidosPorMotivo?.[motivo] || 0}`);
   return linhas;
 }
 
