@@ -26,6 +26,13 @@ Este ficheiro não existia no repositório. Foi criado em 17/10 com a regra da D
 - Só se dá o deploy por bom quando o `catalog_health` repetido ficar verde.
 - Não se repete com `db_push`.
 
+## Ler a última falha da indexação (`indexing_status`)
+
+- `falha_em`: data da última falha. `falha_causa`: causa, em lista fechada (`worker_saiu`, `worker_morto`, `erro_worker`, `erro_pai`, `marcador`, `estado_nao_gravado`). `falha_classe`: classe do texto do erro. `nenhuma` quando não há falha registada.
+- `totalRejected`: linhas rejeitadas na última corrida.
+- O texto do erro não sai em lado nenhum. Fica no ficheiro de estado (`lastFailure.error`), e lê-se com acesso direto ao volume da Fly, nunca por esta tarefa.
+- Uma corrida concluída não apaga a falha anterior. A falha seguinte substitui-a.
+
 ## Vetos ativos
 
 - ~~Tarefa `db_push` em modo `execute`~~: levantado em 17/10, DBG-156 em produção (Decisão 37, deploy run `39055860291`).

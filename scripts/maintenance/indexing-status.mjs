@@ -4,7 +4,8 @@
  *
  * Lê o mesmo ficheiro que o V16 (<data>/catalog-index/<shop>-rebuild-status.json, ver
  * catalogRebuildStatus.server.js) e imprime UMA linha:
- *   IS: state=… startedAt=… finishedAt=… totalRows=… checkpointScanned=… erro=… erro_tamanho=…
+ *   IS: state=… startedAt=… finishedAt=… totalRows=… checkpointScanned=… totalRejected=… erro=… erro_tamanho=…
+ *       falha_em=… falha_causa=… falha_classe=…   (última falha: data, causa e classe; nunca o texto)
  *
  * O repositório é público. O texto de `error` nunca sai: a causa vai como classe de uma lista fechada, e só
  * se diz o tamanho. Cada valor que não seja um token simples vira "?", para que nada do ficheiro entre no
@@ -51,6 +52,20 @@ function token(valor, re = /^[A-Za-z0-9:._+-]{1,40}$/) {
   return re.test(s) ? s : "?";
 }
 
+/** Causas de falha, em lista fechada. Cópia de CAUSAS_FALHA em lib/importer/catalog/falhaIndexacao.js (teste pina). */
+const CAUSAS = ["worker_saiu", "worker_morto", "erro_worker", "erro_pai", "marcador", "estado_nao_gravado"];
+
+/** Campo do lastFailure. Sem lastFailure, "nenhuma". O texto de error nunca passa por aqui. */
+function campoDaFalha(falha, campo, re) {
+  if (!falha || typeof falha !== "object") return "nenhuma";
+  return token(falha[campo], re);
+}
+
+function causaDaFalha(falha) {
+  if (!falha || typeof falha !== "object") return "nenhuma";
+  return CAUSAS.includes(falha.causa) ? falha.causa : "?";
+}
+
 function linha(campos) {
   const partes = [
     `state=${token(campos.state)}`,
@@ -58,8 +73,12 @@ function linha(campos) {
     `finishedAt=${token(campos.finishedAt)}`,
     `totalRows=${token(campos.totalRows, /^\d{1,12}$/)}`,
     `checkpointScanned=${token(campos.checkpointScanned, /^\d{1,12}$/)}`,
+    `totalRejected=${token(campos.totalRejected, /^\d{1,12}$/)}`,
     `erro=${classeDoErro(campos.error)}`,
     `erro_tamanho=${campos.error ? String(campos.error).length : 0}`,
+    `falha_em=${campoDaFalha(campos.lastFailure, "at", /^[0-9TZ:.+-]{1,40}$/)}`,
+    `falha_causa=${causaDaFalha(campos.lastFailure)}`,
+    `falha_classe=${campos.lastFailure && typeof campos.lastFailure === "object" ? classeDoErro(campos.lastFailure.error) : "nenhuma"}`,
   ];
   return `IS: ${partes.join(" ")}`;
 }

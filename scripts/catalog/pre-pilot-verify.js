@@ -122,6 +122,7 @@ import {
 } from "../../lib/importer/shopify/franchiseMetafieldDefinition.js";
 import { CHARACTER_METAOBJECT_TYPE } from "../../lib/importer/shopify/characterMetaobjectSetup.js";
 import { readCatalogRebuildStatus } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
+import { descreverUltimaFalha } from "../../lib/importer/catalog/falhaIndexacao.js";
 import { listApprovedSkusForShopifySync } from "../../lib/curation/curationQueue.server.js";
 import { getLatestLifecycleReport, isLifecycleReportSuspect } from "../../lib/importer/catalog/skuLifecycle.server.js";
 import { fetchLiveVariantsBySku, diagnoseMissingLive } from "../../lib/importer/shopify/liveVariantsBySku.server.js";
@@ -633,7 +634,7 @@ async function main() {
   if (rebuildStatus.state === "failed" && approvedPending > 0) {
     check(
       "V16",
-      `indexação falhou e cancelou o publish (${rebuildStatus.error || "erro desconhecido"})`,
+      `indexação falhou e cancelou o publish (${descreverUltimaFalha(rebuildStatus)})`,
       "indexação ok ou 0 aprovados por publicar",
       `${approvedPending} aprovado(s) por publicar, indexação falhada`,
       false
@@ -641,13 +642,15 @@ async function main() {
   } else if (rebuildStatus.state === "failed") {
     warn(
       "V16",
-      `última indexação falhou (${rebuildStatus.error || "erro desconhecido"})`,
+      `última indexação falhou (${descreverUltimaFalha(rebuildStatus)})`,
       "indexação ok",
       "falhou, mas 0 aprovados por publicar — sem impacto no momento",
       false
     );
   } else {
-    check("V16", "última indexação terminou sem erro", "sem erro", rebuildStatus.state || "idle", true);
+    // Uma falha anterior fica visível mesmo com a última corrida concluída. Só causa, data e classe.
+    const anterior = rebuildStatus.lastFailure ? ` (falha anterior: ${descreverUltimaFalha(rebuildStatus)})` : "";
+    check("V16", `última indexação terminou sem erro${anterior}`, "sem erro", rebuildStatus.state || "idle", true);
   }
 
   // V17 — CatalogSkuTracking a reportar novidade acima de 50% do catálogo fora do modo
