@@ -164,7 +164,7 @@ case "$TASK" in
     if [ "$RC" -eq 0 ]; then remote "npm run catalog:health"; RC=$?; fi
     ;;
   esperar_indexacao)
-    DESC="Espera até 15 min que a indexação do catálogo acabe, com a mesma sonda do catalog_health. Só lê. Corre antes do flyctl deploy."
+    DESC="Espera até 15 min que a indexação do catálogo acabe, com a mesma sonda do catalog_health. Só lê. O scripts/deploy.sh usa-a antes do flyctl deploy; também serve para uso manual."
     wait_for_indexing
     case $? in
       0) KEY="sem indexação" ;;

@@ -1,11 +1,10 @@
 # Deploy de produção (alterpop-importer-app), disparado à mão: Actions → deploy → Run workflow.
 #
 # Ordem, parando no primeiro passo que falhar:
-#   1. esperar indexação        se houver uma indexação a decorrer, espera até 15 min antes do deploy
-#                               (scripts/ci/maintenance.sh esperar_indexacao); sem fim, falha sem deploy
-#   2. bash scripts/deploy.sh   guardas (main limpo e igual a origin/main), test:franchise,
-#                               test:sync-safety, test:health-gate, depois `flyctl deploy`
-#   3. catalog:health na Fly    sai com erro se algum check estiver vermelho; se houver uma indexação a
+#   1. bash scripts/deploy.sh   guardas (main limpo e igual a origin/main), test:franchise,
+#                               test:sync-safety, test:health-gate, espera por indexação (até 15 min;
+#                               sem fim, falha sem deploy), depois `flyctl deploy`
+#   2. catalog:health na Fly    sai com erro se algum check estiver vermelho; se houver uma indexação a
 #                               decorrer, espera até 15 min antes de avaliar (scripts/ci/maintenance.sh)
 #
 # Não corre db:push. O esquema da BD muda só pelo workflow `maintenance` (tarefa db_push), com OK do
@@ -14,8 +13,8 @@
 # O job usa o environment "production": se o environment tiver revisores obrigatórios, o GitHub pede
 # aprovação antes de o job arrancar.
 #
-# Input skip_deploy (boolean, default false): com true salta a espera, o deploy e a instalação de dependências
-# que só eles usam, e corre só catalog:health, sem refazer o deploy.
+# Input skip_deploy (boolean, default false): com true salta o deploy.sh (guardas, suites, espera e flyctl
+# deploy) e a instalação de dependências que só ele usa, e corre só catalog:health, sem refazer o deploy.
 #
 # PRICE_MODE e THEME_GUARD NÃO são tocados aqui: as flags continuam como estão na Fly.
 # Só se corre a partir de main (a guarda 1 do deploy.sh exige o branch main).
@@ -47,7 +46,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       SKIP_DEPLOY: ${{ inputs.skip_deploy == true || inputs.skip_deploy == 'true' }}
@@ -72,10 +71,6 @@ jobs:
         run: npx prisma generate
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
-
-      - name: Esperar indexação antes do deploy (esperar_indexacao)
-        if: env.SKIP_DEPLOY != 'true'
-        run: bash scripts/ci/maintenance.sh esperar_indexacao dry-run
 
       - name: Deploy (scripts/deploy.sh)
         if: env.SKIP_DEPLOY != 'true'

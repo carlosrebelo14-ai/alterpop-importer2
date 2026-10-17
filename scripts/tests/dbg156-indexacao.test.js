@@ -196,22 +196,26 @@ check("mutação: citar db_push_only de novo no cabeçalho faz a verificação f
   assert.throws(() => cabecalhoLimpo(srcCheck.replace("Corre na Fly", "Corre na Fly (db_push_only)")));
 });
 
-console.log("(e) deploy.yml: a espera vem antes do flyctl deploy");
-const DEPLOY = path.join(ROOT, ".github", "workflows", "deploy.yml");
-const PASSO_ESPERA = "      - name: Esperar indexação antes do deploy (esperar_indexacao)\n        if: env.SKIP_DEPLOY != 'true'\n        run: bash scripts/ci/maintenance.sh esperar_indexacao dry-run\n\n";
-/** O passo de espera existe, corre esperar_indexacao, não tem continue-on-error e vem antes do deploy. */
-function verificarEsperaAntesDoDeploy(yml) {
-  const code = yml.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
-  const i = code.indexOf("bash scripts/ci/maintenance.sh esperar_indexacao dry-run");
-  assert.ok(i >= 0, "o passo de espera em falta");
-  assert.doesNotMatch(code.slice(Math.max(0, i - 200), i + 200), /continue-on-error/);
-  assert.ok(i < code.indexOf("scripts/deploy.sh"), "a espera tem de vir antes do deploy");
+console.log("(e) deploy.sh: a espera vem antes do flyctl deploy; o deploy.yml não tem uma segunda");
+const DEPLOY_SCRIPT = path.join(ROOT, "scripts", "deploy.sh");
+const DEPLOY_YML = path.join(ROOT, ".github", "workflows", "deploy.yml");
+const BLOCO_ESPERA = 'if ! bash scripts/ci/maintenance.sh esperar_indexacao dry-run; then\n  fail "espera: indexação a decorrer ao fim de 15 min, ou estado ilegível. Repetir quando acabar (docs/runbook-deploy.md)."\nfi\n';
+/** A espera corre esperar_indexacao e vem antes do exec flyctl deploy. */
+function verificarEsperaAntesDoFlyctl(sh) {
+  const i = sh.indexOf("bash scripts/ci/maintenance.sh esperar_indexacao dry-run");
+  assert.ok(i >= 0, "a espera em falta no deploy.sh");
+  assert.ok(i < sh.indexOf("exec flyctl deploy"), "a espera tem de vir antes do flyctl deploy");
 }
-const srcDeploy = fs.readFileSync(DEPLOY, "utf8");
-check("o passo de espera existe e vem antes do deploy", () => verificarEsperaAntesDoDeploy(srcDeploy));
-check("mutação: tirar a espera do deploy.yml faz a verificação falhar", () => {
-  assert.ok(srcDeploy.includes(PASSO_ESPERA), "o passo de espera não tem a forma esperada");
-  assert.throws(() => verificarEsperaAntesDoDeploy(srcDeploy.replace(PASSO_ESPERA, "")));
+/** O workflow não pode ter uma segunda espera: a única é a do deploy.sh. */
+function semSegundaEsperaNoWorkflow(yml) {
+  assert.doesNotMatch(yml, /esperar_indexacao/, "o deploy.yml não pode ter uma segunda espera");
+}
+const srcDeployScript = fs.readFileSync(DEPLOY_SCRIPT, "utf8");
+check("a espera está no deploy.sh, antes do flyctl deploy", () => verificarEsperaAntesDoFlyctl(srcDeployScript));
+check("o deploy.yml não tem passo de espera", () => semSegundaEsperaNoWorkflow(fs.readFileSync(DEPLOY_YML, "utf8")));
+check("mutação: tirar a espera do deploy.sh faz a verificação falhar", () => {
+  assert.ok(srcDeployScript.includes(BLOCO_ESPERA), "o bloco da espera não tem a forma esperada");
+  assert.throws(() => verificarEsperaAntesDoFlyctl(srcDeployScript.replace(BLOCO_ESPERA, "")));
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });

@@ -9,7 +9,8 @@
 #   1. branch atual é main;
 #   2. working tree limpo (sem alterações nem ficheiros por seguir fora do .gitignore);
 #   3. depois de git fetch, main igual a origin/main (nem à frente, nem atrás);
-#   4. test:franchise, test:sync-safety e test:health-gate passam.
+#   4. test:franchise, test:sync-safety e test:health-gate passam;
+#   5. não há indexação do catálogo a decorrer na Fly (espera até 15 min, DBG-156).
 # A guarda 2 volta a correr depois das suites: nada do que as suites deixem no disco
 # entra na imagem.
 #
@@ -68,4 +69,13 @@ echo "[deploy] guarda 4 ok — ${SUITES[*]}"
 check_clean "depois das suites"
 
 echo "[deploy] vai para produção: $(git log -1 --format='%H %s')"
+
+# DBG-156: o flyctl deploy reinicia a máquina, e uma indexação a decorrer não pode ser cortada a meio.
+# Espera até 15 min com a mesma sonda do catalog_health. Sem fim, sai aqui, sem chamar o flyctl.
+# Fica neste script para correr também no deploy manual.
+if ! bash scripts/ci/maintenance.sh esperar_indexacao dry-run; then
+  fail "espera: indexação a decorrer ao fim de 15 min, ou estado ilegível. Repetir quando acabar (docs/runbook-deploy.md)."
+fi
+echo "[deploy] espera ok — sem indexação a decorrer"
+
 exec flyctl deploy -a "$APP"

@@ -5,8 +5,19 @@ Este ficheiro não existia no repositório. Foi criado em 17/10 com a regra da D
 ## Antes do deploy
 
 - `main` tem o PR que se quer publicar, e o CI está verde.
-- Não há indexação a correr. A partir do PR 1 (DBG-156), o workflow `deploy` espera até 15 min antes de chamar `flyctl deploy`, e falha sem fazer deploy se a indexação não acabar.
-- O deploy só corre com o ok do arquiteto e a aprovação do Carlos no environment `production`.
+- Não há indexação a correr. A partir do PR 1 (DBG-156), o `scripts/deploy.sh` espera até 15 min, logo antes do `flyctl deploy`, com a mesma sonda do `catalog_health`. Se a indexação não acabar, o deploy para sem chamar o `flyctl`. Vale também para o deploy manual, `bash scripts/deploy.sh`.
+- O deploy só corre com o ok do arquiteto e a aprovação do Carlos no environment `production`. O job `deploy` tem 90 min de limite.
+
+## Se a espera ou o gate falharem com erro de ssh
+
+- Uma falha de `flyctl ssh` (estado ilegível, código 2) na espera antes do deploy, ou no `catalog_health`, resolve-se repetindo o passo. Não se mexe em mais nada: não há estado a limpar, e o deploy não correu.
+- A falha é fechada de propósito. Sem leitura do estado, o deploy não avança.
+
+## Risco que sobra (ronda 2: DBG-154 e DBG-155)
+
+- Uma indexação que arranca depois da espera, durante o build e o rollout da Fly, não é vista. O `flyctl deploy` reinicia a máquina e pode matar o worker a meio.
+- Um worker morto não escreve estado final. O ficheiro de estado fica em `running`. Efeitos: o gate e o `db:push` recusam até um run novo acabar e limpar o estado, e o catálogo fica meio reconstruído, porque `canResumeCatalogRebuild` só aceita `failed` ou `interrupted`.
+- Sinal: `catalog_health` falha depois do deploy com V5, V6 e V7, ou `indexing_status` mostra `running` sem worker vivo. Ação: não repetir o deploy. Tratar o estado com o arquiteto.
 
 ## Se o gate `catalog_health` do deploy der vermelho
 

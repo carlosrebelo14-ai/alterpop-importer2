@@ -15,6 +15,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEPLOY_SH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "deploy.sh");
+const MAINTENANCE_SH = path.resolve(path.dirname(DEPLOY_SH), "ci", "maintenance.sh");
+const CHECK_NO_INDEXING = path.resolve(path.dirname(DEPLOY_SH), "maintenance", "check-no-indexing.mjs");
 
 let failures = 0;
 function check(name, fn) {
@@ -57,6 +59,8 @@ function setupRepo(opts = {}) {
   const work = path.join(root, "work");
   const bin = path.join(root, "bin");
   const marker = path.join(root, "flyctl-called");
+  const busy = path.join(root, "busy");
+  const illegible = path.join(root, "ilegivel");
 
   git(root, "init", "-q", "--bare", "-b", "main", origin);
   git(root, "init", "-q", "-b", "main", work);
@@ -68,26 +72,45 @@ function setupRepo(opts = {}) {
   if (opts.suiteLeavesFile) scripts["test:health-gate"] = `node -e "require('fs').writeFileSync('leftover.txt','x')"`;
   fs.writeFileSync(path.join(work, "package.json"), JSON.stringify({ name: "t", private: true, scripts }, null, 2));
   fs.writeFileSync(path.join(work, ".gitignore"), "ignored.txt\n");
-  fs.mkdirSync(path.join(work, "scripts"));
-  fs.copyFileSync(DEPLOY_SH, path.join(work, "scripts", "deploy.sh"));
+  fs.mkdirSync(path.join(work, "scripts", "ci"), { recursive: true });
+  fs.mkdirSync(path.join(work, "scripts", "maintenance"));
+  fs.writeFileSync(path.join(work, "scripts", "deploy.sh"), opts.deployScript ?? fs.readFileSync(DEPLOY_SH, "utf8"));
+  // DBG-156: a espera de indexação corre o maintenance.sh e a sonda, por isso ambos entram no repo temporário.
+  fs.copyFileSync(MAINTENANCE_SH, path.join(work, "scripts", "ci", "maintenance.sh"));
+  fs.copyFileSync(CHECK_NO_INDEXING, path.join(work, "scripts", "maintenance", "check-no-indexing.mjs"));
   fs.writeFileSync(path.join(work, "README.md"), "x\n");
   git(work, "add", "-A");
   git(work, "commit", "-q", "-m", "init");
   git(work, "remote", "add", "origin", origin);
   git(work, "push", "-q", "-u", "origin", "main");
 
+  // flyctl falso. `ssh` é a sonda da espera: sai livre, ou com indexação (ficheiro busy), ou ilegível
+  // (ficheiro ilegivel). Não escreve no marcador. Qualquer outro comando (o deploy) regista-se nele.
   fs.mkdirSync(bin);
   const fake = path.join(bin, "flyctl");
-  fs.writeFileSync(fake, `#!/bin/sh\necho "$@" > "${marker}"\n`);
+  fs.writeFileSync(
+    fake,
+    [
+      "#!/bin/sh",
+      'if [ "$1" = "ssh" ]; then',
+      `  if [ -f "${illegible}" ]; then echo "erro de ssh" >&2; exit 3; fi`,
+      `  if [ -f "${busy}" ]; then echo "[check-no-indexing] INDEXAÇÃO A DECORRER"; exit 1; fi`,
+      "  exit 0",
+      "fi",
+      `echo "$@" > "${marker}"`,
+      "",
+    ].join("\n")
+  );
   fs.chmodSync(fake, 0o755);
 
-  return { root, origin, work, bin, marker };
+  return { root, origin, work, bin, marker, busy, illegible };
 }
 
 function runDeploy(repo) {
   const r = spawnSync("bash", ["scripts/deploy.sh"], {
     cwd: repo.work,
-    env: { ...GIT_ENV, PATH: `${repo.bin}:${process.env.PATH}` },
+    // Janela da espera em zero: o teste não pode dormir 15 min.
+    env: { ...GIT_ENV, PATH: `${repo.bin}:${process.env.PATH}`, WAIT_STEP_SECONDS: "0", WAIT_MAX_ATTEMPTS: "2", GATE_REPEAT_SECONDS: "0" },
     encoding: "utf8",
   });
   return { status: r.status, out: r.stdout + r.stderr, flyctl: fs.existsSync(repo.marker) ? fs.readFileSync(repo.marker, "utf8").trim() : null };
@@ -109,6 +132,27 @@ check("tudo certo — corre flyctl deploy -a alterpop-importer-app e imprime o c
   assert.equal(r.flyctl, "deploy -a alterpop-importer-app");
   const sha = git(repo.work, "rev-parse", "HEAD");
   assert.match(r.out, new RegExp(`vai para produção: ${sha} init`));
+});
+
+check("espera (DBG-156) — indexação a decorrer ao fim da espera → recusado, flyctl deploy não é chamado", () => {
+  const repo = setupRepo();
+  fs.writeFileSync(repo.busy, "");
+  assertRefused(runDeploy(repo), /espera: indexação a decorrer ao fim de 15 min/);
+});
+check("espera (DBG-156) — estado da indexação ilegível → recusado, flyctl deploy não é chamado", () => {
+  const repo = setupRepo();
+  fs.writeFileSync(repo.illegible, "");
+  assertRefused(runDeploy(repo), /espera: indexação a decorrer ao fim de 15 min, ou estado ilegível/);
+});
+check("mutação: deploy.sh sem a espera chama o flyctl com indexação a decorrer — o caso acima tem de ficar vermelho", () => {
+  const original = fs.readFileSync(DEPLOY_SH, "utf8");
+  const semEspera = original.replace(/if ! bash scripts\/ci\/maintenance\.sh esperar_indexacao dry-run; then\n[^\n]*\nfi\n/, "");
+  assert.notEqual(semEspera, original, "a mutação não se aplicou");
+  const repo = setupRepo({ deployScript: semEspera });
+  fs.writeFileSync(repo.busy, "");
+  const r = runDeploy(repo);
+  assert.equal(r.flyctl, "deploy -a alterpop-importer-app", "o mutante tem de chamar o flyctl deploy");
+  assert.throws(() => assertRefused(r, /espera: indexação/));
 });
 
 check("guarda 1 — branch que não é main → recusado", () => {
