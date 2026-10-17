@@ -9,6 +9,7 @@ import {
   readCatalogRebuildStatus,
 } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { runApprovedShopifySync } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
+import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import { syncPublishedStockLevels } from "../../lib/importer/shopify/publishedStockSync.server.js";
 import { isShopifySyncRunning } from "../../lib/importer/shopify/shopifySyncJob.server.js";
 import { listApprovedSkusForShopifySync } from "../../lib/curation/curationQueue.server.js";
@@ -212,12 +213,19 @@ export const action = async ({ request }) => {
       }
 
       if (!settingsError) {
-        console.log("[trigger-sync] a publicar aprovados…");
-        try {
-          await runApprovedShopifySync(session, { skipInit: true });
-          console.log("[trigger-sync] publicação de aprovados concluída.");
-        } catch (err) {
-          console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
+        // DBG-105: a reserva é tomada logo antes da chamada, sem await pelo meio. Se a publicação manual já a tem,
+        // o ciclo salta a publicação de aprovados.
+        const reserva = tentarReservarPublicacao();
+        if (reserva) {
+          console.log("[trigger-sync] a publicar aprovados…");
+          try {
+            await runApprovedShopifySync(session, { skipInit: true, reserva });
+            console.log("[trigger-sync] publicação de aprovados concluída.");
+          } catch (err) {
+            console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
+          }
+        } else {
+          console.log("[trigger-sync] publicação de aprovados saltada: já há uma publicação em curso.");
         }
       }
 
