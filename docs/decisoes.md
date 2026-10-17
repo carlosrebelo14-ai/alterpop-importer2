@@ -357,3 +357,13 @@ D5, D8, D14, D16, D17, D32, D41, D43 e D46, como ficaram na secção 11 do plano
 A regra de não correr o reset em produção mantém-se até o PR 2b-3 estar em produção.
 
 **Referência cruzada:** Decisões 13, 28, 30, 33 e 34; plano `docs/planos/plano-2b.md`; relatório `docs/relatorios/debug-geral-14-10-2026.md`.
+
+## Decisão 36 — veto ao reindex completo até ao 2b-3
+
+**Data:** 2026-10-17
+**Estado:** fechada pelo arquiteto. Vale até o PR 2b-3 estar em produção.
+**Origem:** DBG-155 em `docs/relatorios/debug-geral-14-10-2026.md`.
+
+`scripts/catalog/full-catalog-reindex.js` não corre em produção, nem com `RESUME=1`. Motivo: escreve o estado da app sem marcador de atividade e sem lock, e pode deixar `running` com `indexing: true` no ficheiro de estado. Isso bloqueia o db:push e impede a retoma.
+
+O veto fica ao lado do de `scripts/catalog/run-approved-sync.js` (DBG-142). Esse veto está registado em `docs/execucoes.md`, e não neste ficheiro. Os três (reindex completo, `run-approved-sync.js` e reset) ficam proibidos em produção até ao 2b-3.

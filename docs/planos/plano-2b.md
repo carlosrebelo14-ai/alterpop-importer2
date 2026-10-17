@@ -694,3 +694,36 @@ As perguntas acima ficam respondidas por esta secção. Estas decisões são as 
    - O apagado no admin da Shopify grava origem `humano`, com o campo fonte `admin-shopify`.
    - Um undo sobre item apagado no admin, com snapshot APPROVED ou REJECTED, fica `skipped` com o motivo "apagado no admin". Não é erro geral, e os restantes itens do lote seguem.
    - Testes para os dois casos. Mutação: deixar o undo repor o item. Tem de ficar vermelho.
+
+## 13. Plano do PR 2b-3 (sem código)
+
+**Estado:** plano para aprovação do arquiteto. Nenhum código escrito. Base: `main` em `e575971`. Até aqui o 2b-3 aparecia só como destino de itens: DBG-30 na tabela de branches, DBG-72 nas decisões de 16/10, e DBG-140 a DBG-142 no relatório. Esta secção junta-os e acrescenta DBG-152, DBG-154, DBG-155 e o campo `lastFailure`.
+
+**Âmbito**
+
+1. **`lastFailure` no ficheiro de estado.** Campo `{at, causa, error}`, gravado no fim de cada corrida falhada. O `completed` não o apaga, e a corrida seguinte também não. Só o substitui outra falha. Hoje o `completed` limpa `error` (`indexingStream.server.js:277`), e o erro de uma falha desaparece no primeiro flush da corrida seguinte (DBG-152).
+   - `causa` é a classe da lista fechada que o `indexing_status` já usa: `fila`, `worker_saiu`, `worker_morto`, `marcador`, `ilegivel` ou `outra`.
+   - `error` fica como texto no ficheiro de estado, e nunca sai para logs nem resumos.
+   - O V16 e o `indexing_status` mostram `causa` e `at`. Não mostram `error`.
+2. **DBG-152.** Além de `lastFailure`, a saída do worker com código passa a ser classificada como `worker_saiu`, em vez do código genérico. Ficam por verificar dois casos: saída antes do `try` (`lib/workers/catalog-index-worker.mjs:5-11`) e saída antes de a mensagem `done` chegar (`:82-93`).
+3. **DBG-154.** Escritas do estado com lock de ficheiro, no padrão de `curationQueueFileLock.server.js`. O flush devolve o resultado, e `finishDone` e `finishFailed` tratam a falha. `scripts/maintenance/check-no-indexing.mjs` passa a tratar um objeto sem `state` nem `indexing` como ilegível (código 2), em vez de passar com 0.
+4. **DBG-155.** `full-catalog-reindex.js` recusa-se com marcador de atividade vivo, e grava `failed` com flush antes do `process.exit(1)`. `catalog-purge-reindex.js` espera a promessa real de `startCatalogCleanupInBackground` e lê o estado depois de o purge acabar. O marcador de atividade nasce antes do fork em `startCatalogIndexingWorker`. Veto até lá: Decisão 36.
+
+**Já no 2b-3 antes deste PR.** DBG-30 e DBG-72, e DBG-140, DBG-141 e DBG-142 do relatório. Não mudam aqui.
+
+**Fora do âmbito.** DBG-153 (rótulo do relatório da purga, PR à parte). As corridas de milissegundos de DBG-154 ficam num DBG próprio, Baixa.
+
+**Decisões pedidas ao arquiteto antes do código**
+
+- Confirmar que `error` fica como texto no ficheiro de estado, sem sair para logs. Proposta: sim.
+- Confirmar que `check-no-indexing.mjs` sai com 2 para um objeto sem `state` nem `indexing`. Muda o portão do db:push e do deploy.
+
+**Testes propostos**
+
+- Corrida falhada grava `lastFailure`. Corrida `completed` seguinte mantém-no. Falha seguinte substitui-o. Mutação: não gravar `lastFailure` no `completed`. Tem de ficar vermelho.
+- Duas escritas concorrentes (app e worker) não perdem o `completed`. Mutação: retirar o lock. Tem de ficar vermelho.
+- Um flush que falha não deixa `finishDone` dizer concluído. Mutação: voltar a ignorar o resultado. Tem de ficar vermelho.
+- `check-no-indexing.mjs` com objeto sem `state` sai com 2.
+- `full-catalog-reindex.js` com marcador vivo recusa-se. Mutação: retirar a guarda. Tem de ficar vermelho.
+
+**Gate.** As suítes de `scripts/deploy.sh` e de `tests.yml`: `test:franchise`, `test:sync-safety`, `test:health-gate` e `test:deploy`. Deploy só com o ok do arquiteto e a aprovação do Carlos.
