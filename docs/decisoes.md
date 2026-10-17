@@ -377,3 +377,30 @@ O veto fica ao lado do de `scripts/catalog/run-approved-sync.js` (DBG-142). Esse
 A tarefa `db_push` do workflow `maintenance`, em modo `execute`, fica vetada. O gate do `db_push` faz uma só sonda (`scripts/ci/maintenance.sh:271` e `:85`). O arranque da indexação não escreve `running` em disco antes do primeiro progresso com debounce, e a fase `clearing` apaga o catálogo nesse intervalo. Um db:push pode correr durante o clearing.
 
 Não existe input `db_push_only`. O `.github/workflows/deploy.yml` só tem `skip_deploy`, e não corre db:push. O comentário de `scripts/maintenance/check-no-indexing.mjs:5` que cita `db_push_only` está desatualizado, e fica para correção no 2b-3. O `catalog_health` do deploy usa a mesma sonda, mas só lê, por isso não entra neste veto.
+
+## Decisão 38 — respostas do arquiteto ao plano de execução do 2b-3
+
+**Data:** 2026-10-17
+**Estado:** fechada pelo arquiteto. Rondas e vetos abaixo.
+**Origem:** plano `docs/planos/plano-2b.md`, secções 13 e 14, e DBG-142, DBG-152 a DBG-156.
+
+a) O `error` fica como texto no ficheiro de estado, e nunca sai para logs nem resumos.
+
+b) `check-no-indexing.mjs` sai com 2 quando o objeto não tem `state` nem `indexing`.
+
+c) A sonda repetida do gate espera até 15 s, em passos de 1 s.
+
+d) O `catalog_health` do deploy não fica vetado. Só lê. Se o gate der vermelho, repete-se o `catalog_health` à mão depois de a indexação acabar. A regra está em `docs/runbook-deploy.md`.
+
+e) O PR 6 (DBG-142) sai do 2b-3. O `scripts/catalog/run-approved-sync.js` fica vetado até haver exclusão real entre processos. O DBG-142 passa para o 2c.
+
+**Ajuste ao PR 1.** Antes do `flyctl deploy` no `deploy.yml`, uma espera com a mesma sonda repetida. Se houver indexação a correr, espera até 15 min e falha sem chamar o deploy se não acabar. Motivo: o deploy de 08:27 reiniciou a máquina sem verificar. Teste: indexação ativa faz com que o deploy não seja chamado. Mutação: tirar a espera, tem de ficar vermelho.
+
+**Rondas.** Cada PR passa pelo arquiteto antes do merge, com a regra de convergência. Cada deploy tem o gate do Carlos.
+
+- Ronda 1: PR 0 (DBG-153) e PR 1 (DBG-156, com o ajuste). Um deploy. Levanta a Decisão 37 depois de verificado.
+- Ronda 2: PR 2 (DBG-154) e PR 3 (DBG-152). Um deploy.
+- Ronda 3: PR 4 (DBG-155) e PR 5 (DBG-140 e DBG-141). Um deploy. Levanta a Decisão 36.
+- Ronda 4: PR 7 (DBG-72 e DBG-30), sozinho. Levanta o veto ao reset só depois de verificado em produção.
+
+**Pendente, não bloqueia.** Diferença de 140 entre 26087 indexados e 26227 no catálogo. O PR 3 confirma se é `totalRejected` da última corrida, e mostra esse número no `indexing_status`. V5 está verde.

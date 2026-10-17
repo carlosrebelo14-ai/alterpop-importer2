@@ -710,11 +710,11 @@ As perguntas acima ficam respondidas por esta secção. Estas decisões são as 
 4. **DBG-155.** `full-catalog-reindex.js` recusa-se com marcador de atividade vivo, e grava `failed` com flush antes do `process.exit(1)`. `catalog-purge-reindex.js` espera a promessa real de `startCatalogCleanupInBackground` e lê o estado depois de o purge acabar. O marcador de atividade nasce antes do fork em `startCatalogIndexingWorker`. Veto até lá: Decisão 36.
 5. **DBG-156.** Flush imediato de `running` antes do fork (`indexingStream.server.js:194-205`), e gate com sonda repetida durante alguns segundos (`maintenance.sh:80-91`). Veto ao `db_push` até lá: Decisão 37.
 
-**Já no 2b-3 antes deste PR.** DBG-30 e DBG-72, e DBG-140, DBG-141 e DBG-142 do relatório. Não mudam aqui.
+**Já no 2b-3 antes deste PR.** DBG-30 e DBG-72, e DBG-140 e DBG-141 do relatório. Não mudam aqui. DBG-142 passa para o 2c (Decisão 38).
 
 **Fora do âmbito.** DBG-153 (rótulo do relatório da purga, PR à parte). As corridas de milissegundos de DBG-154 ficam num DBG próprio, Baixa.
 
-**Decisões pedidas ao arquiteto antes do código**
+**Decisões pedidas ao arquiteto antes do código** (respondidas em 17/10, ver Decisão 38)
 
 - Confirmar que `error` fica como texto no ficheiro de estado, sem sair para logs. Proposta: sim.
 - Confirmar que `check-no-indexing.mjs` sai com 2 para um objeto sem `state` nem `indexing`. Muda o portão do db:push e do deploy.
@@ -729,3 +729,30 @@ As perguntas acima ficam respondidas por esta secção. Estas decisões são as 
 - DBG-156: o `running` está no disco antes de o fork arrancar. Mutação: retirar o flush antes do fork. Tem de ficar vermelho. Um gate com a sonda em 0 nos primeiros segundos repete a sonda. Mutação: voltar à sonda única. Tem de ficar vermelho.
 
 **Gate.** As suítes de `scripts/deploy.sh` e de `tests.yml`: `test:franchise`, `test:sync-safety`, `test:health-gate` e `test:deploy`. Deploy só com o ok do arquiteto e a aprovação do Carlos.
+
+## 14. Execução do 2b-3: rondas e PRs (aprovada em 17/10)
+
+**Base.** Decisão 38. Cada PR passa pelo arquiteto antes do merge, com a regra de convergência. Cada deploy tem o gate do Carlos. Gate de cada PR: `test:franchise`, `test:sync-safety`, `test:health-gate` e `test:deploy`, mais as mutações do PR.
+
+**Ronda 1**
+
+- **PR 0, DBG-153.** Rótulo do relatório da purga, com a divisão por motivo. Não muda contagens.
+- **PR 1, DBG-156.** Flush de `running` antes do fork. Sonda repetida no gate, até 15 s em passos de 1 s. Correção do comentário de `check-no-indexing.mjs`. Espera antes do `flyctl deploy` no `deploy.yml`: se houver indexação, espera até 15 min e falha sem chamar o deploy se não acabar. Atualiza `deploy-workflow.test.js`, que pina os passos. Teste: indexação ativa faz com que o deploy não seja chamado. Mutação: tirar a espera, tem de ficar vermelho. Depois de verificado, levanta a Decisão 37.
+
+**Ronda 2**
+
+- **PR 2, DBG-154.** Lock nas escritas do estado, flush com resultado, `finishDone` e `finishFailed` tratam a falha, e `check-no-indexing.mjs` sai com 2 sem `state` nem `indexing`. Testes: escritas concorrentes não perdem o `completed`; flush com erro não deixa dizer concluído; objeto sem `state` sai com 2. Mutação em cada um.
+- **PR 3, DBG-152.** `lastFailure {at, causa, error}`, com `error` como texto no ficheiro e fora de logs. Classe `worker_saiu`. V16 e `indexing_status` mostram `causa` e `at`. Confirma se a diferença de 140 é o `totalRejected` da última corrida, e mostra esse número no `indexing_status`. Testes: falha grava, `completed` mantém, nova falha substitui; V16 e `indexing_status` não mostram `error`. Mutação em cada um.
+
+**Ronda 3**
+
+- **PR 4, DBG-155.** `full-catalog-reindex.js` recusa com marcador vivo e grava `failed` antes do `exit`. `catalog-purge-reindex.js` espera a promessa real e lê o estado depois do fim. Testes e mutações em cada guarda. Depois de verificado, levanta a Decisão 36.
+- **PR 5, DBG-140 e DBG-141.** Reset recusa durante a publicação do ciclo. Publicação manual recusa durante a indexação. Testes com 409 e mutação em cada um.
+
+**Ronda 4**
+
+- **PR 7, DBG-72 e DBG-30.** Sozinho. Levanta o veto ao reset só depois de verificado em produção.
+
+**Fora do 2b-3**
+
+- **DBG-142.** Script CLI de publicação sem exclusão real entre processos. Passa para o 2c. O `run-approved-sync.js` fica vetado até haver exclusão real entre processos (Decisão 38).
