@@ -131,19 +131,19 @@ await caso("quatro processos a escrever o mesmo estado não perdem chaves", asyn
 await caso("mutação: sem lock e com uma janela na leitura-escrita perde chaves (o caso acima tem de ficar vermelho)", async () => {
   // Lock trocado por um titular falso, e uma pausa entre ler o ficheiro e escrevê-lo. A pausa só aumenta a
   // janela da corrida: em produção não existe.
-  const m = mutante(
-    "lib/importer/catalog/catalogRebuildStatus.server.js",
-    "sem-lock",
-    "    titular = await adquirirLockDoFicheiro(`${ficheiro}.lock`, { prazoMs: PRAZO_LOCK_ESTADO_MS });",
-    '    titular = { lockPath: `${ficheiro}.lock`, token: "sem-lock", timer: null, renovando: null, perdido: false };'
-  );
+  const m = mutanteVarios("lib/importer/catalog/catalogRebuildStatus.server.js", "sem-lock", [
+    [
+      "    titular = await adquirirLockDoFicheiro(`${ficheiro}.lock`, {\n      prazoMs: PRAZO_LOCK_ESTADO_MS,\n      rotulo: \"[estado] espera esgotada: estado da indexação ocupado\",\n    });",
+      '    titular = { lockPath: `${ficheiro}.lock`, token: "sem-lock", timer: null, renovando: null, perdido: false };',
+    ],
+    ["    if (!(await titularAindaTemLock(titular))) {", "    if (false) {"],
+    [
+      "    const prev = await lerEstadoParaEscrita(ficheiro);",
+      "    const prev = await lerEstadoParaEscrita(ficheiro);\n    await new Promise((r) => setTimeout(r, 3));",
+    ],
+  ]);
   try {
     fs.rmSync(DIR_INDEX, { recursive: true, force: true });
-    const texto = fs.readFileSync(m.caminho, "utf8")
-      .replace("    if (!(await titularAindaTemLock(titular))) {", "    if (false) {")
-      .replace("    const novo = { ...(await lerEstadoParaEscrita(ficheiro)), ...atualizacao };",
-        "    const lido = await lerEstadoParaEscrita(ficheiro);\n    await new Promise((r) => setTimeout(r, 3));\n    const novo = { ...lido, ...atualizacao };");
-    fs.writeFileSync(m.caminho, texto);
     const mutado = await modulo(path.relative(RAIZ, m.caminho));
     assert.ok(mutado, "o mutante carrega");
     const perdidas = ESPERADO - (await escreverEmParalelo(m.caminho, `${SHOP}.mut`));
@@ -384,6 +384,118 @@ await caso("mutação: sem libertar a reserva, o arranque seguinte fica preso ao
   } finally {
     desbloquearEscrita();
     m.apagar();
+  }
+});
+
+// ---------- (g) DBG-154: timer atrasado contra o flush do fim ----------
+console.log("(g) DBG-154: timer atrasado não grava running sobre um estado terminal");
+const lockModulo = await modulo("lib/curation/curationQueueFileLock.server.js");
+const ESPERA_TIMER_MS = 5300; // debounce de 5 s, e uma folga
+
+/** Como mutante(), mas com vários trechos trocados de uma vez. */
+function mutanteVarios(relativo, nome, pares) {
+  const origem = path.join(RAIZ, relativo);
+  let texto = fs.readFileSync(origem, "utf8");
+  for (const [antigo, novo] of pares) {
+    if (texto.split(antigo).length - 1 !== 1) throw new Error(`mutação ${nome}: o trecho tem de existir uma vez`);
+    texto = texto.replace(antigo, () => novo);
+  }
+  const destino = path.join(path.dirname(origem), `.mutante-${nome}-${process.pid}.mjs`);
+  fs.writeFileSync(destino, texto);
+  return { caminho: destino, apagar: () => fs.rmSync(destino, { force: true }) };
+}
+
+/**
+ * O timer dispara com a memória em running e fica à espera do lock. Enquanto espera, a memória passa a completed
+ * (é o que o flush do fim faz). Quando o lock sai, o disco tem de ficar completed. Com o snapshot tirado antes do
+ * lock, o disco ficava running.
+ */
+async function cenarioSnapshotDentroDoLock(m, shop) {
+  m.setInMemoryStatus(shop, { state: "running", indexing: true });
+  const titular = await lockModulo.adquirirLockDoFicheiro(`${ficheiroDoEstado(shop)}.lock`, { prazoMs: 60_000 });
+  m.writeCatalogRebuildStatus(shop, {});
+  await new Promise((r) => setTimeout(r, ESPERA_TIMER_MS));
+  m.setInMemoryStatus(shop, { state: "completed", indexing: false, finishedAt: new Date().toISOString() });
+  await lockModulo.libertarLockDoFicheiro(titular);
+  await new Promise((r) => setTimeout(r, 400));
+  return JSON.parse(fs.readFileSync(ficheiroDoEstado(shop), "utf8")).state;
+}
+
+/** O disco já está completed (flush do fim). A memória tem um running antigo. O timer não pode regredir o disco. */
+async function cenarioDefesaTerminal(m, shop) {
+  await m.flushCatalogRebuildStatus(shop, { state: "completed", indexing: false, finishedAt: "2026-10-17T18:00:00.000Z" });
+  m.setInMemoryStatus(shop, { state: "running", indexing: true });
+  m.writeCatalogRebuildStatus(shop, {});
+  await new Promise((r) => setTimeout(r, ESPERA_TIMER_MS + 400));
+  return JSON.parse(fs.readFileSync(ficheiroDoEstado(shop), "utf8")).state;
+}
+
+const PAR_SNAPSHOT = [
+  '    escreverEstadoComLock(shop, () => _memoryCache.get(shop) || {}, { origem: "timer" });',
+  '    escreverEstadoComLock(shop, _memoryCache.get(shop) || {}, { origem: "timer" });',
+];
+const PAR_DEFESA = [
+  '    if (origem === "timer" && ESTADOS_TERMINAIS.has(prev.state) && dados.state === "running") {',
+  "    if (false) {",
+];
+
+await caso("timer com a memória lida dentro do lock: o disco fica completed", async () => {
+  assert.equal(await cenarioSnapshotDentroDoLock(estado, "loja-timer-a.myshopify.com"), "completed");
+});
+await caso("timer atrasado não grava running sobre completed (defesa terminal)", async () => {
+  assert.equal(await cenarioDefesaTerminal(estado, "loja-timer-b.myshopify.com"), "completed");
+});
+await caso("mutação: snapshot antes do lock faz o primeiro caso ficar vermelho", async () => {
+  const m = mutanteVarios("lib/importer/catalog/catalogRebuildStatus.server.js", "snapshot-antigo", [PAR_SNAPSHOT]);
+  try {
+    const mutado = await modulo(path.relative(RAIZ, m.caminho));
+    const final = await cenarioSnapshotDentroDoLock(mutado, "loja-timer-a.mut.myshopify.com");
+    assert.equal(final, "running", "o mutante tem de gravar running, como o código antigo");
+    assert.throws(() => assert.equal(final, "completed"));
+  } finally {
+    m.apagar();
+  }
+});
+await caso("mutação: sem a defesa terminal faz o segundo caso ficar vermelho", async () => {
+  const m = mutanteVarios("lib/importer/catalog/catalogRebuildStatus.server.js", "sem-defesa", [PAR_DEFESA]);
+  try {
+    const mutado = await modulo(path.relative(RAIZ, m.caminho));
+    const final = await cenarioDefesaTerminal(mutado, "loja-timer-b.mut.myshopify.com");
+    assert.equal(final, "running", "o mutante tem de regredir o disco, como o código antigo");
+    assert.throws(() => assert.equal(final, "completed"));
+  } finally {
+    m.apagar();
+  }
+});
+await caso("mutação combinada: snapshot antigo e sem defesa fazem os dois casos ficarem vermelhos", async () => {
+  const m = mutanteVarios("lib/importer/catalog/catalogRebuildStatus.server.js", "combinada", [PAR_SNAPSHOT, PAR_DEFESA]);
+  try {
+    const mutado = await modulo(path.relative(RAIZ, m.caminho));
+    const a = await cenarioSnapshotDentroDoLock(mutado, "loja-timer-a.comb.myshopify.com");
+    const b = await cenarioDefesaTerminal(mutado, "loja-timer-b.comb.myshopify.com");
+    assert.equal(a, "running");
+    assert.equal(b, "running");
+    assert.throws(() => assert.equal(a, "completed"));
+    assert.throws(() => assert.equal(b, "completed"));
+  } finally {
+    m.apagar();
+  }
+});
+
+// ---------- (h) lock partilhado: rótulo da espera esgotada ----------
+console.log("(h) lock partilhado: rótulo da espera esgotada");
+await caso("espera esgotada no estado da indexação usa o seu rótulo; a curadoria mantém o texto antigo", async () => {
+  const lockPath = path.join(raiz, "rotulo", "x.lock");
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  const titular = await lockModulo.adquirirLockDoFicheiro(lockPath, { prazoMs: 60_000 });
+  try {
+    await assert.rejects(
+      lockModulo.adquirirLockDoFicheiro(lockPath, { prazoMs: 30, rotulo: "[estado] espera esgotada: estado da indexação ocupado" }),
+      /estado da indexação ocupado/
+    );
+    await assert.rejects(lockModulo.adquirirLockDoFicheiro(lockPath, { prazoMs: 30 }), /fila de curadoria ocupada/);
+  } finally {
+    await lockModulo.libertarLockDoFicheiro(titular);
   }
 });
 
