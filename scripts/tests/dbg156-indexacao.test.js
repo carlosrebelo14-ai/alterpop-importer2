@@ -104,23 +104,23 @@ function mutante(nome, antigo, novo) {
 }
 
 console.log("(a) indexingStream: o running vai para o disco antes do fork");
-const FLUSH = "  await flushCatalogRebuildStatus(shop, {});";
+// DBG-157/154: o flush é agora testado pelo resultado. A forma do código mudou, e o pin acompanha-a.
+const FLUSH = "if (!(await flushCatalogRebuildStatus(shop, {}))) {";
 /** O flush do running vem depois de setInMemoryStatus e antes do fork, dentro de startCatalogIndexingWorker. */
 function verificarFlushAntesDoFork(src) {
-  const inicio = src.indexOf("export async function startCatalogIndexingWorker(");
-  assert.ok(inicio >= 0, "startCatalogIndexingWorker em falta");
-  const bloco = src.slice(inicio, src.indexOf("child = fork(", inicio));
+  const inicio = src.indexOf("async function arrancarWorker(");
+  assert.ok(inicio >= 0, "arrancarWorker em falta");
+  const bloco = src.slice(inicio, src.indexOf("child = forkDoWorker(", inicio));
   const flush = bloco.indexOf(FLUSH);
   assert.ok(flush >= 0, "o running tem de ir para o disco antes do fork (DBG-156)");
-  const memoria = bloco.indexOf("setInMemoryStatus(shop, {");
-  assert.ok(memoria >= 0, "a memória tem de ter o running antes do flush (setInMemoryStatus em falta)");
-  assert.ok(memoria < flush, "o flush tem de vir depois de a memória ter o running");
+  // A escrita em memória do arranque tem de estar antes do flush. Há outra depois, na falha do flush.
+  assert.ok(bloco.slice(0, flush).includes("setInMemoryStatus(shop, {"), "setInMemoryStatus em falta antes do flush: a memória não tem o running");
 }
 const srcIndexing = fs.readFileSync(INDEXING, "utf8");
 check("o flush do running está antes do fork, depois da memória", () => verificarFlushAntesDoFork(srcIndexing));
 check("mutação: retirar o flush antes do fork faz a verificação falhar", () => {
   assert.ok(srcIndexing.includes(`${FLUSH}\n`), "o flush não existe no código");
-  assert.throws(() => verificarFlushAntesDoFork(srcIndexing.replace(`${FLUSH}\n`, "")));
+  assert.throws(() => verificarFlushAntesDoFork(srcIndexing.replace(FLUSH, "if (!(true)) {")));
 });
 check("mutação: retirar a escrita do running em memória faz a verificação falhar", () => {
   assert.ok(srcIndexing.includes("  setInMemoryStatus(shop, {"), "a escrita em memória não existe no código");
