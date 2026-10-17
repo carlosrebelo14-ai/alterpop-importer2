@@ -496,7 +496,7 @@ case "$TASK" in
       else
         bullets="$bullets"$'\n'"- Retidos por motivo: publicado_ou_erro **$(en motivo_publicado_ou_erro)**, apagado_no_admin **$(en motivo_apagado_no_admin)**, reset **$(en motivo_reset)**, decisao_humana **$(en motivo_decisao_humana)**, sem_entrada **$(en motivo_sem_entrada)**, sem_origem **$(en motivo_sem_origem)**."
       fi
-      KEY="$(en candidatos) sairiam, $(en retidos) retidos (decisão humana $(en retidos_decisao_humana))"
+      KEY="$(en candidatos) sairiam, $(en retidos) retidos"
     fi
     ;;
   indexing_status)

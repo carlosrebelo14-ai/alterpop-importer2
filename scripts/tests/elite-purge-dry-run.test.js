@@ -269,6 +269,15 @@ function verificarRotulo(resumo) {
   assert.match(resumo, /^- Retidos por motivo: .*decisao_humana \*\*30\*\*.*sem_origem \*\*2\*\*\.$/m, "a divisão por motivo tem de trazer decisao_humana");
 }
 
+/** DBG-153 (chave): a linha "Em resumo" tem candidatos e retidos. A decisão humana fica só na linha por motivo. */
+const CHAVE_NOVA = 'KEY="$(en candidatos) sairiam, $(en retidos) retidos"';
+const CHAVE_ANTIGA = 'KEY="$(en candidatos) sairiam, $(en retidos) retidos (decisão humana $(en retidos_decisao_humana))"';
+function verificarChave(resumo) {
+  const linha = resumo.split("\n").find((l) => l.startsWith("**Em resumo:**"));
+  assert.equal(linha, "**Em resumo:** 12 sairiam, 45 retidos", "a chave tem de ser candidatos e retidos, sem divisão");
+  assert.doesNotMatch(linha, /decisão humana/, "a chave não pode trazer decisão humana");
+}
+
 await check("execute é recusado para esta tarefa: código 64 e a Fly não é chamada", () => {
   const r = correrSh("elite_purge_dry_run", "execute", { saida: SAIDA_OK });
   assert.equal(r.status, 64, `código: ${r.status} (${r.stderr})`);
@@ -282,6 +291,7 @@ await check("run dry-run com flyctl falso: resumo em contagens, sem linha em bru
   assert.match(r.summaryText, /12 sairiam/);
   assert.match(r.summaryText, /PENDING \*\*8\*\*/);
   verificarRotulo(r.summaryText);
+  verificarChave(r.summaryText);
   assert.ok(!r.summaryText.includes(SEGREDO), "o resumo não pode ter a linha em bruto");
   assert.ok(!r.summaryText.includes("sku-real-123"), "o resumo não pode ter SKU");
   assert.ok(!r.stdout.includes(SEGREDO) && !r.stderr.includes(SEGREDO), "a consola não pode ter a linha em bruto");
@@ -305,6 +315,18 @@ await check("mutação: repor o rótulo antigo no maintenance.sh faz a verifica�
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.summaryText, /dos quais por decisão humana \*\*30\*\*/, "o mutante tem de sair com o rótulo antigo");
   assert.throws(() => verificarRotulo(r.summaryText), "a verificação tem de falhar com o rótulo antigo");
+});
+await check("mutação: repor a chave antiga no maintenance.sh faz a verificação falhar", () => {
+  assert.ok(sh.includes(CHAVE_NOVA), "a chave nova não existe no maintenance.sh");
+  const mutante = sh.replace(CHAVE_NOVA, () => CHAVE_ANTIGA);
+  assert.notEqual(mutante, sh, "a mutação não se aplicou");
+  const dir = fs.mkdtempSync(path.join(tmp, "mutante-chave-"));
+  const script = path.join(dir, "maintenance.sh");
+  fs.writeFileSync(script, mutante);
+  const r = correrSh("elite_purge_dry_run", "dry-run", { saida: SAIDA_OK, script });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.summaryText, /\*\*Em resumo:\*\* 12 sairiam, 45 retidos \(decisão humana 30\)/, "o mutante tem de sair com a chave antiga");
+  assert.throws(() => verificarChave(r.summaryText), "a verificação tem de falhar com a chave antiga");
 });
 await check("falha da tarefa: causa classificada, sem a saída bruta", () => {
   const r = correrSh("elite_purge_dry_run", "dry-run", { saida: "EPD: erro=fila_em_falta\n", rc: 1 });
