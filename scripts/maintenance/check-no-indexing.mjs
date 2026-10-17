@@ -51,7 +51,14 @@ try {
   process.exit(2);
 }
 
-const running = status?.state === "running" || status?.indexing === true;
+// DBG-154: um objeto sem state nem indexing não diz nada sobre a indexação. Passar com 0 seria um fail-open
+// no portão do db:push e do deploy. Sai com 2, como o JSON ilegível.
+if (!status || typeof status !== "object" || Array.isArray(status) || (status.state === undefined && status.indexing === undefined)) {
+  console.error(`[check-no-indexing] ${file} não tem state nem indexing. A falhar por segurança.`);
+  process.exit(2);
+}
+
+const running = status.state === "running" || status.indexing === true;
 if (!running) {
   console.log(`[check-no-indexing] estado "${status?.state ?? "idle"}", indexing=${status?.indexing === true}: nenhuma indexação a decorrer.`);
   process.exit(0);

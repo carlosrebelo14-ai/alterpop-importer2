@@ -741,7 +741,7 @@ As perguntas acima ficam respondidas por esta secção. Estas decisões são as 
 
 **Ronda 2**
 
-- **PR 2, DBG-154.** Lock nas escritas do estado, flush com resultado, `finishDone` e `finishFailed` tratam a falha, e `check-no-indexing.mjs` sai com 2 sem `state` nem `indexing`. Testes: escritas concorrentes não perdem o `completed`; flush com erro não deixa dizer concluído; objeto sem `state` sai com 2. Mutação em cada um. O flush do arranque (`flushCatalogRebuildStatus` antes do fork em `indexingStream.server.js`) engole erros hoje. Passa a impedir o fork se falhar.
+- **PR 2, DBG-154 e DBG-157.** DBG-154: lock de ficheiro nas escritas do estado, no padrão de `curationQueueFileLock.server.js`. Flush com resultado, `finishDone` e `finishFailed` tratam a falha, e `check-no-indexing.mjs` sai com 2 sem `state` nem `indexing`. DBG-157: reserva síncrona em memória antes do primeiro `await` do arranque, libertada em qualquer falha (flush, marcador, fork). Uma falha do flush do arranque impede o fork. Testes: escritas concorrentes não perdem o `completed`; flush com erro não deixa dizer concluído; objeto sem `state` sai com 2; dois arranques no mesmo tick dão um só fork; falha no flush liberta a reserva. Mutação em cada um.
 - **PR 3, DBG-152.** `lastFailure {at, causa, error}`, com `error` como texto no ficheiro e fora de logs. Classe `worker_saiu`. V16 e `indexing_status` mostram `causa` e `at`. Confirma se a diferença de 140 é o `totalRejected` da última corrida, e mostra esse número no `indexing_status`. Testes: falha grava, `completed` mantém, nova falha substitui; V16 e `indexing_status` não mostram `error`. Mutação em cada um.
 
 **Ronda 3**
