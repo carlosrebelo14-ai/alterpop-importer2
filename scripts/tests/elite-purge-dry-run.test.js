@@ -201,7 +201,7 @@ await check("o bloco do resumo não imprime SKU: só conta EPD:", () => {
 });
 
 /** flyctl falso: o comando remoto (argumento 6) vai para o log e a saída vem de FAKE_OUT. */
-function correrSh(task, phase, { saida, rc = 0 }) {
+function correrSh(task, phase, { saida, rc = 0, script = SCRIPT_SH }) {
   const dir = fs.mkdtempSync(path.join(tmp, "sh-"));
   const bin = path.join(dir, "flyctl");
   const log = path.join(dir, "log");
@@ -209,7 +209,7 @@ function correrSh(task, phase, { saida, rc = 0 }) {
   const summary = path.join(dir, "summary.md");
   fs.writeFileSync(out, saida);
   fs.writeFileSync(bin, '#!/bin/sh\necho "$6" >> "$FAKE_LOG"\ncat "$FAKE_OUT"\nexit "$FAKE_RC"\n', { mode: 0o755 });
-  const r = spawnSync("bash", [SCRIPT_SH, task, phase], {
+  const r = spawnSync("bash", [script, task, phase], {
     cwd: ROOT,
     encoding: "utf8",
     env: {
@@ -237,6 +237,12 @@ const SAIDA_OK = [
   "EPD: retidos=45",
   "EPD: retidos_decisao_humana=30",
   "EPD: retidos_outros_motivos=15",
+  "EPD: motivo_publicado_ou_erro=5",
+  "EPD: motivo_apagado_no_admin=4",
+  "EPD: motivo_reset=2",
+  "EPD: motivo_decisao_humana=30",
+  "EPD: motivo_sem_entrada=2",
+  "EPD: motivo_sem_origem=2",
   "EPD: sairiam_PENDING=8",
   "EPD: sairiam_APPROVED=3",
   "EPD: sairiam_REJECTED=1",
@@ -254,6 +260,24 @@ const SAIDA_OK = [
   `SEGREDO-DBG43-LINHA-EM-BRUTO ${SEGREDO} sku-real-123`,
 ].join("\n") + "\n";
 
+/** DBG-153: o total dos retidos tem linha própria, e a divisão por motivo vem na linha seguinte, sem 'dos quais'. */
+const LINHA_TOTAL = "- Retidos: **$(en retidos)**.";
+const LINHA_TOTAL_ANTIGA = "- Retidos: **$(en retidos)**, dos quais por decisão humana **$(en retidos_decisao_humana)** e por outros motivos **$(en retidos_outros_motivos)**.";
+function verificarRotulo(resumo) {
+  assert.match(resumo, /^- Retidos: \*\*45\*\*\.$/m, "o total dos retidos tem de vir numa linha própria");
+  assert.doesNotMatch(resumo, /dos quais|por outros motivos/, "o rótulo antigo não pode voltar");
+  assert.match(resumo, /^- Retidos por motivo: .*decisao_humana \*\*30\*\*.*sem_origem \*\*2\*\*\.$/m, "a divisão por motivo tem de trazer decisao_humana");
+}
+
+/** DBG-153 (chave): a linha "Em resumo" tem candidatos e retidos. A decisão humana fica só na linha por motivo. */
+const CHAVE_NOVA = 'KEY="$(en candidatos) sairiam, $(en retidos) retidos"';
+const CHAVE_ANTIGA = 'KEY="$(en candidatos) sairiam, $(en retidos) retidos (decisão humana $(en retidos_decisao_humana))"';
+function verificarChave(resumo) {
+  const linha = resumo.split("\n").find((l) => l.startsWith("**Em resumo:**"));
+  assert.equal(linha, "**Em resumo:** 12 sairiam, 45 retidos", "a chave tem de ser candidatos e retidos, sem divisão");
+  assert.doesNotMatch(linha, /decisão humana/, "a chave não pode trazer decisão humana");
+}
+
 await check("execute é recusado para esta tarefa: código 64 e a Fly não é chamada", () => {
   const r = correrSh("elite_purge_dry_run", "execute", { saida: SAIDA_OK });
   assert.equal(r.status, 64, `código: ${r.status} (${r.stderr})`);
@@ -266,10 +290,43 @@ await check("run dry-run com flyctl falso: resumo em contagens, sem linha em bru
   assert.match(r.calls[0], /node scripts\/maintenance\/elite-purge-dry-run\.mjs/);
   assert.match(r.summaryText, /12 sairiam/);
   assert.match(r.summaryText, /PENDING \*\*8\*\*/);
-  assert.match(r.summaryText, /decisão humana \*\*30\*\*/);
+  verificarRotulo(r.summaryText);
+  verificarChave(r.summaryText);
   assert.ok(!r.summaryText.includes(SEGREDO), "o resumo não pode ter a linha em bruto");
   assert.ok(!r.summaryText.includes("sku-real-123"), "o resumo não pode ter SKU");
   assert.ok(!r.stdout.includes(SEGREDO) && !r.stderr.includes(SEGREDO), "a consola não pode ter a linha em bruto");
+});
+await check("rótulo: a divisão por motivo vem numa linha própria, com n/d enquanto a app não tiver a formatação nova", () => {
+  const saida = SAIDA_OK.split("\n").filter((l) => !l.startsWith("EPD: motivo_")).join("\n");
+  const r = correrSh("elite_purge_dry_run", "dry-run", { saida });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.summaryText, /^- Retidos: \*\*45\*\*\.$/m);
+  assert.match(r.summaryText, /^- Retidos por motivo: \*\*n\/d\*\*/m);
+  assert.doesNotMatch(r.summaryText, /dos quais|por outros motivos/);
+});
+await check("mutação: repor o rótulo antigo no maintenance.sh faz a verificação falhar", () => {
+  assert.ok(sh.includes(LINHA_TOTAL), "a linha nova não existe no maintenance.sh");
+  const mutante = sh.replace(LINHA_TOTAL, () => LINHA_TOTAL_ANTIGA);
+  assert.notEqual(mutante, sh, "a mutação não se aplicou");
+  const dir = fs.mkdtempSync(path.join(tmp, "mutante-"));
+  const script = path.join(dir, "maintenance.sh");
+  fs.writeFileSync(script, mutante);
+  const r = correrSh("elite_purge_dry_run", "dry-run", { saida: SAIDA_OK, script });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.summaryText, /dos quais por decisão humana \*\*30\*\*/, "o mutante tem de sair com o rótulo antigo");
+  assert.throws(() => verificarRotulo(r.summaryText), "a verificação tem de falhar com o rótulo antigo");
+});
+await check("mutação: repor a chave antiga no maintenance.sh faz a verificação falhar", () => {
+  assert.ok(sh.includes(CHAVE_NOVA), "a chave nova não existe no maintenance.sh");
+  const mutante = sh.replace(CHAVE_NOVA, () => CHAVE_ANTIGA);
+  assert.notEqual(mutante, sh, "a mutação não se aplicou");
+  const dir = fs.mkdtempSync(path.join(tmp, "mutante-chave-"));
+  const script = path.join(dir, "maintenance.sh");
+  fs.writeFileSync(script, mutante);
+  const r = correrSh("elite_purge_dry_run", "dry-run", { saida: SAIDA_OK, script });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.summaryText, /\*\*Em resumo:\*\* 12 sairiam, 45 retidos \(decisão humana 30\)/, "o mutante tem de sair com a chave antiga");
+  assert.throws(() => verificarChave(r.summaryText), "a verificação tem de falhar com a chave antiga");
 });
 await check("falha da tarefa: causa classificada, sem a saída bruta", () => {
   const r = correrSh("elite_purge_dry_run", "dry-run", { saida: "EPD: erro=fila_em_falta\n", rc: 1 });

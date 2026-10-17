@@ -487,7 +487,7 @@ case "$TASK" in
     else
       bullets="- Produtos no catálogo: **$(en catalogo_total)**."
       bullets="$bullets"$'\n'"- Sairiam: **$(en candidatos)** (PENDING **$(en sairiam_PENDING)**, APPROVED **$(en sairiam_APPROVED)**, REJECTED **$(en sairiam_REJECTED)**, outros estados **$(en sairiam_outro)**)."
-      bullets="$bullets"$'\n'"- Retidos: **$(en retidos)**, dos quais por decisão humana **$(en retidos_decisao_humana)** e por outros motivos **$(en retidos_outros_motivos)**."
+      bullets="$bullets"$'\n'"- Retidos: **$(en retidos)**."
       bullets="$bullets"$'\n'"- Retidos por estado da fila: PUBLISHED **$(en retidos_PUBLISHED)**, SYNC_ERROR **$(en retidos_SYNC_ERROR)**, APPROVED **$(en retidos_APPROVED)**, PENDING **$(en retidos_PENDING)**, REJECTED **$(en retidos_REJECTED)**, sem entrada **$(en retidos_sem_entrada)**, outro **$(en retidos_outro)**."
       # Retidos por motivo. As linhas motivo_ vêm da formatação nova, que corre na imagem da app: só aparecem depois
       # de deploy. Antes disso não se mostram zeros, mostra-se n/d.
@@ -496,7 +496,7 @@ case "$TASK" in
       else
         bullets="$bullets"$'\n'"- Retidos por motivo: publicado_ou_erro **$(en motivo_publicado_ou_erro)**, apagado_no_admin **$(en motivo_apagado_no_admin)**, reset **$(en motivo_reset)**, decisao_humana **$(en motivo_decisao_humana)**, sem_entrada **$(en motivo_sem_entrada)**, sem_origem **$(en motivo_sem_origem)**."
       fi
-      KEY="$(en candidatos) sairiam, $(en retidos) retidos (decisão humana $(en retidos_decisao_humana))"
+      KEY="$(en candidatos) sairiam, $(en retidos) retidos"
     fi
     ;;
   indexing_status)
