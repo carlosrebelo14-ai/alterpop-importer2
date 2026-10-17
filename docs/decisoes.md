@@ -371,7 +371,7 @@ O veto fica ao lado do de `scripts/catalog/run-approved-sync.js` (DBG-142). Esse
 ## Decisão 37 — veto ao db:push até o DBG-156 estar em produção
 
 **Data:** 2026-10-17
-**Estado:** fechada pelo arquiteto. Vale até o DBG-156 estar em produção.
+**Estado:** levantada pelo arquiteto em 17/10, depois da ronda 1 verificada em produção (`fbf0a24`, deploy run `39055860291`). Registo em `docs/execucoes.md`.
 **Origem:** DBG-156 em `docs/relatorios/debug-geral-14-10-2026.md`.
 
 A tarefa `db_push` do workflow `maintenance`, em modo `execute`, fica vetada. O gate do `db_push` faz uma só sonda (`scripts/ci/maintenance.sh:271` e `:85`). O arranque da indexação não escreve `running` em disco antes do primeiro progresso com debounce, e a fase `clearing` apaga o catálogo nesse intervalo. Um db:push pode correr durante o clearing.

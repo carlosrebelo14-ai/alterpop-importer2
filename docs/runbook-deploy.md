@@ -28,7 +28,7 @@ Este ficheiro não existia no repositório. Foi criado em 17/10 com a regra da D
 
 ## Vetos ativos
 
-- Tarefa `db_push` em modo `execute`: até o DBG-156 estar em produção (Decisão 37).
+- ~~Tarefa `db_push` em modo `execute`~~: levantado em 17/10, DBG-156 em produção (Decisão 37, deploy run `39055860291`).
 - `scripts/catalog/full-catalog-reindex.js`: até o 2b-3 estar em produção (Decisão 36).
 - `scripts/catalog/run-approved-sync.js`: até haver exclusão real entre processos (Decisão 38, DBG-142 no 2c).
 - Reset: ver Decisão 35.
