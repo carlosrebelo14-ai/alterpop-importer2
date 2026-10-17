@@ -16,6 +16,7 @@ import {
 import { readDbDegraded } from "../../lib/health/dbDegraded.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
 import { atividadeAppEmCurso, motivoDeRecusaDoReset } from "../../lib/curation/atividadeApp.js";
+import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 
 const CONFIRM_WORD = "APAGAR";
 
@@ -115,9 +116,20 @@ export const action = async ({ request }) => {
     );
   }
 
+  // PR 5 (DBG-140): o reset toma a reserva da publicação, de forma síncrona. O ciclo publica sem gravar running,
+  // por isso o estado do job não o vê. A reserva vê o ciclo e a publicação manual. Sai no fim do reset.
+  const reserva = tentarReservarPublicacao();
+  if (!reserva) {
+    return Response.json(
+      { ok: false, error: "Aguarda que a publicação Shopify em curso termine antes do reset." },
+      { status: 409 }
+    );
+  }
+
   try {
     await loadOfflineSessionForShop(session.shop);
   } catch (err) {
+    reserva.libertar();
     const message =
       err instanceof ShopifyAuthSessionError
         ? err.message
@@ -125,8 +137,13 @@ export const action = async ({ request }) => {
     return Response.json({ ok: false, error: message, authError: true }, { status: 401 });
   }
 
-  await initShopifyResetJob(session.shop);
-  startShopifyCatalogResetInBackground(session);
+  try {
+    await initShopifyResetJob(session.shop);
+  } catch (err) {
+    reserva.libertar();
+    throw err;
+  }
+  startShopifyCatalogResetInBackground(session, { reserva });
 
   const status = await readShopifyResetStatus(session.shop);
 

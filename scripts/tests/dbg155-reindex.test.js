@@ -128,7 +128,7 @@ function verificarRecusa(r) {
 /** A recusa vem antes do marcador, e o marcador antes do estado running. */
 function verificarOrdemDaCorrida(src) {
   const recusa = src.indexOf(RECUSA);
-  const marca = src.indexOf('marcarAtividadeApp({ tipo: "indexacao" })');
+  const marca = src.indexOf('marcarAtividadeApp({ tipo: "indexacao"');
   const running = src.indexOf('state: "running"');
   assert.ok(recusa >= 0 && marca >= 0 && running >= 0, "âncoras da corrida em falta");
   assert.ok(recusa < marca && marca < running, "a recusa, o marcador e o running têm de estar nesta ordem");

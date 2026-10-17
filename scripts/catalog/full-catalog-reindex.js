@@ -27,9 +27,10 @@ import { marcarAtividadeApp, recusarSeAtividadeApp } from "../../lib/curation/at
 recusarSeAtividadeApp("full-catalog-reindex");
 
 // DBG-155: a corrida marca a atividade da app, como o worker. O marcador leva o pid deste processo e sai no fim.
+// PR 5 (DBG-140 e DBG-141): origem "script". A app não arranca indexação nem publicação por cima deste marcador.
 let retirarMarcador;
 try {
-  retirarMarcador = marcarAtividadeApp({ tipo: "indexacao" });
+  retirarMarcador = marcarAtividadeApp({ tipo: "indexacao", origem: "script" });
 } catch {
   console.error("[reindex] Recusado: não foi possível marcar a atividade da app. Nada foi gravado.");
   process.exit(1);

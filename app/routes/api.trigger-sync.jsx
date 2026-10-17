@@ -9,6 +9,7 @@ import {
   readCatalogRebuildStatus,
 } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { runApprovedShopifySync } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
+import { motivoDeRecusaPorScript, scriptDeIndexacaoEmCurso } from "../../lib/curation/atividadeApp.js";
 import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import { syncPublishedStockLevels } from "../../lib/importer/shopify/publishedStockSync.server.js";
 import { isShopifySyncRunning } from "../../lib/importer/shopify/shopifySyncJob.server.js";
@@ -115,6 +116,15 @@ export const action = async ({ request }) => {
     console.log("[trigger-sync] ciclo saltado: indexação já em curso.");
     return Response.json(
       { ok: true, skipped: true, reason: "indexing_already_running" },
+      { status: 409, headers: JSON_HEADERS }
+    );
+  }
+  // PR 5 (DBG-140 e DBG-141): um script de reindexação vivo tem a loja. O ciclo não arranca por cima dele.
+  const recusaScript = motivoDeRecusaPorScript(scriptDeIndexacaoEmCurso());
+  if (recusaScript) {
+    console.log(`[trigger-sync] ciclo saltado: ${recusaScript}`);
+    return Response.json(
+      { ok: true, skipped: true, reason: "script_indexing_running" },
       { status: 409, headers: JSON_HEADERS }
     );
   }
@@ -225,7 +235,9 @@ export const action = async ({ request }) => {
             console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
           }
         } else {
-          console.log("[trigger-sync] publicação de aprovados saltada: já há uma publicação em curso.");
+          console.log(
+            "[trigger-sync] publicação de aprovados saltada: a reserva está ocupada por uma publicação manual ou por um reset em curso."
+          );
         }
       }
 

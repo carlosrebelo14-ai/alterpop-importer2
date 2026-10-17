@@ -20,6 +20,12 @@ import { assertBulkConfirm, BulkConfirmError } from "../../lib/curation/bulkConf
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { assertThemeContractValid, ThemeContractError } from "../../lib/importer/shopify/themeContract.server.js";
 import { readDbDegraded } from "../../lib/health/dbDegraded.js";
+import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
+import {
+  atividadeAppEmCurso,
+  motivoDeRecusaDaPublicacaoManual,
+  scriptDeIndexacaoEmCurso,
+} from "../../lib/curation/atividadeApp.js";
 
 /**
  * GET /api/shopify-sync — estado do job em curso (polling UI).
@@ -117,6 +123,17 @@ export const action = async ({ request }) => {
       { ok: false, error: `BD em modo degradado: ${dbDegraded.cause}`, dbDegraded },
       { status: 503 }
     );
+  }
+
+  // PR 5 (DBG-141): a publicação manual não corre com indexação do catálogo em curso, nem com a do ciclo, nem com um
+  // script de reindexação vivo. A indexação esvazia o catálogo, e a publicação marcaria SYNC_ERROR "SKU ausente".
+  const motivoIndexacao = motivoDeRecusaDaPublicacaoManual({
+    indexacaoEmCurso: isCatalogIndexingRunning(session.shop) || atividadeAppEmCurso()?.tipo === "indexacao",
+    atividadeScript: scriptDeIndexacaoEmCurso(),
+  });
+  if (motivoIndexacao) {
+    console.log(`[shopify-sync] publicação recusada: ${motivoIndexacao}`);
+    return Response.json({ ok: false, error: motivoIndexacao }, { status: 409 });
   }
 
   if (await isShopifyResetRunning(session.shop)) {

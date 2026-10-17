@@ -358,13 +358,13 @@ A regra de não correr o reset em produção mantém-se até o PR 2b-3 estar em 
 
 **Referência cruzada:** Decisões 13, 28, 30, 33 e 34; plano `docs/planos/plano-2b.md`; relatório `docs/relatorios/debug-geral-14-10-2026.md`.
 
-## Decisão 36 — veto ao reindex completo até ao 2b-3
+## Decisão 36 — veto ao reindex completo até ao PR 5 (ronda 3)
 
 **Data:** 2026-10-17
-**Estado:** fechada pelo arquiteto. Vale até o PR 2b-3 estar em produção.
+**Estado:** fechada pelo arquiteto. Vale até o PR 5 estar em produção e verificado (ronda 3, Decisão 38). O levantamento é do arquiteto, depois da verificação pós-deploy.
 **Origem:** DBG-155 em `docs/relatorios/debug-geral-14-10-2026.md`.
 
-`scripts/catalog/full-catalog-reindex.js` não corre em produção, nem com `RESUME=1`. Motivo: escreve o estado da app sem marcador de atividade e sem lock, e pode deixar `running` com `indexing: true` no ficheiro de estado. Isso bloqueia o db:push e impede a retoma.
+`scripts/catalog/full-catalog-reindex.js` não corre em produção, nem com `RESUME=1`. Motivo: escreve o estado da app sem marcador de atividade e sem lock, e pode deixar `running` com `indexing: true` no ficheiro de estado. Isso bloqueia o db:push e impede a retoma. Estado em 17/10: o PR 4 (DBG-155) pôs a marca e a recusa no próprio script, e o PR 5 (DBG-140 e DBG-141) põe a app a recusar por cima do script. O veto não se levanta antes da verificação em produção do PR 5.
 
 O veto fica ao lado do de `scripts/catalog/run-approved-sync.js` (DBG-142). Esse veto está registado em `docs/execucoes.md`, e não neste ficheiro. Os três (reindex completo, `run-approved-sync.js` e reset) ficam proibidos em produção até ao 2b-3.
 

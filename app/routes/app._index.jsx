@@ -30,6 +30,7 @@ import { DECISION_GROUP_PREFIX } from "../../lib/curation/decisionQueue.js";
 import { MARKET_STORE_SUGGESTIONS } from "../../lib/importer/pricing/marketPrice.js";
 import { getCurationLiteStats } from "../../lib/importer/dashboard/getDashboardStats.server.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
+import { motivoDeRecusaPorScript, scriptDeIndexacaoEmCurso } from "../../lib/curation/atividadeApp.js";
 import {
   startCatalogCleanupInBackground,
   startCatalogRebuildInBackground,
@@ -196,6 +197,13 @@ export const action = async ({ request }) => {
   }
 
   if (intent === "refresh-catalog" || intent === "purge-catalog" || intent === "force-reindex-catalog") {
+    // PR 5 (DBG-140 e DBG-141): com um script de reindexação vivo, o painel não arranca nada. A causa vai ao toast
+    // (fetcher.data.error) e ao log. Retoma, recomeço e purga passam todos por aqui.
+    const recusaScript = motivoDeRecusaPorScript(scriptDeIndexacaoEmCurso());
+    if (recusaScript) {
+      console.log(`[painel] indexação recusada: ${recusaScript}`);
+      return { ok: false, error: recusaScript };
+    }
     let settings;
     try {
       settings = await loadShopSettings(session.shop);
