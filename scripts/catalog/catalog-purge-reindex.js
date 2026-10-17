@@ -41,16 +41,20 @@ if (process.env.CONFIRM !== CONFIRM_WORD) {
 const settings = await loadShopSettings(shop);
 
 console.log(`[catalog-purge] Loja: ${shop}`);
-const result = await startCatalogCleanupInBackground(shop, settings, { causa: "script" });
-
+// DBG-155: a espera é pela corrida toda. Só depois de "closed" o estado final está no disco.
 try {
-  await result;
+  await startCatalogCleanupInBackground(shop, settings, { causa: "script" });
 } catch (err) {
   console.error("[catalog-purge] Falhou:", err?.message || err);
   process.exit(1);
 }
 
 const status = await readCatalogRebuildStatus(shop);
+if (status?.state === "failed") {
+  // O texto do erro fica no estado. No log sai só a causa.
+  console.error(`[catalog-purge] Falhou: causa=${status.lastFailure?.causa || "desconhecida"}. Ver indexing_status.`);
+  process.exit(1);
+}
 console.log(status?.purge?.message || status?.message || "Concluído.");
 if (status?.totalRows != null) {
   console.log(`[catalog-purge] Total após reindexação: ${status.totalRows}`);

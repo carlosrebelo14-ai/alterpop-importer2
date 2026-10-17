@@ -15,10 +15,25 @@ import { syncCatalogWithProgress } from "../../lib/importer/catalog/syncCatalogW
 import { getCatalogProductTotal } from "../../lib/importer/catalog/catalogProductsDb.server.js";
 import {
   writeCatalogRebuildStatus,
+  flushCatalogRebuildStatus,
   readCatalogRebuildStatus,
   canResumeCatalogRebuild,
 } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { ensureLocalOcioStockCsv } from "../../lib/importer/catalog/ensureLocalOcioStockCsv.server.js";
+import { registoDaFalha } from "../../lib/importer/catalog/falhaIndexacao.js";
+import { marcarAtividadeApp, recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
+
+// DBG-155 (Decisão 35, D7): esta corrida escreve o estado e a fila. Recusa com atividade da app em curso.
+recusarSeAtividadeApp("full-catalog-reindex");
+
+// DBG-155: a corrida marca a atividade da app, como o worker. O marcador leva o pid deste processo e sai no fim.
+let retirarMarcador;
+try {
+  retirarMarcador = marcarAtividadeApp({ tipo: "indexacao" });
+} catch {
+  console.error("[reindex] Recusado: não foi possível marcar a atividade da app. Nada foi gravado.");
+  process.exit(1);
+}
 
 const shop = process.env.SHOP || process.env.SHOPIFY_SHOP_URL || "alterpop-store.myshopify.com";
 const forceResume = ["1", "true", "yes"].includes(String(process.env.RESUME || "").toLowerCase());
@@ -39,7 +54,8 @@ console.log(
     : "[reindex] Importação completa (limpa SQLite primeiro)…\n"
 );
 
-await writeCatalogRebuildStatus(shop, {
+// DBG-155: o running vai para o disco antes de a indexação começar (como no worker). Sem ele, a corrida não arranca.
+const gravouRunning = await flushCatalogRebuildStatus(shop, {
   state: "running",
   startedAt: new Date().toISOString(),
   finishedAt: null,
@@ -49,9 +65,15 @@ await writeCatalogRebuildStatus(shop, {
   phase: resume ? "resuming" : "streaming",
   resumedFrom: resume ? resumeFromScanned : null,
 });
+if (!gravouRunning) {
+  retirarMarcador();
+  console.error("[reindex] Recusado: o estado não ficou gravado no disco. Nada foi indexado.");
+  process.exit(1);
+}
 
 let lastLog = 0;
 let lastCheckpoint = { indexed: 0, scanned: 0 };
+let causaFalha = "erro_script";
 
 try {
   const result = await syncCatalogWithProgress(shop, settings, {
@@ -82,7 +104,7 @@ try {
   const totalInDb = await getCatalogProductTotal(shop);
   const dedup = result.deduplication;
 
-  await writeCatalogRebuildStatus(shop, {
+  const gravouFim = await flushCatalogRebuildStatus(shop, {
     state: "completed",
     finishedAt: new Date().toISOString(),
     error: null,
@@ -93,6 +115,11 @@ try {
     audit: result.audit,
     deduplication: dedup,
   });
+  if (!gravouFim) {
+    causaFalha = "estado_nao_gravado";
+    throw new Error("estado final não gravado no disco");
+  }
+  retirarMarcador();
 
   console.log("\n\n[reindex] Concluído.");
   console.log(`  Linhas lidas:    ${(result.audit?.totalLinesRead ?? result.scanned).toLocaleString("pt-PT")}`);
@@ -108,16 +135,21 @@ try {
     console.log("  Motivos (top):", result.audit.rejectionReasons);
   }
 } catch (err) {
-  await writeCatalogRebuildStatus(shop, {
+  // DBG-155: o failed vai para o disco antes do exit. O texto do erro fica no estado, nunca no log.
+  const textoDoErro = err?.message || String(err);
+  const gravouFalha = await flushCatalogRebuildStatus(shop, {
     state: "failed",
     finishedAt: new Date().toISOString(),
-    error: err?.message || String(err),
+    error: textoDoErro,
     indexing: false,
     checkpointScanned: lastCheckpoint.scanned || null,
     checkpointIndexed: lastCheckpoint.indexed || null,
     message: "Indexação interrompida — corre com RESUME=1 ou clica Atualizar catálogo no dashboard.",
+    lastFailure: registoDaFalha(causaFalha, textoDoErro),
   });
-  console.error("\n[reindex] Falhou:", err?.message || err);
-  if (err?.stack) console.error(err.stack.split("\n").slice(0, 8).join("\n"));
+  retirarMarcador();
+  console.error(
+    `[reindex] Falhou: causa=${causaFalha}. ${gravouFalha ? "Estado gravado como failed." : "Estado NÃO gravado no disco."}`
+  );
   process.exit(1);
 }
