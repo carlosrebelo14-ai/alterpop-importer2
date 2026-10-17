@@ -69,8 +69,9 @@ await check("(a) uma linha IS: com os campos pedidos e classe do erro", async ()
   assert.equal(linhas.length, 1, "uma linha só");
   assert.equal(
     linhas[0],
-    "IS: state=failed startedAt=2026-10-17T08:45:49.000Z finishedAt=2026-10-17T08:48:11.373Z totalRows=1234 checkpointScanned=900 erro=fila erro_tamanho=" +
-      "[fila] espera esgotada: a fila de curadoria está ocupada".length
+    "IS: state=failed startedAt=2026-10-17T08:45:49.000Z finishedAt=2026-10-17T08:48:11.373Z totalRows=1234 checkpointScanned=900 totalRejected=null erro=fila erro_tamanho=" +
+      "[fila] espera esgotada: a fila de curadoria está ocupada".length +
+      " falha_em=nenhuma falha_causa=nenhuma falha_classe=nenhuma"
   );
 });
 
