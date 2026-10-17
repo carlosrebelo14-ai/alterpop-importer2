@@ -171,11 +171,15 @@ function verificarRotaCiclo(texto) {
 }
 
 /** O ciclo para quando a indexação não arranca, antes do IIFE seguir para a publicação. */
-function verificarCicloNaoAbortaComLeituraFalhada(texto) {
+function verificarCicloParaComConfirmacao(texto) {
   const inicio = posicao(texto, "let motivoIndexacao = null;", ROTA_CICLO);
   const fim = posicao(texto, "if (motivoIndexacao) {", ROTA_CICLO);
   assert.ok(inicio < fim, "a decisão de indexação do ciclo tem de vir antes da recusa");
-  assert.doesNotMatch(texto.slice(inicio, fim), /throw/, "o ciclo não pode lançar aqui: salta a publicação com a causa");
+  assert.doesNotMatch(texto.slice(inicio, fim), /throw/, "a confirmação não lança: converte o erro em motivo");
+  const fimDoRamo = texto.indexOf("} else {", fim);
+  assert.ok(fimDoRamo > fim, "o ramo com motivo tem de ter else");
+  const ramo = texto.slice(fim, fimDoRamo);
+  assert.match(ramo, /return;/, "com motivo, o ciclo para: não publica nem corre as coleções");
 }
 
 function verificarCicloPublicacao(texto) {
@@ -965,6 +969,39 @@ await caso("mutação: a mensagem de marcador ilegível diz script (o caso (t) t
   }
 });
 
+await caso("(y) marcador ilegível por erro de leitura: a mensagem diz que só sai quando o ficheiro for apagado", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const pasta = path.join(dir, "catalog-busy-indexacao-1-dirlido.json");
+  fs.mkdirSync(pasta);
+  try {
+    const motivo = atividade.motivoDeRecusaPorScript(atividade.scriptDeIndexacaoEmCurso());
+    assert.match(motivo, /só sai quando o ficheiro for apagado/, "um erro de leitura não expira, e a mensagem tem de o dizer");
+    assert.doesNotMatch(motivo, /Espera 10 min/);
+  } finally {
+    fs.rmdirSync(pasta);
+  }
+});
+
+await caso("mutação: a mensagem promete expiração (o caso (y) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "mensagem-espera", (t) =>
+    trocaUnica(t, "Num erro de leitura ou sem pid, só sai quando o ficheiro for apagado, depois de confirmar que o processo já não existe.", "Espera 10 min.")
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const pasta = path.join(dir, "catalog-busy-indexacao-1-dirlido.json");
+  fs.mkdirSync(pasta);
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    const motivo = mod.motivoDeRecusaPorScript(mod.scriptDeIndexacaoEmCurso());
+    assert.match(motivo, /Espera 10 min/, "a mutação promete expiração");
+    assert.throws(() => assert.match(motivo, /só sai quando o ficheiro for apagado/), "o caso (y) tem de apanhar a mutação");
+  } finally {
+    fs.rmdirSync(pasta);
+    fs.rmSync(m, { force: true });
+  }
+});
+
 await caso("(u) uma escrita de marca que falha não deixa ficheiro parcial (que bloquearia 10 min)", () => {
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
@@ -987,7 +1024,7 @@ await caso("(u) uma escrita de marca que falha não deixa ficheiro parcial (que 
 
 await caso("mutação: uma escrita de marca falhada deixa ficheiro parcial (o caso (u) tem de ficar vermelho)", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "marca-parcial", (t) =>
-    trocaUnica(t, "    fs.rmSync(ficheiro, { force: true });\n    throw err;", "    throw err;")
+    trocaUnica(t, "    try {\n      fs.rmSync(ficheiro, { force: true });\n    } catch {\n      /* sem remoção */\n    }\n    throw err;", "    throw err;")
   );
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
@@ -1045,13 +1082,13 @@ await caso("mutação: resolver em closed sem olhar a done faz o caso (v) ficar 
   }
 });
 
-await caso("(w) o ciclo não aborta o resto quando a confirmação da indexação lança", () => {
-  verificarCicloNaoAbortaComLeituraFalhada(ler(ROTA_CICLO_PUB));
+await caso("(w) o ciclo para com motivo na confirmação, e a confirmação não lança", () => {
+  verificarCicloParaComConfirmacao(ler(ROTA_CICLO_PUB));
 });
 
-await caso("mutação: o ciclo volta a lançar na confirmação (o caso (w) tem de ficar vermelho)", () => {
+await caso("mutação: o ciclo segue sem parar quando há motivo (o caso (w) tem de ficar vermelho)", () => {
   assert.throws(() =>
-    verificarCicloNaoAbortaComLeituraFalhada(trocaUnica(ler(ROTA_CICLO_PUB), "motivoIndexacao = `não foi possível confirmar a indexação (${err?.message || err})`;", "reserva.libertar();\n            throw err;"))
+    verificarCicloParaComConfirmacao(trocaUnica(ler(ROTA_CICLO_PUB), "            return;\n          } else {", "          } else {"))
   );
 });
 

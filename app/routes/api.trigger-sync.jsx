@@ -275,8 +275,12 @@ export const action = async ({ request }) => {
             motivoIndexacao = `não foi possível confirmar a indexação (${err?.message || err})`;
           }
           if (motivoIndexacao) {
+            // PR 5 (revisão): sem confirmação de que não há indexação, o ciclo para aqui. Não publica nem corre o stock,
+            // as franquias, a erosão nem as coleções, porque as coleções publicam sem reserva.
             reserva.libertar();
-            console.log(`[trigger-sync] publicação de aprovados saltada: ${motivoIndexacao}`);
+            console.log(`[trigger-sync] ciclo parado antes da publicação: ${motivoIndexacao}`);
+            await markMarginErosionCycleSkipped(shop, `indexação ou script em curso no momento da publicação (${motivoIndexacao})`);
+            return;
           } else {
             console.log("[trigger-sync] a publicar aprovados…");
             try {
