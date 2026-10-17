@@ -53,7 +53,7 @@ function token(valor, re = /^[A-Za-z0-9:._+-]{1,40}$/) {
 }
 
 /** Causas de falha, em lista fechada. Cópia de CAUSAS_FALHA em lib/importer/catalog/falhaIndexacao.js (teste pina). */
-const CAUSAS = ["worker_saiu", "worker_morto", "erro_worker", "erro_pai", "marcador", "estado_nao_gravado"];
+const CAUSAS = ["worker_saiu", "worker_morto", "erro_worker", "erro_pai", "marcador", "estado_nao_gravado", "erro_script"];
 
 /** Campo do lastFailure. Sem lastFailure, "nenhuma". O texto de error nunca passa por aqui. */
 function campoDaFalha(falha, campo, re) {

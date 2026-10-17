@@ -144,9 +144,9 @@ fs.writeFileSync(
 );
 fs.chmodSync(fakeFly, 0o755);
 
-function correrTarefa(fase, dir) {
-  const summary = path.join(tmp, `summary-${fase}-${path.basename(dir)}.md`);
-  const r = spawnSync("bash", [MAINT, "indexing_status", fase], {
+function correrTarefa(fase, dir, script = MAINT) {
+  const summary = path.join(tmp, `summary-${fase}-${path.basename(dir)}-${path.basename(script)}.md`);
+  const r = spawnSync("bash", [script, "indexing_status", fase], {
     encoding: "utf8",
     env: { ...process.env, FLYCTL: fakeFly, FAKE_ROOT: dir, FLY_APP: "teste", GITHUB_STEP_SUMMARY: summary, GITHUB_OUTPUT: "" },
   });
@@ -176,6 +176,85 @@ await check("(b) sem ficheiro: o resumo diz sem_ficheiro e não inventa números
   const { r, resumo } = correrTarefa("dry-run", dir);
   assert.equal(r.status, 0);
   assert.match(resumo, /Estado: \*\*sem_ficheiro\*\*/);
+});
+
+/** Cópia do maintenance.sh com uma troca, na mesma pasta (o ROOT continua certo). Quem chama apaga a cópia. */
+function mutanteDoMaintenance(nome, transformar) {
+  const texto = fs.readFileSync(MAINT, "utf8");
+  const novo = transformar(texto);
+  if (novo === texto) throw new Error(`mutação ${nome}: a transformação não mudou nada`);
+  const destino = path.join(path.dirname(MAINT), `.mutante-${nome}-${process.pid}.sh`);
+  fs.writeFileSync(destino, novo);
+  return destino;
+}
+
+/** As duas linhas de falha têm de sair sempre, com os valores pedidos. Lança se uma faltar ou tiver outro valor. */
+function verificarLinhasDeFalha(resumo, { causa, em, classe, rejeitados }) {
+  const ultima = `- Última falha: causa **${causa}**, em **${em}**, classe **${classe}**.`;
+  const total = `- Total rejeitado (totalRejected): **${rejeitados}**.`;
+  assert.ok(resumo.includes(ultima), `linha de última falha em falta ou diferente (esperada: ${ultima})\n${resumo}`);
+  assert.ok(resumo.includes(total), `linha de total rejeitado em falta ou diferente (esperada: ${total})\n${resumo}`);
+}
+
+const ESTADO_COM_FALHA = {
+  state: "failed",
+  startedAt: "2026-10-17T08:45:49.000Z",
+  finishedAt: "2026-10-17T08:48:11.373Z",
+  totalRows: 1234,
+  checkpointScanned: 900,
+  totalRejected: 7,
+  error: "worker process killed (SIGTERM)",
+  lastFailure: { at: "2026-10-17T08:48:11.373Z", causa: "worker_morto", error: "worker process killed (SIGTERM) SKU XYZ-9" },
+};
+
+await check("(b) última falha e total rejeitado saem sempre no resumo, com causa, data e classe, sem o texto", async () => {
+  const dir = dadosComEstado("b3", ESTADO_COM_FALHA);
+  const { r, resumo } = correrTarefa("dry-run", dir);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  verificarLinhasDeFalha(resumo, { causa: "worker_morto", em: "2026-10-17T08:48:11.373Z", classe: "worker_morto", rejeitados: 7 });
+  assert.doesNotMatch(r.stdout + r.stderr + resumo, /SKU XYZ-9/);
+});
+
+await check("(b) sem falha registada e sem totalRejected: as duas linhas saem com nenhuma", async () => {
+  const dir = dadosComEstado("b4", {
+    state: "completed",
+    startedAt: "2026-10-17T20:00:59.000Z",
+    finishedAt: "2026-10-17T20:03:22.000Z",
+    totalRows: 26087,
+    error: null,
+  });
+  const { r, resumo } = correrTarefa("dry-run", dir);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  verificarLinhasDeFalha(resumo, { causa: "nenhuma", em: "nenhuma", classe: "nenhuma", rejeitados: "nenhuma" });
+});
+
+await check("mutação: sem a linha de última falha, o caso com falha tem de ficar vermelho", async () => {
+  const dir = dadosComEstado("b5", ESTADO_COM_FALHA);
+  const m = mutanteDoMaintenance("sem-ultima-falha", (t) => t.split("\n").filter((l) => !l.includes("- Última falha: causa")).join("\n"));
+  try {
+    const { resumo } = correrTarefa("dry-run", dir, m);
+    assert.throws(
+      () => verificarLinhasDeFalha(resumo, { causa: "worker_morto", em: "2026-10-17T08:48:11.373Z", classe: "worker_morto", rejeitados: 7 }),
+      /linha de última falha em falta/
+    );
+  } finally {
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await check("mutação: total rejeitado sem o mapa para nenhuma sai null, e o caso sem valor tem de ficar vermelho", async () => {
+  const dir = dadosComEstado("b6", { state: "completed", startedAt: "2026-10-17T20:00:59.000Z", totalRows: 26087, error: null });
+  const m = mutanteDoMaintenance("total-cru", (t) => t.replace("**$(valorOuNenhuma totalRejected)**", "**$(isv totalRejected)**"));
+  try {
+    const { resumo } = correrTarefa("dry-run", dir, m);
+    assert.match(resumo, /Total rejeitado \(totalRejected\): \*\*null\*\*/, "a cópia tem de imprimir null");
+    assert.throws(
+      () => verificarLinhasDeFalha(resumo, { causa: "nenhuma", em: "nenhuma", classe: "nenhuma", rejeitados: "nenhuma" }),
+      /linha de total rejeitado em falta/
+    );
+  } finally {
+    fs.rmSync(m, { force: true });
+  }
 });
 
 await check("(b) execute é recusado para esta tarefa: código 64 e a Fly não é chamada", async () => {

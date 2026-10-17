@@ -180,6 +180,7 @@ await check("D7: sem marcador o mesmo script grava (o override sai)", () => {
 // D7 (2b-1): todos os escritores que chamam recusarSeAtividadeApp recusam com marcador vivo, com código 1 e sem gravar.
 const ESCRITORES_COM_GUARDA = [
   "scripts/catalog/catalog-purge-reindex.js",
+  "scripts/catalog/full-catalog-reindex.js",
   "scripts/catalog/character-import.js",
   "scripts/catalog/curation-mark-deleted.js",
   "scripts/catalog/curation-override-clear.js",

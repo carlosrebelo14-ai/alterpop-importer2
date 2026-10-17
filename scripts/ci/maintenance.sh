@@ -536,12 +536,16 @@ case "$TASK" in
   indexing_status)
     # Lê a linha IS: que o script imprime. Cada campo é um token simples; o erro chega só como classe e tamanho.
     isv() { echo "$CLEAN" | grep -E "^IS: " | head -1 | tr ' ' '\n' | grep -E "^$1=" | head -1 | cut -d= -f2-; }
+    # Campo vazio ou null (ausente no ficheiro) vira "nenhuma". As duas linhas de falha saem sempre.
+    valorOuNenhuma() { local v; v="$(isv "$1")"; if [ -z "$v" ] || [ "$v" = null ]; then echo nenhuma; else echo "$v"; fi; }
     if [ -z "$(isv state)" ]; then
-      bullets=""; KEY="sem leitura"
+      bullets="- Última falha: sem leitura."$'\n'"- Total rejeitado (totalRejected): sem leitura."; KEY="sem leitura"
     else
       bullets="- Estado: **$(isv state)**. Erro: classe **$(isv erro)**, com **$(isv erro_tamanho)** caracteres. O texto do erro não sai daqui."
       bullets="$bullets"$'\n'"- Início **$(isv startedAt)**, fim **$(isv finishedAt)**."
       bullets="$bullets"$'\n'"- Linhas (totalRows; durante uma indexação são os indexados): **$(isv totalRows)**. Checkpoint (checkpointScanned): **$(isv checkpointScanned)**."
+      bullets="$bullets"$'\n'"- Última falha: causa **$(valorOuNenhuma falha_causa)**, em **$(valorOuNenhuma falha_em)**, classe **$(valorOuNenhuma falha_classe)**."
+      bullets="$bullets"$'\n'"- Total rejeitado (totalRejected): **$(valorOuNenhuma totalRejected)**."
       KEY="estado $(isv state), erro $(isv erro)"
     fi
     ;;
