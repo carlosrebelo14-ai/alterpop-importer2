@@ -55,9 +55,9 @@ case "$TASK" in
   db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
-# indexing_status fica numa guarda própria, para não tocar na linha das tarefas que já recusam execute.
+# indexing_status e esperar_indexacao ficam numa guarda própria, para não tocar na linha das tarefas que já recusam execute.
 case "$TASK" in
-  indexing_status)
+  indexing_status | esperar_indexacao)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
 case "$PHASE" in

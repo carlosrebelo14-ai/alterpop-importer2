@@ -14,8 +14,8 @@
 # O job usa o environment "production": se o environment tiver revisores obrigatórios, o GitHub pede
 # aprovação antes de o job arrancar.
 #
-# Input skip_deploy (boolean, default false): com true salta o passo 1 (e a instalação de dependências que
-# só ele usa) e corre só catalog:health, sem refazer o deploy.
+# Input skip_deploy (boolean, default false): com true salta a espera, o deploy e a instalação de dependências
+# que só eles usam, e corre só catalog:health, sem refazer o deploy.
 #
 # PRICE_MODE e THEME_GUARD NÃO são tocados aqui: as flags continuam como estão na Fly.
 # Só se corre a partir de main (a guarda 1 do deploy.sh exige o branch main).

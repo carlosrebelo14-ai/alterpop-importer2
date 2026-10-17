@@ -64,7 +64,7 @@ function flyctlFalso(dir, livres) {
  * Corre o maintenance.sh com flyctl falso. Com `cadeia`, o comando seguinte (o deploy, simulado por um echo)
  * só corre se o passo sair com 0, como um `run` do GitHub Actions.
  */
-function correrSh({ task, livres, repetir = 0, passo = 0, tentativas = 1, script = SH, cadeia = false }) {
+function correrSh({ task, livres, repetir = 0, passo = 0, tentativas = 1, script = SH, cadeia = false, fase = "dry-run" }) {
   const dir = fs.mkdtempSync(path.join(tmp, "run-"));
   const log = path.join(dir, "log");
   const cont = path.join(dir, "cont");
@@ -81,8 +81,8 @@ function correrSh({ task, livres, repetir = 0, passo = 0, tentativas = 1, script
     GATE_REPEAT_STEP: String(passo),
   };
   const r = cadeia
-    ? spawnSync("bash", ["-c", `bash "${script}" ${task} dry-run && echo DEPLOY_CHAMADO`], { cwd: ROOT, encoding: "utf8", env })
-    : spawnSync("bash", [script, task, "dry-run"], { cwd: ROOT, encoding: "utf8", env });
+    ? spawnSync("bash", ["-c", `bash "${script}" ${task} ${fase} && echo DEPLOY_CHAMADO`], { cwd: ROOT, encoding: "utf8", env })
+    : spawnSync("bash", [script, task, fase], { cwd: ROOT, encoding: "utf8", env });
   return {
     ...r,
     calls: fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter(Boolean) : [],
@@ -160,6 +160,17 @@ function deployBloqueado(r) {
 }
 check("indexação ativa: o passo falha e o deploy não corre", () => {
   deployBloqueado(correrSh({ task: "esperar_indexacao", livres: 0, tentativas: 2, cadeia: true }));
+});
+check("esperar_indexacao recusa execute (sai com 64) e não chama a Fly", () => {
+  const r = correrSh({ task: "esperar_indexacao", livres: 1e9, fase: "execute" });
+  assert.equal(r.status, 64, `código: ${r.status} ${r.stderr}`);
+  assert.deepEqual(r.calls, [], "com execute, a Fly não pode ser chamada");
+});
+check("mutação: deixar esperar_indexacao sair da guarda de execute faz a verificação falhar", () => {
+  const script = mutante("sem-recusa", "  indexing_status | esperar_indexacao)", "  indexing_status)");
+  const r = correrSh({ task: "esperar_indexacao", livres: 1e9, fase: "execute", script });
+  assert.equal(r.status, 0, "o mutante tem de aceitar execute, como o código antigo");
+  assert.throws(() => assert.equal(r.status, 64, "a recusa tem de sair com 64"));
 });
 check("sem indexação: o passo passa e o deploy corre", () => {
   const r = correrSh({ task: "esperar_indexacao", livres: 1e9, cadeia: true });
