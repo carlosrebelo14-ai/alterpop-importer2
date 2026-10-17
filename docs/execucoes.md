@@ -17,3 +17,4 @@ Sem entrada, sem `--execute`.
 ## Notas sem `--execute`
 
 - **2026-10-16, merge do #111 antes da decisão sobre os pendentes.** O merge do #111 em `main` (`bc76f06`) foi feito antes de o arquiteto decidir os pendentes de `37bab0e`. O deploy não correu nessa altura. O deploy de `main` só correu depois do #113 (`f32b065`), com aprovação do Carlos no environment `production`. Sem impacto em produção antes desse deploy. Sem `--execute` nesta nota.
+- **2026-10-17, proibição do script CLI de publicação (DBG-142).** `scripts/catalog/run-approved-sync.js` fica proibido em produção até ao 2b-3, como o reset e a purga. A reserva em memória da app não o vê, e a app não lê o marcador de atividade do script. Decisão do arquiteto. Sem `--execute` nesta nota.
