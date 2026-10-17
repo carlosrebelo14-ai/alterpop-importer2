@@ -155,6 +155,7 @@ function run(task, phase, env = {}) {
       FAKE_SNAPS: path.join(t.dir, "snaps"),
       GITHUB_STEP_SUMMARY: t.summary,
       WAIT_STEP_SECONDS: "0",
+      GATE_REPEAT_SECONDS: "0",
       WAIT_MAX_ATTEMPTS: "3",
       ...env,
     },

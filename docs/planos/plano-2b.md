@@ -737,11 +737,11 @@ As perguntas acima ficam respondidas por esta secção. Estas decisões são as 
 **Ronda 1**
 
 - **PR 0, DBG-153.** Rótulo do relatório da purga, com a divisão por motivo. Não muda contagens.
-- **PR 1, DBG-156.** Flush de `running` antes do fork. Sonda repetida no gate, até 15 s em passos de 1 s. Correção do comentário de `check-no-indexing.mjs`. Espera antes do `flyctl deploy` no `deploy.yml`: se houver indexação, espera até 15 min e falha sem chamar o deploy se não acabar. Atualiza `deploy-workflow.test.js`, que pina os passos. Teste: indexação ativa faz com que o deploy não seja chamado. Mutação: tirar a espera, tem de ficar vermelho. Depois de verificado, levanta a Decisão 37.
+- **PR 1, DBG-156.** Flush de `running` antes do fork. Sonda repetida no gate, até 15 s em passos de 1 s. Correção do comentário de `check-no-indexing.mjs`. Espera antes do `flyctl deploy` dentro do `scripts/deploy.sh`, com a mesma sonda repetida e o limite de 15 min, sem passo no `deploy.yml` (decisão do arquiteto, 17/10): se houver indexação, espera até 15 min e falha sem chamar o deploy se não acabar. Fecha também o caminho manual. `deploy.yml` com `timeout-minutes: 90`. Atualiza `deploy-workflow.test.js` e `deploy-guards.test.js`. Teste: indexação ativa faz com que o deploy não seja chamado. Mutação: tirar a espera do `deploy.sh`, tem de ficar vermelho. Depois de verificado, levanta a Decisão 37.
 
 **Ronda 2**
 
-- **PR 2, DBG-154.** Lock nas escritas do estado, flush com resultado, `finishDone` e `finishFailed` tratam a falha, e `check-no-indexing.mjs` sai com 2 sem `state` nem `indexing`. Testes: escritas concorrentes não perdem o `completed`; flush com erro não deixa dizer concluído; objeto sem `state` sai com 2. Mutação em cada um.
+- **PR 2, DBG-154.** Lock nas escritas do estado, flush com resultado, `finishDone` e `finishFailed` tratam a falha, e `check-no-indexing.mjs` sai com 2 sem `state` nem `indexing`. Testes: escritas concorrentes não perdem o `completed`; flush com erro não deixa dizer concluído; objeto sem `state` sai com 2. Mutação em cada um. O flush do arranque (`flushCatalogRebuildStatus` antes do fork em `indexingStream.server.js`) engole erros hoje. Passa a impedir o fork se falhar.
 - **PR 3, DBG-152.** `lastFailure {at, causa, error}`, com `error` como texto no ficheiro e fora de logs. Classe `worker_saiu`. V16 e `indexing_status` mostram `causa` e `at`. Confirma se a diferença de 140 é o `totalRejected` da última corrida, e mostra esse número no `indexing_status`. Testes: falha grava, `completed` mantém, nova falha substitui; V16 e `indexing_status` não mostram `error`. Mutação em cada um.
 
 **Ronda 3**

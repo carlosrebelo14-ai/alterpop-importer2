@@ -2,7 +2,8 @@
 /**
  * Falha (exit 1) se houver uma indexação do catálogo a decorrer. Só lê, nunca escreve.
  *
- * Corre na Fly, enviado pelo workflow deploy (input db_push_only) antes do db:push:
+ * Corre na Fly, enviado pelo scripts/ci/maintenance.sh (probe_indexing) antes do catalog_health, do db_push
+ * e da espera antes do deploy (esperar_indexacao):
  *   B64=$(base64 -w0 scripts/maintenance/check-no-indexing.mjs)
  *   flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && echo $B64 | base64 -d | node --input-type=module -'"
  *

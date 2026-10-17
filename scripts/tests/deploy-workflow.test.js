@@ -71,6 +71,12 @@ check("skip_deploy salta deploy, npm ci e prisma generate", () => {
     assert.match(step(marker), /if: env\.SKIP_DEPLOY != 'true'/, marker);
   }
 });
+check("a espera por indexação não está no workflow (DBG-156): fica em deploy.sh, para não haver duas", () => {
+  assert.doesNotMatch(code, /esperar_indexacao/);
+});
+check("job de deploy com timeout de 90 min (DBG-156: deploy.sh pode esperar até 15 min antes do flyctl)", () => {
+  assert.match(code, /timeout-minutes: 90/);
+});
 check("catalog:health na Fly depois do deploy; nenhum db:push no deploy (Decisão 34: o esquema muda só pelo maintenance)", () => {
   const health = step("catalog_health dry-run");
   assert.match(health, /bash scripts\/ci\/maintenance\.sh catalog_health dry-run/);

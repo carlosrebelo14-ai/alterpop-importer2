@@ -16,11 +16,14 @@
 # Comandos fixos neste ficheiro: nada do que vem de fora é executado na Fly. Escreve um resumo em português
 # em $GITHUB_STEP_SUMMARY (e o mesmo no log) e sai com o código do comando principal.
 #
-# catalog_health e db_push esperam por uma indexação a decorrer (a mesma leitura do V16, via
-# scripts/maintenance/check-no-indexing.mjs), repetindo de minuto a minuto até 15 min. Se ao fim disso ainda
-# houver indexação, ambos falham sem correr (catalog_health: "catálogo a indexar, repetir", código 75).
+# catalog_health, db_push e esperar_indexacao esperam por uma indexação a decorrer (a mesma leitura do V16, via
+# scripts/maintenance/check-no-indexing.mjs), repetindo de minuto a minuto até 15 min. Uma leitura livre não
+# basta: a sonda repete-se durante 15 s, de 1 em 1 s, antes de dar o portão por livre (DBG-156). Se ao fim da
+# espera ainda houver indexação, falham sem correr (catalog_health: "catálogo a indexar, repetir", código 75;
+# esperar_indexacao: o deploy não é chamado).
 #
-# Variáveis (testes): FLYCTL, FLY_APP, WAIT_STEP_SECONDS (60), WAIT_MAX_ATTEMPTS (15 min / passo).
+# Variáveis (testes): FLYCTL, FLY_APP, WAIT_STEP_SECONDS (60), WAIT_MAX_ATTEMPTS (15 min / passo),
+# GATE_REPEAT_SECONDS (15), GATE_REPEAT_STEP (1).
 set -uo pipefail
 
 TASK="${1:-}"
@@ -30,6 +33,8 @@ FLYCTL="${FLYCTL:-flyctl}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 WAIT_STEP="${WAIT_STEP_SECONDS:-60}"
 WAIT_MAX_ATTEMPTS="${WAIT_MAX_ATTEMPTS:-$((15 * 60 / (WAIT_STEP > 0 ? WAIT_STEP : 60)))}"
+GATE_REPEAT_SECONDS="${GATE_REPEAT_SECONDS:-15}"
+GATE_REPEAT_STEP="${GATE_REPEAT_STEP:-1}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT="$(mktemp)"
 NOTE=""
@@ -42,7 +47,7 @@ RESTORE_OUT="$(mktemp)"
 LOG_SUM=""
 
 case "$TASK" in
-  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status) ;;
+  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | esperar_indexacao) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
 esac
 # As tarefas novas só leem: nenhuma aceita execute, nem como no-op.
@@ -50,9 +55,9 @@ case "$TASK" in
   db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
-# indexing_status fica numa guarda própria, para não tocar na linha das tarefas que já recusam execute.
+# indexing_status e esperar_indexacao ficam numa guarda própria, para não tocar na linha das tarefas que já recusam execute.
 case "$TASK" in
-  indexing_status)
+  indexing_status | esperar_indexacao)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
 case "$PHASE" in
@@ -81,13 +86,32 @@ probe_indexing() {
   return 2
 }
 
+# confirmar_livre: chamada logo depois de uma leitura livre (DBG-156). Uma leitura livre não basta: repete a
+# sonda até GATE_REPEAT_SECONDS (15 s) contados a partir dessa leitura, com GATE_REPEAT_STEP (1 s) antes de
+# cada nova leitura. 0 se todas estiveram livres; 1 ou 2 como probe_indexing.
+confirmar_livre() {
+  local inicio rc
+  inicio=$SECONDS
+  while [ $((SECONDS - inicio)) -lt "$GATE_REPEAT_SECONDS" ]; do
+    sleep "$GATE_REPEAT_STEP"
+    probe_indexing
+    rc=$?
+    if [ "$rc" -ne 0 ]; then return "$rc"; fi
+  done
+  return 0
+}
+
 # wait_for_indexing: 0 livre, 1 ainda a decorrer ao fim do tempo, 2 estado ilegível.
 wait_for_indexing() {
   local i rc
   for ((i = 1; i <= WAIT_MAX_ATTEMPTS; i++)); do
     probe_indexing
     rc=$?
-    if [ "$rc" -eq 0 ]; then WAITED_MIN=$(((i - 1) * WAIT_STEP / 60)); return 0; fi
+    if [ "$rc" -eq 0 ]; then
+      confirmar_livre
+      rc=$?
+      if [ "$rc" -eq 0 ]; then WAITED_MIN=$(((i - 1) * WAIT_STEP / 60)); return 0; fi
+    fi
     if [ "$rc" -eq 2 ]; then return 2; fi
     echo "[manutenção] indexação a decorrer (tentativa $i de $WAIT_MAX_ATTEMPTS)"
     if [ "$i" -lt "$WAIT_MAX_ATTEMPTS" ]; then sleep "$WAIT_STEP"; fi
@@ -138,6 +162,16 @@ case "$TASK" in
       2) NOTE="Não consegui ler o estado da indexação. O portão não correu." ; RC=2 ;;
     esac
     if [ "$RC" -eq 0 ]; then remote "npm run catalog:health"; RC=$?; fi
+    ;;
+  esperar_indexacao)
+    DESC="Espera até 15 min que a indexação do catálogo acabe, com a mesma sonda do catalog_health. Só lê. O scripts/deploy.sh usa-a antes do flyctl deploy; também serve para uso manual."
+    wait_for_indexing
+    case $? in
+      0) KEY="sem indexação" ;;
+      1) NOTE="A indexação continuava a decorrer ao fim de ${WAITED_MIN} min. O deploy não foi chamado."
+         RESULT_OVERRIDE="⏳ Indexação a decorrer, deploy não chamado"; RC=75 ;;
+      2) NOTE="Não consegui ler o estado da indexação. O deploy não foi chamado."; RC=2 ;;
+    esac
     ;;
   diagnose_theme)
     DESC="Mostra se read_themes está concedido e o estado do contrato do tema. Só lê. Não liga nem desliga THEME_GUARD."
