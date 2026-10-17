@@ -528,7 +528,7 @@ await caso("(j) marcador ilegível: conta enquanto é recente, e deixa de contar
 
 await caso("mutação: sem o prazo, o marcador ilegível antigo bloqueia para sempre (o caso (j) tem de ficar vermelho)", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "sem-prazo-de-sobra", (t) =>
-    trocaUnica(t, "      if (idadeDoFicheiroMs(ficheiro) > IDADE_DE_SOBRA_MS) continue;", "")
+    trocaUnica(t, "      if (idadeDoMarcadorMs(ficheiro) > IDADE_DE_SOBRA_MS) {", "      if (false) {")
   );
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
@@ -543,6 +543,90 @@ await caso("mutação: sem o prazo, o marcador ilegível antigo bloqueia para se
     fs.rmSync(ficheiro, { force: true });
     fs.rmSync(m, { force: true });
   }
+});
+
+await caso("(k) a idade do marcador ilegível vem do relógio do ficheiro, não do relógio de quem lê", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-recente.json");
+  fs.writeFileSync(ficheiro, "{ truncado", "utf8");
+  const relogio = Date.now;
+  // O leitor acha que passou uma hora. O ficheiro acabou de ser escrito, por isso continua dentro do prazo.
+  Date.now = () => relogio() + 60 * 60 * 1000;
+  try {
+    assert.equal(atividade.scriptDeIndexacaoEmCurso()?.tipo, "desconhecida", "o marcador é recente no relógio do ficheiro");
+  } finally {
+    Date.now = relogio;
+    fs.rmSync(ficheiro, { force: true });
+  }
+});
+
+await caso("mutação: idade pelo relógio de quem lê faz o caso (k) ficar vermelho", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "relogio-do-leitor", (t) =>
+    trocaUnica(t, "      if (idadeDoMarcadorMs(ficheiro) > IDADE_DE_SOBRA_MS) {", "      if (Date.now() - fs.statSync(ficheiro).mtimeMs > IDADE_DE_SOBRA_MS) {")
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-recente.json");
+  fs.writeFileSync(ficheiro, "{ truncado", "utf8");
+  const relogio = Date.now;
+  Date.now = () => relogio() + 60 * 60 * 1000;
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    const r = mod.scriptDeIndexacaoEmCurso();
+    assert.notEqual(r?.tipo, "desconhecida", "a mutação tem de deixar passar o marcador, e o caso (k) tem de apanhar isso");
+  } finally {
+    Date.now = relogio;
+    fs.rmSync(ficheiro, { force: true });
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(l) o marcador ilegível expirado deixa uma linha de aviso com a causa", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-antigo.json");
+  fs.writeFileSync(ficheiro, "{ truncado", "utf8");
+  const antigo = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(ficheiro, antigo, antigo);
+  const avisos = [];
+  const original = console.warn;
+  console.warn = (...args) => avisos.push(args.join(" "));
+  try {
+    assert.equal(atividade.scriptDeIndexacaoEmCurso(), null, "expirado não bloqueia");
+  } finally {
+    console.warn = original;
+    fs.rmSync(ficheiro, { force: true });
+  }
+  assert.ok(avisos.some((l) => /causa=marcador_ilegivel_expirado/.test(l)), "tem de haver aviso com a causa marcador_ilegivel_expirado");
+});
+
+await caso("mutação: sem o aviso, o caso (l) tem de ficar vermelho", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "sem-aviso", (t) =>
+    trocaUnica(t, "        console.warn(`[atividade] causa=marcador_ilegivel_expirado: ${nome} ignorado (mais de 10 min).`);", "")
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-antigo.json");
+  fs.writeFileSync(ficheiro, "{ truncado", "utf8");
+  const antigo = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(ficheiro, antigo, antigo);
+  const avisos = [];
+  const original = console.warn;
+  console.warn = (...args) => avisos.push(args.join(" "));
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    mod.scriptDeIndexacaoEmCurso();
+  } finally {
+    console.warn = original;
+    fs.rmSync(ficheiro, { force: true });
+    fs.rmSync(m, { force: true });
+  }
+  assert.throws(
+    () => assert.ok(avisos.some((l) => /causa=marcador_ilegivel_expirado/.test(l)), "tem de haver aviso"),
+    /tem de haver aviso/,
+    "a mutação não pode deixar o aviso, e o caso (l) tem de apanhar isso"
+  );
 });
 
 if (falhas) {
