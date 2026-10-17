@@ -387,10 +387,13 @@ async function casoLockVivoEFrescoFalhaFechado() {
 async function casoRenovacaoImpedeRoubo() {
   escreverFila([item("X")]);
   await comEnv(
-    { CURATION_QUEUE_LOCK_OBSOLETO_MS: 400, CURATION_QUEUE_LOCK_RENOVA_MS: 100, CURATION_QUEUE_LOCK_PRAZO_MS: 15000 },
+    { CURATION_QUEUE_LOCK_OBSOLETO_MS: 2000, CURATION_QUEUE_LOCK_RENOVA_MS: 100, CURATION_QUEUE_LOCK_PRAZO_MS: 15000 },
     async () => {
-      // O titular segura o lock 1,5 s. Sem renovação, o pai tomaria o lock aos 400 ms.
-      const titular = startChild({ op: "segurar", holdMs: 1500 });
+      // O titular segura o lock 4 s. Sem renovação, o pai tomaria o lock aos 2 s. Com renovação a cada 100 ms, há
+      // 20 renovações de margem antes de o lock ficar obsoleto: um atraso de até 1,9 s do titular não o faz perder o
+      // lock. (DBG-151: com 400 ms de obsolescência e 4 renovações de margem, um atraso de ~500 ms do runner no CI
+      // fazia o pai tomar o lock. O lock comportava-se como definido; o teste é que era frágil.)
+      const titular = startChild({ op: "segurar", holdMs: 4000 });
       await comPrazo(titular.dentro, 20000, "titular dentro do lock");
       const pedido = q.approveProduct("X").then(() => Date.now());
       const resolvidoEm = await comPrazo(pedido, 20000, "aprovação do pai");
