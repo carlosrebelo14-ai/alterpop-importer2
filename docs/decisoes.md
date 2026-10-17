@@ -367,3 +367,13 @@ A regra de não correr o reset em produção mantém-se até o PR 2b-3 estar em 
 `scripts/catalog/full-catalog-reindex.js` não corre em produção, nem com `RESUME=1`. Motivo: escreve o estado da app sem marcador de atividade e sem lock, e pode deixar `running` com `indexing: true` no ficheiro de estado. Isso bloqueia o db:push e impede a retoma.
 
 O veto fica ao lado do de `scripts/catalog/run-approved-sync.js` (DBG-142). Esse veto está registado em `docs/execucoes.md`, e não neste ficheiro. Os três (reindex completo, `run-approved-sync.js` e reset) ficam proibidos em produção até ao 2b-3.
+
+## Decisão 37 — veto ao db:push até o DBG-156 estar em produção
+
+**Data:** 2026-10-17
+**Estado:** fechada pelo arquiteto. Vale até o DBG-156 estar em produção.
+**Origem:** DBG-156 em `docs/relatorios/debug-geral-14-10-2026.md`.
+
+A tarefa `db_push` do workflow `maintenance`, em modo `execute`, fica vetada. O gate do `db_push` faz uma só sonda (`scripts/ci/maintenance.sh:271` e `:85`). O arranque da indexação não escreve `running` em disco antes do primeiro progresso com debounce, e a fase `clearing` apaga o catálogo nesse intervalo. Um db:push pode correr durante o clearing.
+
+Não existe input `db_push_only`. O `.github/workflows/deploy.yml` só tem `skip_deploy`, e não corre db:push. O comentário de `scripts/maintenance/check-no-indexing.mjs:5` que cita `db_push_only` está desatualizado, e fica para correção no 2b-3. O `catalog_health` do deploy usa a mesma sonda, mas só lê, por isso não entra neste veto.

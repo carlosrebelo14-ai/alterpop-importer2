@@ -708,6 +708,7 @@ As perguntas acima ficam respondidas por esta secção. Estas decisões são as 
 2. **DBG-152.** Além de `lastFailure`, a saída do worker com código passa a ser classificada como `worker_saiu`, em vez do código genérico. Ficam por verificar dois casos: saída antes do `try` (`lib/workers/catalog-index-worker.mjs:5-11`) e saída antes de a mensagem `done` chegar (`:82-93`).
 3. **DBG-154.** Escritas do estado com lock de ficheiro, no padrão de `curationQueueFileLock.server.js`. O flush devolve o resultado, e `finishDone` e `finishFailed` tratam a falha. `scripts/maintenance/check-no-indexing.mjs` passa a tratar um objeto sem `state` nem `indexing` como ilegível (código 2), em vez de passar com 0.
 4. **DBG-155.** `full-catalog-reindex.js` recusa-se com marcador de atividade vivo, e grava `failed` com flush antes do `process.exit(1)`. `catalog-purge-reindex.js` espera a promessa real de `startCatalogCleanupInBackground` e lê o estado depois de o purge acabar. O marcador de atividade nasce antes do fork em `startCatalogIndexingWorker`. Veto até lá: Decisão 36.
+5. **DBG-156.** Flush imediato de `running` antes do fork (`indexingStream.server.js:194-205`), e gate com sonda repetida durante alguns segundos (`maintenance.sh:80-91`). Veto ao `db_push` até lá: Decisão 37.
 
 **Já no 2b-3 antes deste PR.** DBG-30 e DBG-72, e DBG-140, DBG-141 e DBG-142 do relatório. Não mudam aqui.
 
@@ -725,5 +726,6 @@ As perguntas acima ficam respondidas por esta secção. Estas decisões são as 
 - Um flush que falha não deixa `finishDone` dizer concluído. Mutação: voltar a ignorar o resultado. Tem de ficar vermelho.
 - `check-no-indexing.mjs` com objeto sem `state` sai com 2.
 - `full-catalog-reindex.js` com marcador vivo recusa-se. Mutação: retirar a guarda. Tem de ficar vermelho.
+- DBG-156: o `running` está no disco antes de o fork arrancar. Mutação: retirar o flush antes do fork. Tem de ficar vermelho. Um gate com a sonda em 0 nos primeiros segundos repete a sonda. Mutação: voltar à sonda única. Tem de ficar vermelho.
 
 **Gate.** As suítes de `scripts/deploy.sh` e de `tests.yml`: `test:franchise`, `test:sync-safety`, `test:health-gate` e `test:deploy`. Deploy só com o ok do arquiteto e a aprovação do Carlos.
