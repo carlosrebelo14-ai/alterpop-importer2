@@ -67,9 +67,15 @@ check("token só por secrets.FLY_API_TOKEN", () => {
   assert.match(code, /FLY_API_TOKEN: \$\{\{ secrets\.FLY_API_TOKEN \}\}/);
 });
 check("skip_deploy salta deploy, npm ci e prisma generate", () => {
-  for (const marker of ["actions/setup-node", "npm ci", "prisma generate", "scripts/deploy.sh"]) {
+  for (const marker of ["actions/setup-node", "npm ci", "prisma generate", "esperar_indexacao", "scripts/deploy.sh"]) {
     assert.match(step(marker), /if: env\.SKIP_DEPLOY != 'true'/, marker);
   }
+});
+check("espera por indexação antes do flyctl deploy (DBG-156): o passo chama esperar_indexacao, sem continue-on-error", () => {
+  assert.match(step("esperar_indexacao"), /run: bash scripts\/ci\/maintenance\.sh esperar_indexacao dry-run/);
+  assert.doesNotMatch(step("esperar_indexacao"), /continue-on-error/);
+  assert.ok(code.indexOf("setup-flyctl") < code.indexOf("esperar_indexacao"), "o flyctl tem de estar instalado antes da espera");
+  assert.ok(code.indexOf("esperar_indexacao") < code.indexOf("scripts/deploy.sh"), "a espera tem de vir antes do deploy");
 });
 check("catalog:health na Fly depois do deploy; nenhum db:push no deploy (Decisão 34: o esquema muda só pelo maintenance)", () => {
   const health = step("catalog_health dry-run");

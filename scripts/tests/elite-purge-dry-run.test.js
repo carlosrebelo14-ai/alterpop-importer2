@@ -221,6 +221,7 @@ function correrSh(task, phase, { saida, rc = 0, script = SCRIPT_SH }) {
       FAKE_RC: String(rc),
       GITHUB_STEP_SUMMARY: summary,
       WAIT_STEP_SECONDS: "0",
+      GATE_REPEAT_SECONDS: "0",
       WAIT_MAX_ATTEMPTS: "1",
     },
   });
