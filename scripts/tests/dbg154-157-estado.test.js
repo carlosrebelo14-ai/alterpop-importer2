@@ -118,11 +118,13 @@ async function escreverEmParalelo(moduloCaminho, shop, { prazoMs = PRAZO_DO_FILH
       m.setInMemoryStatus(process.env.SHOP, { state: "running", ["k_" + process.env.ID + "_" + i]: i });
       await m.flushCatalogRebuildStatus(process.env.SHOP, {});
     }`;
+  const processos = [];
   const filhos = Array.from({ length: N_PROCESSOS }, (_, id) => new Promise((resolve, reject) => {
     const p = spawn(process.execPath, ["--input-type=module", "-e", script], {
       env: { ...process.env, PROJECT_ROOT: raiz, MOD: moduloCaminho, SHOP: shop, ID: String(id), BARREIRA: barreira, SEM_PRONTO: semPronto ? "1" : "0" },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    processos.push(p);
     let erro = "";
     let saida = "";
     const prazo = setTimeout(() => {
@@ -142,7 +144,14 @@ async function escreverEmParalelo(moduloCaminho, shop, { prazoMs = PRAZO_DO_FILH
       if (codigo !== 0) reject(new Error(`filho saiu com ${codigo}: ${erro}`));
     });
   }));
-  const prontos = await Promise.all(filhos);
+  let prontos;
+  try {
+    prontos = await Promise.all(filhos);
+  } catch (err) {
+    // Um filho que falha deixa os irmãos à espera da barreira. Matam-se todos, para o teste não ficar pendurado.
+    for (const p of processos) p.kill();
+    throw err;
+  }
   fs.writeFileSync(barreira, "");
   await Promise.all(prontos.map((p) => new Promise((resolve, reject) => {
     const prazo = setTimeout(() => {

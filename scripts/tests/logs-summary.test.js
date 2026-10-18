@@ -161,6 +161,18 @@ check("lotes de fila: zero lotes dá 0 e '-', sem exceção", () => {
   }
 });
 
+check("recusas de arranque e ciclos saltados contam-se, em JSON e em texto (PR 5)", () => {
+  const texto = [
+    `{"timestamp":"${T(9, 0)}","message":"[indexacao] recusada (causa=script): Reindexação por script"}`,
+    `${T(9, 1)} [indexacao] recusada (causa=pasta): Pasta de marcadores de atividade não lida`,
+    `${T(9, 2)} [trigger-sync] ciclo saltado: script_indexing_running`,
+    `${T(9, 3)} [trigger-sync] ciclo parado antes da publicação: indexação em curso`,
+  ].join("\n");
+  const r = resumirLogs(texto);
+  assert.equal(r.INDEX_RECUSADAS, 2, "as duas recusas de arranque");
+  assert.equal(r.CICLOS_SALTADOS, 2, "os dois ciclos que não publicaram");
+});
+
 check("tsValido aceita ISO e epoch em milissegundos, rejeita o resto", () => {
   assert.equal(tsValido(T(1, 0)), T(1, 0));
   assert.equal(tsValido(0), "1970-01-01T00:00:00.000Z");

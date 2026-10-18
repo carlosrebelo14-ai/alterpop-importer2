@@ -7,14 +7,21 @@ Este ficheiro não existia no repositório. Foi criado em 17/10 com a regra da D
 Os passos desta secção são propostos, a confirmar pelo arquiteto.
 
 - O worker de indexação sai quando o processo principal desaparece. Um reinício do principal, incluindo o que o deploy faz à máquina, corta a indexação em curso. A purga do catálogo corre no mesmo worker e sai com ele.
-- O estado fica em `running` no disco. Nada no arranque corrige o ficheiro de estado. O estado sai de `running` só com uma nova indexação completa, ou com `RESUME=1` à mão. Até o veto da Decisão 36 ser levantado, o `RESUME=1` não se usa em produção.
+- O estado fica em `running` no disco. Nada no arranque corrige o ficheiro de estado. O estado sai de `running` quando uma nova indexação termina, completa ou falhada, ou com `RESUME=1` à mão. Até o veto da Decisão 36 ser levantado, o `RESUME=1` não se usa em produção.
 - Enquanto o estado estiver em `running`, o gate e o db:push recusam (ver "Risco que sobra").
 
 Verificação pós-deploy:
 
 1. Correr `ps` na máquina da Fly, por ssh, e confirmar que não há worker órfão: nenhum processo `catalog-index-worker` sem indexação em curso.
-2. Confirmar que a pasta de marcadores (`catalog-busy-*.json`) não tem marcadores com pid morto.
+2. Confirmar que a pasta de marcadores (`catalog-busy-*.json`) não tem marcadores com pid vivo fora de uma indexação em curso. Marcadores com pid morto não bloqueiam: a app ignora-os. Podem ser apagados à mão.
 3. Confirmar que `indexing_status` não mostra `running` preso. Se mostrar, não repetir o deploy: tratar com o arquiteto, como em "Risco que sobra".
+
+Recusas novas do PR 5: como ler e como libertar.
+
+- No log: `[indexacao] recusada (causa=<causa>)`. No Relatório de Margem: `não correu — ciclo parado: <causa>` ou `não correu — ciclo saltado: <causa>`.
+- `causa=script`, ou `reindexação por script em curso (pid N, desde <hora de Lisboa>)`: há um script vivo. Esperar que termine. Se o pid já não existir, o marcador é de um processo morto e a app já o ignora.
+- `causa=leitura`, `ilegivel` ou `sem_pid`: a mensagem diz o ficheiro. Não expira pelo tempo, exceto o JSON ilegível, aos 10 min, se a pasta deixar medir a idade. Se não houver processo com o pid do marcador, apagar o ficheiro à mão e anotar a causa.
+- `causa=pasta`: a pasta de marcadores não se lê. Corrigir a permissão ou o disco antes de repetir.
 
 ## Antes do deploy
 

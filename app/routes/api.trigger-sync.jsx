@@ -210,7 +210,7 @@ export const action = async ({ request }) => {
         if (arranque === null) {
           // null é recusa por script, por publicação ou reset, ou falha ao gravar o estado. O Relatório diz a causa.
           const scriptVivo = scriptDeIndexacaoEmCurso();
-          let causa = "indexação não arrancou";
+          let causa = "marcação ou gravação do estado falhou (ver log)";
           if (scriptVivo) causa = causaDeRecusaPorScript(scriptVivo);
           else if (publicacaoOuResetEmCurso()) causa = "publicação ou reset Shopify em curso";
           console.error(`[ciclo] indexação não arrancou (${causa}): ciclo parado antes da publicação.`);

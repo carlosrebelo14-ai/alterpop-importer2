@@ -215,7 +215,11 @@ function verificarPurga(texto) {
   const marca = posicao(texto, 'marcarAtividadeApp({ tipo: "indexacao", origem: "script" })', PURGA);
   const arranque = posicao(texto, "concluiu = await startCatalogCleanupInBackground(shop, settings", PURGA);
   assert.ok(recusa < marca && marca < arranque, "a purga recusa, marca e só depois arranca o worker");
-  assert.match(texto, /if \(concluiu === false\) \{[\s\S]*?process\.exit\(1\);/, "uma corrida que não concluiu sai com código 1");
+  const i = texto.indexOf("if (concluiu === false) {");
+  assert.ok(i >= 0, "a purga tem de tratar o caso que não concluiu");
+  const bloco = texto.slice(i, texto.indexOf("\n}", i));
+  assert.match(bloco, /process\.exit\(1\);/, "uma corrida que não concluiu sai com código 1");
+  assert.doesNotMatch(bloco, /process\.exit\(0\)/, "o ramo que não concluiu não pode sair com código 0");
 }
 
 function verificarCicloAbortaSemArranque(texto) {
@@ -251,8 +255,23 @@ function verificarRotaReset(texto) {
   const confirmacao = posicao(texto, "motivoDepoisDaReserva = motivoDeRecusaDoReset({", ROTA_RESET);
   const aguarda = posicao(texto, "await loadOfflineSessionForShop(session.shop);", ROTA_RESET);
   assert.ok(reserva < confirmacao && confirmacao < aguarda, "o reset confirma a indexação depois de tomar a reserva");
-  const libertacoes = texto.split("reserva.libertar();").length - 1;
-  assert.ok(libertacoes >= 2, "os caminhos de erro antes do job têm de libertar a reserva");
+  verificarLibertacaoNosCaminhosDeErro(texto);
+}
+
+/** Cada caminho de erro entre a reserva e o arranque do job tem de libertar a reserva antes de sair. */
+function verificarLibertacaoNosCaminhosDeErro(texto) {
+  const inicio = posicao(texto, "reserva = tentarReservarPublicacao({", ROTA_RESET);
+  const arranque = posicao(texto, "startShopifyCatalogResetInBackground(session, { reserva });", ROTA_RESET);
+  const caminhos = [
+    "reserva.libertar();\n      return Response.json({ ok: false, error: motivoDepoisDaReserva }",
+    "reserva.libertar();\n    throw err;\n  }\n\n  try {\n    await loadOfflineSessionForShop(session.shop);",
+    "reserva.libertar();\n    const message =",
+    "reserva.libertar();\n    throw err;\n  }\n  startShopifyCatalogResetInBackground(session, { reserva });",
+  ];
+  for (const caminho of caminhos) {
+    const i = texto.indexOf(caminho);
+    assert.ok(i > inicio && i < arranque, `caminho de erro sem libertação da reserva: ${caminho.slice(0, 60)}`);
+  }
 }
 
 const RESET_BG = "lib/importer/shopify/shopifyReset.server.js";
@@ -734,7 +753,7 @@ await caso("mutação: o reset e os scripts continuam a bloquear com o marcador 
   fs.utimesSync(ficheiro, antigo, antigo);
   try {
     const mod = await import(pathToFileURL(m).href);
-    assert.notEqual(mod.atividadeAppEmCurso()?.tipo, null, "a mutação tem de continuar a bloquear, e o caso (m) tem de apanhar isso");
+    assert.notEqual(mod.atividadeAppEmCurso(), null, "a mutação tem de continuar a bloquear, e o caso (m) tem de apanhar isso");
     assert.equal(mod.atividadeAppEmCurso()?.tipo, "desconhecida");
   } finally {
     fs.rmSync(ficheiro, { force: true });
@@ -1153,6 +1172,10 @@ function semComentarios(texto) {
 const RELATORIO_DO_SALTO = "await markMarginErosionCycleSkipped(shop, `ciclo parado: ${decisao.causa}`);";
 function verificarRelatorioDoSalto(texto) {
   assert.ok(semComentarios(texto).includes(RELATORIO_DO_SALTO), "o Relatório tem de receber a causa curta, em código e não em comentário");
+  const inicio = posicao(texto, "if (decisao) {", ROTA_CICLO_PUB);
+  const fim = texto.indexOf("} else {", inicio);
+  const linha = posicao(texto, RELATORIO_DO_SALTO, ROTA_CICLO_PUB);
+  assert.ok(linha > inicio && linha < fim, "o Relatório do salto tem de estar no ramo de recusa da confirmação");
 }
 
 await caso("(ab) ciclo: o salto da confirmação grava no Relatório a causa curta da decisão", () => {
@@ -1169,10 +1192,19 @@ await caso("mutação: a linha do Relatório fica em comentário (o caso (ab) te
 
 const RELATORIO_DO_PEDIDO_SCRIPT = "await markMarginErosionCycleSkipped(shop, `ciclo saltado: ${causaDeRecusaPorScript(atividadeScript)}`);";
 const RELATORIO_DO_PEDIDO_PUB = 'await markMarginErosionCycleSkipped(shop, "ciclo saltado: publicação ou reset Shopify em curso");';
+/** A linha tem de estar dentro do ramo que começa em `abre` e acaba no primeiro return do POST. */
+function noRamoDoPedido(texto, abre, linha) {
+  const inicio = posicao(texto, abre, ROTA_CICLO_PUB);
+  const pos = posicao(texto, linha, ROTA_CICLO_PUB);
+  const fim = texto.indexOf("return Response.json", inicio);
+  assert.ok(pos > inicio && pos < fim, `a linha tem de estar dentro de ${abre}`);
+}
 function verificarRelatorioDoPedido(texto) {
   const codigo = semComentarios(texto);
   assert.ok(codigo.includes(RELATORIO_DO_PEDIDO_SCRIPT), "a recusa por script do POST tem de ficar no Relatório");
   assert.ok(codigo.includes(RELATORIO_DO_PEDIDO_PUB), "a recusa por publicação ou reset do POST tem de ficar no Relatório");
+  noRamoDoPedido(texto, "if (recusaScript) {", RELATORIO_DO_PEDIDO_SCRIPT);
+  noRamoDoPedido(texto, "if (publicacaoOuResetEmCurso()) {", RELATORIO_DO_PEDIDO_PUB);
 }
 
 await caso("(ac) ciclo: o POST grava no Relatório as recusas que responde com 409 (script, publicação ou reset)", () => {
@@ -1193,7 +1225,12 @@ const ARRANQUE_NULO = [
   "await markMarginErosionCycleSkipped(shop, `ciclo parado: ${causa}`);",
 ];
 function verificarArranqueNulo(texto) {
-  for (const linha of ARRANQUE_NULO) assert.ok(texto.includes(linha), `o arranque nulo tem de dizer a causa real: ${linha}`);
+  const inicio = posicao(texto, "if (arranque === null) {", ROTA_CICLO_PUB);
+  const fim = texto.indexOf("return;", inicio);
+  for (const linha of ARRANQUE_NULO) {
+    const pos = posicao(texto, linha, ROTA_CICLO_PUB);
+    assert.ok(pos > inicio && pos < fim, `o arranque nulo tem de dizer a causa real, dentro do seu ramo: ${linha}`);
+  }
 }
 
 await caso("(ad) ciclo: quando o arranque devolve null, o Relatório diz a causa (script, publicação ou reset)", () => {
@@ -1423,12 +1460,13 @@ await caso("mutação: a mensagem promete expiração sem a condição da sonda 
   }
 });
 
-/** Arranca a indexação com um marcador ilegível e devolve as linhas de erro do log. */
-async function logDaRecusaComMarcadorIlegivel(modulo) {
+/** Arranca a indexação com um marcador já escrito (ou uma pasta, com `pasta`) e devolve as linhas de erro do log. */
+async function logDaRecusaComMarcador(modulo, nome, { pasta = false, conteudo = "{ truncado" } = {}) {
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
-  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-truncado.json");
-  fs.writeFileSync(ficheiro, "{ truncado", "utf8");
+  const ficheiro = path.join(dir, nome);
+  if (pasta) fs.mkdirSync(ficheiro);
+  else fs.writeFileSync(ficheiro, conteudo, "utf8");
   const linhas = [];
   const original = console.error;
   console.error = (...args) => linhas.push(args.join(" "));
@@ -1436,13 +1474,13 @@ async function logDaRecusaComMarcadorIlegivel(modulo) {
     assert.equal(await modulo.startCatalogIndexingWorker(SHOP, {}, { causa: "ciclo" }), null);
   } finally {
     console.error = original;
-    fs.rmSync(ficheiro, { force: true });
+    fs.rmSync(ficheiro, { recursive: true, force: true });
   }
   return linhas;
 }
 
 await caso("(al) o arranque recusado grava no log a causa real do marcador (ilegivel, não script)", async () => {
-  const linhas = await logDaRecusaComMarcadorIlegivel(indexacao);
+  const linhas = await logDaRecusaComMarcador(indexacao, "catalog-busy-indexacao-1-truncado.json");
   assert.ok(linhas.some((l) => l.includes("causa=ilegivel")), `o log tem de dizer causa=ilegivel: ${linhas.join(" | ")}`);
   assert.ok(!linhas.some((l) => l.includes("causa=script")), "a causa não pode ser script");
 });
@@ -1453,7 +1491,7 @@ await caso("mutação: o log diz marcador_ilegivel para qualquer causa (o caso (
   );
   try {
     const mod = await import(pathToFileURL(m).href);
-    const linhas = await logDaRecusaComMarcadorIlegivel(mod);
+    const linhas = await logDaRecusaComMarcador(mod, "catalog-busy-indexacao-1-truncado.json");
     assert.throws(() => assert.ok(linhas.some((l) => l.includes("causa=ilegivel"))), "o caso (al) tem de apanhar o rótulo errado");
   } finally {
     fs.rmSync(m, { force: true });
@@ -1469,6 +1507,109 @@ await caso("mutação: a mensagem volta a dizer sincronização (o caso (am) tem
   assert.throws(() =>
     assert.ok(trocaUnica(ler(ROTA_PUBLICACAO), MENSAGEM_DA_RESERVA_OCUPADA, "Já existe uma sincronização Shopify em curso.").includes(MENSAGEM_DA_RESERVA_OCUPADA))
   );
+});
+
+await caso("(al2) marcador de leitura (uma pasta com nome de ficheiro) recusa o arranque com causa=leitura no log", async () => {
+  const linhas = await logDaRecusaComMarcador(indexacao, "catalog-busy-indexacao-1-dirlido.json", { pasta: true });
+  assert.ok(linhas.some((l) => l.includes("causa=leitura")), `o log tem de dizer causa=leitura: ${linhas.join(" | ")}`);
+});
+
+await caso("(al3) marcador de script sem pid recusa o arranque com causa=sem_pid no log", async () => {
+  const conteudo = JSON.stringify({ tipo: "indexacao", origem: "script", startedAt: new Date().toISOString() });
+  const linhas = await logDaRecusaComMarcador(indexacao, "catalog-busy-indexacao-1-sempid.json", { conteudo });
+  assert.ok(linhas.some((l) => l.includes("causa=sem_pid")), `o log tem de dizer causa=sem_pid: ${linhas.join(" | ")}`);
+});
+
+await caso("(al4) pasta de marcadores que não se lê recusa o arranque com causa=pasta no log", async () => {
+  const ficheiro = path.join(raiz, "pasta-do-log.txt");
+  fs.writeFileSync(ficheiro, "x");
+  const anterior = process.env.CURATION_DATA_DIR;
+  process.env.CURATION_DATA_DIR = ficheiro;
+  const linhas = [];
+  const original = console.error;
+  console.error = (...args) => linhas.push(args.join(" "));
+  try {
+    assert.equal(await indexacao.startCatalogIndexingWorker(SHOP, {}, { causa: "ciclo" }), null);
+  } finally {
+    console.error = original;
+    if (anterior === undefined) delete process.env.CURATION_DATA_DIR;
+    else process.env.CURATION_DATA_DIR = anterior;
+    fs.rmSync(ficheiro, { force: true });
+  }
+  assert.ok(linhas.some((l) => l.includes("causa=pasta")), `o log tem de dizer causa=pasta: ${linhas.join(" | ")}`);
+});
+
+await caso("(an) pasta de marcadores que não se lê: a app devolve a causa e não lança (reset e publicação)", () => {
+  const ficheiro = path.join(raiz, "pasta-nao-lida.txt");
+  fs.writeFileSync(ficheiro, "x");
+  try {
+    const atv = atividade.atividadeAppEmCurso({ dir: ficheiro });
+    assert.equal(atv?.tipo, "desconhecida", "uma pasta que não se lê é desconhecida, e não lança");
+    assert.match(atv.motivo, /ENOTDIR/);
+    assert.match(atividade.motivoDeRecusaDoReset({ indexacaoEmCurso: false, atividade: atv }), /Atividade da app ilegível/);
+    const decisao = atividade.decisaoDaPublicacaoManual({
+      indexacaoEmCurso: false,
+      atividadeScript: atividade.scriptDeIndexacaoEmCurso({ dir: ficheiro }),
+    });
+    assert.match(decisao?.mensagem ?? "", /Pasta de marcadores de atividade não lida/);
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+  }
+});
+
+await caso("mutação: a app volta a lançar com a pasta que não se lê (o caso (an) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "pasta-lanca", (t) =>
+    trocaUnica(t, '    return { tipo: "desconhecida", pid: null, motivo: `${dir} (${err?.code || "erro"})` };\n  }\n  // Um marcador escrito antes', "    throw err;\n  }\n  // Um marcador escrito antes")
+  );
+  const ficheiro = path.join(raiz, "pasta-nao-lida-mut.txt");
+  fs.writeFileSync(ficheiro, "x");
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    assert.throws(() => assert.equal(mod.atividadeAppEmCurso({ dir: ficheiro })?.tipo, "desconhecida"), "o caso (an) tem de apanhar a exceção");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(ao) a recusa por script vivo diz a hora de Lisboa, não o ISO em UTC", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const alheio = processoAlheio();
+  const vivo = path.join(dir, "catalog-busy-indexacao-9-hora.json");
+  fs.writeFileSync(vivo, JSON.stringify({ tipo: "indexacao", pid: alheio.pid, origem: "script", processo: "outro", startedAt: "2026-10-18T03:49:22.861Z" }));
+  try {
+    const motivo = atividade.motivoDeRecusaPorScript(atividade.scriptDeIndexacaoEmCurso());
+    assert.doesNotMatch(motivo, /2026-10-18T03:49:22\.861Z/, "não pode sair o ISO em UTC");
+    assert.match(motivo, /04:49:22/, "a hora tem de sair em Lisboa (UTC+1 em outubro)");
+  } finally {
+    alheio.kill();
+    fs.rmSync(vivo, { force: true });
+  }
+});
+
+await caso("mutação: a hora sai em UTC (o caso (ao) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "hora-utc", (t) =>
+    trocaUnica(t, "motivo: `pid ${dados.pid}, desde ${horaDeLisboa(dados.startedAt)}` };", "motivo: `pid ${dados.pid}, desde ${dados.startedAt}` };")
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const alheio = processoAlheio();
+  const vivo = path.join(dir, "catalog-busy-indexacao-9-hora.json");
+  fs.writeFileSync(vivo, JSON.stringify({ tipo: "indexacao", pid: alheio.pid, origem: "script", processo: "outro", startedAt: "2026-10-18T03:49:22.861Z" }));
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    const motivo = mod.motivoDeRecusaPorScript(mod.scriptDeIndexacaoEmCurso());
+    assert.throws(() => assert.match(motivo, /04:49:22/), "o caso (ao) tem de apanhar a hora em UTC");
+  } finally {
+    alheio.kill();
+    fs.rmSync(vivo, { force: true });
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("mutação: a sessão Shopify inválida do reset deixa a reserva presa (o caso do reset tem de ficar vermelho)", () => {
+  assert.throws(() => verificarLibertacaoNosCaminhosDeErro(trocaUnica(ler(ROTA_RESET), "reserva.libertar();\n    const message =", "const message =")));
 });
 
 await caso("(u) uma escrita de marca que falha não deixa ficheiro parcial (que bloquearia 10 min)", () => {

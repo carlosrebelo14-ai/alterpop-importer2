@@ -31,3 +31,6 @@ reports/
 # Ficheiros WAL do SQLite local (testes) — nunca commitados; sem isto o deploy.sh recusa na guarda 2
 dev.sqlite-shm
 dev.sqlite-wal
+
+# Cópias de mutação dos testes (scripts/tests): criadas e apagadas pelo próprio teste; sobram se o teste for interrompido
+.mutante-*
