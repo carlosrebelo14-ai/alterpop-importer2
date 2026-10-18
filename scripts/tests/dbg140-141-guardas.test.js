@@ -171,6 +171,20 @@ function verificarRotaCiclo(texto) {
 }
 
 /** O ciclo para quando a indexação não arranca, antes do IIFE seguir para a publicação. */
+/** Os scripts de escrita retiram a marca também em sinal (terminal fechado, SIGTERM), não só no finally. */
+function verificarSinaisDoScript(texto, rel) {
+  assert.match(texto, /for \(const sinal of \["SIGHUP", "SIGINT", "SIGTERM"\]\) \{/, `${rel}: os sinais tratados têm de ser SIGHUP, SIGINT e SIGTERM`);
+  assert.match(texto, /process\.on\(sinal, \(\) => \{\s*retirarMarcador\(\);/, `${rel}: o tratador de sinal tem de retirar a marca`);
+}
+
+/** Marca falhada no ciclo: o ciclo para e não segue para as coleções. */
+function verificarCicloParaSemMarca(texto) {
+  const inicio = posicao(texto, "if (marcaFalhou) {", ROTA_CICLO);
+  const fim = posicao(texto, "} else if (!reserva) {", ROTA_CICLO);
+  assert.ok(inicio < fim, "o ramo de marca falhada vem antes do ramo de reserva");
+  assert.match(texto.slice(inicio, fim), /markMarginErosionCycleSkipped\(shop[\s\S]*return;/, "a marca falhada tem de parar o ciclo");
+}
+
 function verificarCicloParaComConfirmacao(texto) {
   const inicio = posicao(texto, "let motivoIndexacao = null;", ROTA_CICLO);
   const fim = posicao(texto, "if (motivoIndexacao) {", ROTA_CICLO);
@@ -969,6 +983,29 @@ await caso("mutação: a mensagem de marcador ilegível diz script (o caso (t) t
   }
 });
 
+await caso("(z) os dois scripts de escrita retiram a marca também em sinal", () => {
+  verificarSinaisDoScript(ler("scripts/catalog/full-catalog-reindex.js"), "full-catalog-reindex.js");
+  verificarSinaisDoScript(ler("scripts/catalog/catalog-purge-reindex.js"), "catalog-purge-reindex.js");
+});
+
+await caso("mutação: o script não retira a marca em sinal (o caso (z) tem de ficar vermelho)", () => {
+  const texto = ler("scripts/catalog/full-catalog-reindex.js");
+  assert.throws(() =>
+    verificarSinaisDoScript(trocaUnica(texto, "    retirarMarcador();\n    process.exit(sinal", "    process.exit(sinal"), "full-catalog-reindex.js")
+  );
+});
+
+await caso("(z2) marca falhada no ciclo: o ciclo para e não segue para as coleções", () => {
+  verificarCicloParaSemMarca(ler(ROTA_CICLO_PUB));
+});
+
+await caso("mutação: a marca falhada deixa o ciclo seguir (o caso (z2) tem de ficar vermelho)", () => {
+  const texto = ler(ROTA_CICLO_PUB);
+  assert.throws(() =>
+    verificarCicloParaSemMarca(trocaUnica(texto, 'await markMarginErosionCycleSkipped(shop, "não foi possível marcar a atividade da app antes da publicação");\n          return;', 'await markMarginErosionCycleSkipped(shop, "não foi possível marcar a atividade da app antes da publicação");'))
+  );
+});
+
 await caso("(y) marcador ilegível por erro de leitura: a mensagem diz que só sai quando o ficheiro for apagado", () => {
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
@@ -985,7 +1022,7 @@ await caso("(y) marcador ilegível por erro de leitura: a mensagem diz que só s
 
 await caso("mutação: a mensagem promete expiração (o caso (y) tem de ficar vermelho)", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "mensagem-espera", (t) =>
-    trocaUnica(t, "Num erro de leitura ou sem pid, só sai quando o ficheiro for apagado, depois de confirmar que o processo já não existe.", "Espera 10 min.")
+    trocaUnica(t, "Num erro de leitura ou sem pid, só sai quando o ficheiro for apagado.", "Espera 10 min.")
   );
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();

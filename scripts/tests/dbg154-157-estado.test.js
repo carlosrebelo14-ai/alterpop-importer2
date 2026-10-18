@@ -97,24 +97,46 @@ async function caso(nome, fn) {
 const N_PROCESSOS = 4;
 const N_ESCRITAS = 40;
 
-/** Corre N_PROCESSOS filhos; cada um grava N_ESCRITAS chaves próprias no mesmo ficheiro. */
+let contadorBarreira = 0;
+
+/**
+ * Corre N_PROCESSOS filhos; cada um grava N_ESCRITAS chaves próprias no mesmo ficheiro. Os filhos só começam a
+ * escrever quando todos estão carregados (barreira por ficheiro). Sem isto, um filho pode acabar antes de outro
+ * começar, não há sobreposição, e a mutação sem lock passa sem perder chaves (corrida de tempo, não de código).
+ */
 async function escreverEmParalelo(moduloCaminho, shop) {
+  const barreira = path.join(raiz, `barreira-${contadorBarreira++}`);
   const script = `
+    import fs from "node:fs";
     const m = await import(process.env.MOD);
+    process.stdout.write("pronto\\n");
+    while (!fs.existsSync(process.env.BARREIRA)) await new Promise((r) => setTimeout(r, 1));
     for (let i = 0; i < ${N_ESCRITAS}; i += 1) {
       m.setInMemoryStatus(process.env.SHOP, { state: "running", ["k_" + process.env.ID + "_" + i]: i });
       await m.flushCatalogRebuildStatus(process.env.SHOP, {});
     }`;
   const filhos = Array.from({ length: N_PROCESSOS }, (_, id) => new Promise((resolve, reject) => {
     const p = spawn(process.execPath, ["--input-type=module", "-e", script], {
-      env: { ...process.env, PROJECT_ROOT: raiz, MOD: moduloCaminho, SHOP: shop, ID: String(id) },
-      stdio: ["ignore", "ignore", "pipe"],
+      env: { ...process.env, PROJECT_ROOT: raiz, MOD: moduloCaminho, SHOP: shop, ID: String(id), BARREIRA: barreira },
+      stdio: ["ignore", "pipe", "pipe"],
     });
     let erro = "";
+    let saida = "";
+    p.stdout.on("data", (d) => {
+      saida += d;
+      if (saida.includes("pronto")) resolve(p);
+    });
     p.stderr.on("data", (d) => (erro += d));
-    p.on("exit", (codigo) => (codigo === 0 ? resolve() : reject(new Error(`filho saiu com ${codigo}: ${erro}`))));
+    p.on("exit", (codigo) => {
+      if (codigo !== 0) reject(new Error(`filho saiu com ${codigo}: ${erro}`));
+    });
   }));
-  await Promise.all(filhos);
+  const prontos = await Promise.all(filhos);
+  fs.writeFileSync(barreira, "");
+  await Promise.all(prontos.map((p) => new Promise((resolve, reject) => {
+    p.on("exit", (codigo) => (codigo === 0 ? resolve() : reject(new Error(`filho saiu com ${codigo}`))));
+    if (p.exitCode !== null) resolve();
+  })));
   const lido = JSON.parse(fs.readFileSync(ficheiroDoEstado(shop), "utf8"));
   return Object.keys(lido).filter((k) => k.startsWith("k_")).length;
 }

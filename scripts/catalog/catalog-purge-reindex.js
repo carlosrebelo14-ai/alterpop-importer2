@@ -48,6 +48,13 @@ try {
   console.error("[catalog-purge] Recusado: não foi possível marcar a atividade da app. Nada foi apagado.");
   process.exit(1);
 }
+// PR 5 (revisão): um sinal não passa pelo finally. Ver full-catalog-reindex.js.
+for (const sinal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+  process.on(sinal, () => {
+    retirarMarcador();
+    process.exit(sinal === "SIGINT" ? 130 : 143);
+  });
+}
 
 const settings = await loadShopSettings(shop);
 

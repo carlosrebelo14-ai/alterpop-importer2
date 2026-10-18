@@ -64,7 +64,11 @@ check("(R2) ciclo: reserva logo antes da chamada a runApprovedShopifySync, sem a
   // nenhum await entre a reserva e a decisão, nem entre o else da decisão e a chamada.
   const decisao = ciclo.indexOf("motivoIndexacao = motivoDeRecusaDaPublicacaoManual({");
   assert.ok(decisao > reserva && decisao < chamada, "a decisão de indexação fica entre a reserva e a chamada");
-  assert.doesNotMatch(ciclo.slice(reserva, decisao), /await/, "sem await entre a reserva e a decisão");
+  // Os ramos de marca falhada e de reserva ocupada ficam entre a reserva e a decisão. O caminho de publicação começa na
+  // declaração da decisão, e é aí que a regra de não haver await se aplica.
+  const declaracao = ciclo.indexOf("let motivoIndexacao = null;");
+  assert.ok(declaracao > reserva && declaracao < decisao, "a declaração da decisão fica depois da reserva");
+  assert.doesNotMatch(ciclo.slice(declaracao, decisao), /await/, "sem await entre a declaração da decisão e a decisão");
   const entrada = ciclo.indexOf("} else {", decisao);
   assert.ok(entrada > decisao && entrada < chamada, "o caminho de publicação está no else da decisão");
   assert.doesNotMatch(ciclo.slice(entrada, chamada), /await/, "sem await entre o else e a chamada da publicação");

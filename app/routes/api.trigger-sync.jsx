@@ -255,10 +255,12 @@ export const action = async ({ request }) => {
           reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
         } catch (err) {
           marcaFalhou = true;
-          console.error("[trigger-sync] publicação de aprovados saltada: não foi possível marcar a atividade da app.", err?.message || err);
+          console.error("[trigger-sync] ciclo parado antes da publicação: não foi possível marcar a atividade da app.", err?.message || err);
         }
         if (marcaFalhou) {
-          // Já registado acima.
+          // PR 5 (revisão): sem marca, a exclusão com a indexação não se garante. O ciclo para, como no caso de confirmação.
+          await markMarginErosionCycleSkipped(shop, "não foi possível marcar a atividade da app antes da publicação");
+          return;
         } else if (!reserva) {
           console.log(
             "[trigger-sync] publicação de aprovados saltada: a reserva está ocupada por uma publicação manual ou por um reset em curso."
@@ -279,7 +281,7 @@ export const action = async ({ request }) => {
             // as franquias, a erosão nem as coleções, porque as coleções publicam sem reserva.
             reserva.libertar();
             console.log(`[trigger-sync] ciclo parado antes da publicação: ${motivoIndexacao}`);
-            await markMarginErosionCycleSkipped(shop, `indexação ou script em curso no momento da publicação (${motivoIndexacao})`);
+            await markMarginErosionCycleSkipped(shop, `publicação saltada: ${motivoIndexacao}`);
             return;
           } else {
             console.log("[trigger-sync] a publicar aprovados…");

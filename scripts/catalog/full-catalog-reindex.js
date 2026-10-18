@@ -35,6 +35,14 @@ try {
   console.error("[reindex] Recusado: não foi possível marcar a atividade da app. Nada foi gravado.");
   process.exit(1);
 }
+// PR 5 (revisão): um sinal (terminal fechado, SIGTERM) não passa pelo finally. Sem isto, a marca fica com o pid deste
+// processo e bloqueia a app até o pid ser reutilizado. SIGKILL não se trata: fica como residual.
+for (const sinal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+  process.on(sinal, () => {
+    retirarMarcador();
+    process.exit(sinal === "SIGINT" ? 130 : 143);
+  });
+}
 
 const shop = process.env.SHOP || process.env.SHOPIFY_SHOP_URL || "alterpop-store.myshopify.com";
 const forceResume = ["1", "true", "yes"].includes(String(process.env.RESUME || "").toLowerCase());
