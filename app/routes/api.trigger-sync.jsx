@@ -12,6 +12,7 @@ import { runApprovedShopifySync } from "../../lib/importer/shopify/shopifyApprov
 import { publicacaoOuResetEmCurso } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import {
   atividadeAppEmCurso,
+  causaDeRecusaPorScript,
   decisaoDaPublicacaoManual,
   marcarAtividadeApp,
   motivoDeRecusaPorScript,
@@ -127,9 +128,12 @@ export const action = async ({ request }) => {
     );
   }
   // PR 5 (DBG-140 e DBG-141): um script de reindexação vivo tem a loja. O ciclo não arranca por cima dele.
-  const recusaScript = motivoDeRecusaPorScript(scriptDeIndexacaoEmCurso());
+  const atividadeScript = scriptDeIndexacaoEmCurso();
+  const recusaScript = motivoDeRecusaPorScript(atividadeScript);
   if (recusaScript) {
     console.log(`[trigger-sync] ciclo saltado: ${recusaScript}`);
+    // Sem registo, o Relatório mostrava o último ciclo como se este não tivesse sido pedido (PR 5, revisão de convergência).
+    await markMarginErosionCycleSkipped(shop, `ciclo saltado: ${causaDeRecusaPorScript(atividadeScript)}`);
     return Response.json(
       { ok: true, skipped: true, reason: "script_indexing_running" },
       { status: 409, headers: JSON_HEADERS }
@@ -138,6 +142,7 @@ export const action = async ({ request }) => {
   // PR 5 (revisão): um reset ou uma publicação com a reserva tomada faz o ciclo responder 409 já aqui, e não 202.
   if (publicacaoOuResetEmCurso()) {
     console.log("[trigger-sync] ciclo saltado: publicação ou reset Shopify em curso.");
+    await markMarginErosionCycleSkipped(shop, "ciclo saltado: publicação ou reset Shopify em curso");
     return Response.json(
       { ok: true, skipped: true, reason: "publish_or_reset_running" },
       { status: 409, headers: JSON_HEADERS }
@@ -203,8 +208,13 @@ export const action = async ({ request }) => {
         // nem publica com o estado antigo do disco (que ainda diz completed com linhas).
         const arranque = await startCatalogIndexingWorker(shop, settings, { runPurge: false, resume: false, causa: "ciclo" });
         if (arranque === null) {
-          console.error("[ciclo] indexação não arrancou: ciclo parado antes da publicação.");
-          await markMarginErosionCycleSkipped(shop, "indexação não arrancou");
+          // null é recusa por script, por publicação ou reset, ou falha ao gravar o estado. O Relatório diz a causa.
+          const scriptVivo = scriptDeIndexacaoEmCurso();
+          let causa = "indexação não arrancou";
+          if (scriptVivo) causa = causaDeRecusaPorScript(scriptVivo);
+          else if (publicacaoOuResetEmCurso()) causa = "publicação ou reset Shopify em curso";
+          console.error(`[ciclo] indexação não arrancou (${causa}): ciclo parado antes da publicação.`);
+          await markMarginErosionCycleSkipped(shop, `ciclo parado: ${causa}`);
           return;
         }
 
@@ -273,7 +283,7 @@ export const action = async ({ request }) => {
               atividadeScript: scriptDeIndexacaoEmCurso(),
             });
           } catch (err) {
-            // Não aborta o ciclo inteiro: a publicação salta com a causa, e o stock, as franquias e a erosão seguem.
+            // A falha da confirmação conta como recusa: o ciclo para com a causa, e a exceção não sai do IIFE.
             decisao = {
               causa: "não foi possível confirmar a indexação",
               mensagem: `não foi possível confirmar a indexação (${err?.message || err})`,
@@ -285,7 +295,7 @@ export const action = async ({ request }) => {
             // curta. A frase da recusa fica no log.
             reserva.libertar();
             console.log(`[trigger-sync] ciclo parado antes da publicação: ${decisao.mensagem}`);
-            await markMarginErosionCycleSkipped(shop, `publicação saltada: ${decisao.causa}`);
+            await markMarginErosionCycleSkipped(shop, `ciclo parado: ${decisao.causa}`);
             return;
           } else {
             console.log("[trigger-sync] a publicar aprovados…");

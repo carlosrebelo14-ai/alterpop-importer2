@@ -6,8 +6,10 @@
  * chamada não lança. Nem o caminho com `void` (startCatalogRebuildInBackground) deixa rejeição sem
  * tratamento.
  *
- * CURATION_DATA_DIR aponta para um caminho impossível (debaixo de um ficheiro normal). PROJECT_ROOT
- * aponta para um diretório temporário, para o estado de indexação não ir para data/ do repositório.
+ * CURATION_DATA_DIR aponta para uma pasta legível e vazia, para a guarda de script passar. A escrita de
+ * ficheiros catalog-busy-* falha por monkeypatch, como no caso (u) do dbg140. Uma pasta que não se lê é outro
+ * caso: a guarda recusa antes do marcador (causa pasta, coberto no dbg140-141). PROJECT_ROOT aponta para um
+ * diretório temporário, para o estado de indexação não ir para data/ do repositório.
  *
  * Atenção. O worker é criado (fork) antes do marcador, porque o marcador leva o pid do worker. O filho
  * recebe SIGTERM logo a seguir. O teste verifica que nenhuma indexação fica ativa.
@@ -26,14 +28,24 @@ const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "indexacao-marcador-"));
 process.on("exit", () => fs.rmSync(tmp, { recursive: true, force: true }));
 
-// Caminho impossível: um ficheiro normal não pode ser o diretório pai.
-const ficheiroComum = path.join(tmp, "ficheiro-comum");
-fs.writeFileSync(ficheiroComum, "x", "utf8");
+// Pasta de marcadores legível e vazia: a guarda de script lê sem encontrar marcadores e passa.
+const dadosDoMarcador = path.join(tmp, "dados");
+fs.mkdirSync(dadosDoMarcador);
 
 // Antes de importar os módulos. O estado de indexação lê PROJECT_ROOT ao carregar, e o marcador lê
 // CURATION_DATA_DIR ao chamar.
 process.env.PROJECT_ROOT = path.join(tmp, "projeto");
-process.env.CURATION_DATA_DIR = path.join(ficheiroComum, "impossivel");
+process.env.CURATION_DATA_DIR = dadosDoMarcador;
+
+// A escrita do marcador falha. O resto das escritas segue normal (o estado de indexação também usa fs).
+const escreverFicheiro = fs.writeFileSync;
+fs.writeFileSync = (ficheiro, conteudo, opcoes) => {
+  if (String(ficheiro).includes("catalog-busy-")) throw new Error("disco cheio (teste)");
+  return escreverFicheiro(ficheiro, conteudo, opcoes);
+};
+process.on("exit", () => {
+  fs.writeFileSync = escreverFicheiro;
+});
 
 const modulo = (rel) => import(pathToFileURL(path.join(RAIZ, rel)).href);
 const indexacao = await modulo("lib/importer/catalog/indexingStream.server.js");

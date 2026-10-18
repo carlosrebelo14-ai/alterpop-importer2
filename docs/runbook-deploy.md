@@ -2,6 +2,20 @@
 
 Este ficheiro não existia no repositório. Foi criado em 17/10 com a regra da Decisão 38 (`docs/decisoes.md`).
 
+## Efeitos do PR 5 no deploy
+
+Os passos desta secção são propostos, a confirmar pelo arquiteto.
+
+- O worker de indexação sai quando o processo principal desaparece. Um reinício do principal, incluindo o que o deploy faz à máquina, corta a indexação em curso. A purga do catálogo corre no mesmo worker e sai com ele.
+- O estado fica em `running` no disco. Nada no arranque corrige o ficheiro de estado. O estado sai de `running` só com uma nova indexação completa, ou com `RESUME=1` à mão. Até o veto da Decisão 36 ser levantado, o `RESUME=1` não se usa em produção.
+- Enquanto o estado estiver em `running`, o gate e o db:push recusam (ver "Risco que sobra").
+
+Verificação pós-deploy:
+
+1. Correr `ps` na máquina da Fly, por ssh, e confirmar que não há worker órfão: nenhum processo `catalog-index-worker` sem indexação em curso.
+2. Confirmar que a pasta de marcadores (`catalog-busy-*.json`) não tem marcadores com pid morto.
+3. Confirmar que `indexing_status` não mostra `running` preso. Se mostrar, não repetir o deploy: tratar com o arquiteto, como em "Risco que sobra".
+
 ## Antes do deploy
 
 - `main` tem o PR que se quer publicar, e o CI está verde.

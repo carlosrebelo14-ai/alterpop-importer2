@@ -38,9 +38,9 @@ if (process.env.CONFIRM !== CONFIRM_WORD) {
   process.exit(1);
 }
 
-// PR 5 (revisão): a purga marca-se como script antes de arrancar o worker. Sem isto, há uma janela entre a verificação
-// acima e a marca que o worker escreve, e a indexação da app arrancava nessa janela. O worker não se recusa a si
-// próprio, porque a guarda ignora marcas do próprio processo.
+// PR 5 (revisão): o processo da purga marca-se como script antes de arrancar o worker. Sem isto, há uma janela entre a
+// verificação acima e a marca da corrida, e a indexação da app arrancava nessa janela. O processo da purga não se recusa
+// a si próprio, porque a guarda ignora as marcas deste processo.
 let retirarMarcador;
 try {
   retirarMarcador = marcarAtividadeApp({ tipo: "indexacao", origem: "script" });

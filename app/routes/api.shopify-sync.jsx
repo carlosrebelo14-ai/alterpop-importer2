@@ -230,7 +230,10 @@ export const action = async ({ request }) => {
     );
   }
   if (!reserva) {
-    return Response.json({ ok: false, error: "Já existe uma sincronização Shopify em curso." }, { status: 409 });
+    return Response.json(
+      { ok: false, error: "Já há uma publicação ou um reset Shopify em curso. Aguarda que termine antes de publicar." },
+      { status: 409 }
+    );
   }
 
   // PR 5 (DBG-141): a indexação pode ter arrancado nos awaits acima, depois da verificação de indexação. Confirma-se aqui,
