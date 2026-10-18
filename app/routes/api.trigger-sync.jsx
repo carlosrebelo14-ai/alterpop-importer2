@@ -12,8 +12,8 @@ import { runApprovedShopifySync } from "../../lib/importer/shopify/shopifyApprov
 import { publicacaoOuResetEmCurso } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import {
   atividadeAppEmCurso,
+  decisaoDaPublicacaoManual,
   marcarAtividadeApp,
-  motivoDeRecusaDaPublicacaoManual,
   motivoDeRecusaPorScript,
   scriptDeIndexacaoEmCurso,
 } from "../../lib/curation/atividadeApp.js";
@@ -266,22 +266,26 @@ export const action = async ({ request }) => {
             "[trigger-sync] publicação de aprovados saltada: a reserva está ocupada por uma publicação manual ou por um reset em curso."
           );
         } else {
-          let motivoIndexacao = null;
+          let decisao = null;
           try {
-            motivoIndexacao = motivoDeRecusaDaPublicacaoManual({
+            decisao = decisaoDaPublicacaoManual({
               indexacaoEmCurso: isCatalogIndexingRunning(shop) || atividadeAppEmCurso()?.tipo === "indexacao",
               atividadeScript: scriptDeIndexacaoEmCurso(),
             });
           } catch (err) {
             // Não aborta o ciclo inteiro: a publicação salta com a causa, e o stock, as franquias e a erosão seguem.
-            motivoIndexacao = `não foi possível confirmar a indexação (${err?.message || err})`;
+            decisao = {
+              causa: "não foi possível confirmar a indexação",
+              mensagem: `não foi possível confirmar a indexação (${err?.message || err})`,
+            };
           }
-          if (motivoIndexacao) {
+          if (decisao) {
             // PR 5 (revisão): sem confirmação de que não há indexação, o ciclo para aqui. Não publica nem corre o stock,
-            // as franquias, a erosão nem as coleções, porque as coleções publicam sem reserva.
+            // as franquias, a erosão nem as coleções, porque as coleções publicam sem reserva. O Relatório recebe a causa
+            // curta. A frase da recusa fica no log.
             reserva.libertar();
-            console.log(`[trigger-sync] ciclo parado antes da publicação: ${motivoIndexacao}`);
-            await markMarginErosionCycleSkipped(shop, `publicação saltada: ${motivoIndexacao}`);
+            console.log(`[trigger-sync] ciclo parado antes da publicação: ${decisao.mensagem}`);
+            await markMarginErosionCycleSkipped(shop, `publicação saltada: ${decisao.causa}`);
             return;
           } else {
             console.log("[trigger-sync] a publicar aprovados…");

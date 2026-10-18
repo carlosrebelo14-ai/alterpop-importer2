@@ -62,11 +62,11 @@ check("(R2) ciclo: reserva logo antes da chamada a runApprovedShopifySync, sem a
   assert.ok(chamada > reserva, "a reserva fica antes da chamada, e a chamada leva a reserva");
   // PR 5 (revisão): o ramo de salto pode esperar pela marcação da erosão. A regra vale para o caminho de publicação:
   // nenhum await entre a reserva e a decisão, nem entre o else da decisão e a chamada.
-  const decisao = ciclo.indexOf("motivoIndexacao = motivoDeRecusaDaPublicacaoManual({");
+  const decisao = ciclo.indexOf("decisao = decisaoDaPublicacaoManual({");
   assert.ok(decisao > reserva && decisao < chamada, "a decisão de indexação fica entre a reserva e a chamada");
   // Os ramos de marca falhada e de reserva ocupada ficam entre a reserva e a decisão. O caminho de publicação começa na
   // declaração da decisão, e é aí que a regra de não haver await se aplica.
-  const declaracao = ciclo.indexOf("let motivoIndexacao = null;");
+  const declaracao = ciclo.indexOf("let decisao = null;");
   assert.ok(declaracao > reserva && declaracao < decisao, "a declaração da decisão fica depois da reserva");
   assert.doesNotMatch(ciclo.slice(declaracao, decisao), /await/, "sem await entre a declaração da decisão e a decisão");
   const entrada = ciclo.indexOf("} else {", decisao);

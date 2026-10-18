@@ -48,7 +48,8 @@ try {
   console.error("[catalog-purge] Recusado: não foi possível marcar a atividade da app. Nada foi apagado.");
   process.exit(1);
 }
-// PR 5 (revisão): um sinal não passa pelo finally. Ver full-catalog-reindex.js.
+// PR 5 (revisão): um sinal mata o processo sem chegar ao fim. A marca fica com o pid morto e a app ignora-a. Ver
+// full-catalog-reindex.js. O worker filho sai com o pai (catalog-index-worker.mjs), por isso não fica a escrever órfão.
 for (const sinal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
   process.on(sinal, () => {
     retirarMarcador();

@@ -186,8 +186,8 @@ function verificarCicloParaSemMarca(texto) {
 }
 
 function verificarCicloParaComConfirmacao(texto) {
-  const inicio = posicao(texto, "let motivoIndexacao = null;", ROTA_CICLO);
-  const fim = posicao(texto, "if (motivoIndexacao) {", ROTA_CICLO);
+  const inicio = posicao(texto, "let decisao = null;", ROTA_CICLO);
+  const fim = posicao(texto, "if (decisao) {", ROTA_CICLO);
   assert.ok(inicio < fim, "a decisão de indexação do ciclo tem de vir antes da recusa");
   assert.doesNotMatch(texto.slice(inicio, fim), /throw/, "a confirmação não lança: converte o erro em motivo");
   const fimDoRamo = texto.indexOf("} else {", fim);
@@ -202,7 +202,7 @@ function verificarCicloPublicacao(texto) {
   assert.ok(pos < sync, "o POST tem de recusar com reset ou publicação antes do IIFE");
   assert.match(texto.slice(pos, sync), /reason: "publish_or_reset_running" \},\s*\{ status: 409/, "a recusa tem de ser 409 com causa");
   const marca = posicao(texto, 'reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', ROTA_CICLO);
-  const decisao = posicao(texto, "motivoIndexacao = motivoDeRecusaDaPublicacaoManual({", ROTA_CICLO);
+  const decisao = posicao(texto, "decisao = decisaoDaPublicacaoManual({", ROTA_CICLO);
   assert.ok(marca < decisao, "a confirmação da indexação tem de vir depois da reserva com marca");
 }
 
@@ -339,7 +339,7 @@ await caso("(b) DBG-141: a decisão da publicação manual recusa com indexaçã
 
 await caso("mutação: a decisão deixa de contar a indexação e o caso (b) tem de ficar vermelho", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "indexacao-nao-conta", (t) =>
-    trocaUnica(t, "  if (indexacaoEmCurso) {\n    return \"Aguarda que a indexação do catálogo termine antes de publicar.\";", "  if (false) {\n    return \"Aguarda que a indexação do catálogo termine antes de publicar.\";")
+    trocaUnica(t, "  if (indexacaoEmCurso) {\n    return { causa: \"indexação em curso\", mensagem: \"Aguarda que a indexação do catálogo termine antes de publicar.\" };", "  if (false) {\n    return { causa: \"indexação em curso\", mensagem: \"Aguarda que a indexação do catálogo termine antes de publicar.\" };")
   );
   try {
     const mod = await import(pathToFileURL(m).href);
@@ -860,7 +860,7 @@ await caso("mutação: o POST responde 200 em vez de 409 (o caso (q) tem de fica
 });
 
 await caso("mutação: o ciclo confirma a indexação sem repetir a decisão depois da reserva (o caso (q) tem de ficar vermelho)", () => {
-  assert.throws(() => verificarCicloPublicacao(trocaUnica(ler(ROTA_CICLO_PUB), "motivoIndexacao = motivoDeRecusaDaPublicacaoManual({", "motivoIndexacao = null({")));
+  assert.throws(() => verificarCicloPublicacao(trocaUnica(ler(ROTA_CICLO_PUB), "decisao = decisaoDaPublicacaoManual({", "decisao = null({")));
 });
 
 await caso("mutação: o ciclo reserva sem marca da app (o caso (q) tem de ficar vermelho)", () => {
@@ -902,7 +902,7 @@ await caso("(r) erro de leitura de marcador de script vivo há mais de 10 min co
 
 await caso("mutação: erro de leitura expira pelo prazo e deixa passar a indexação (o caso (r) tem de ficar vermelho)", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "leitura-expira", (t) =>
-    trocaUnica(t, '      return { tipo: "desconhecida", pid: null, motivo: `marcador de atividade não lido: ${nome}` };', '      if (marcadorIlegivelExpirou(ficheiro, nome)) continue;\n      return { tipo: "desconhecida", pid: null, motivo: `marcador de atividade não lido: ${nome}` };')
+    trocaUnica(t, '      return { tipo: "desconhecida", causa: "leitura", pid: null, motivo: nome };', '      if (marcadorIlegivelExpirou(ficheiro, nome)) continue;\n      return { tipo: "desconhecida", causa: "leitura", pid: null, motivo: nome };')
   );
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
@@ -1006,15 +1006,15 @@ await caso("mutação: a marca falhada deixa o ciclo seguir (o caso (z2) tem de 
   );
 });
 
-await caso("(y) marcador ilegível por erro de leitura: a mensagem diz que só sai quando o ficheiro for apagado", () => {
+await caso("(y) marcador não lido por erro de leitura: a mensagem diz que não expira pelo tempo", () => {
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
   const pasta = path.join(dir, "catalog-busy-indexacao-1-dirlido.json");
   fs.mkdirSync(pasta);
   try {
     const motivo = atividade.motivoDeRecusaPorScript(atividade.scriptDeIndexacaoEmCurso());
-    assert.match(motivo, /só sai quando o ficheiro for apagado/, "um erro de leitura não expira, e a mensagem tem de o dizer");
-    assert.doesNotMatch(motivo, /Espera 10 min/);
+    assert.match(motivo, /Não expira pelo tempo/, "um erro de leitura não expira, e a mensagem tem de o dizer");
+    assert.doesNotMatch(motivo, /Expira 10 min/);
   } finally {
     fs.rmdirSync(pasta);
   }
@@ -1022,7 +1022,7 @@ await caso("(y) marcador ilegível por erro de leitura: a mensagem diz que só s
 
 await caso("mutação: a mensagem promete expiração (o caso (y) tem de ficar vermelho)", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "mensagem-espera", (t) =>
-    trocaUnica(t, "Num erro de leitura ou sem pid, só sai quando o ficheiro for apagado.", "Espera 10 min.")
+    trocaUnica(t, "Não expira pelo tempo. A leitura repete-se", "Expira 10 min. A leitura repete-se")
   );
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
@@ -1031,12 +1031,61 @@ await caso("mutação: a mensagem promete expiração (o caso (y) tem de ficar v
   try {
     const mod = await import(pathToFileURL(m).href);
     const motivo = mod.motivoDeRecusaPorScript(mod.scriptDeIndexacaoEmCurso());
-    assert.match(motivo, /Espera 10 min/, "a mutação promete expiração");
-    assert.throws(() => assert.match(motivo, /só sai quando o ficheiro for apagado/), "o caso (y) tem de apanhar a mutação");
+    assert.match(motivo, /Expira 10 min/, "a mutação promete expiração");
+    assert.throws(() => assert.match(motivo, /Não expira pelo tempo/), "o caso (y) tem de apanhar a mutação");
   } finally {
     fs.rmdirSync(pasta);
     fs.rmSync(m, { force: true });
   }
+});
+
+await caso("(y2) marcador de script sem pid: a mensagem diz que não expira pelo tempo e só sai quando o ficheiro for apagado", () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const ficheiro = path.join(dir, "catalog-busy-indexacao-1-sempid.json");
+  fs.writeFileSync(ficheiro, JSON.stringify({ tipo: "indexacao", origem: "script", startedAt: new Date().toISOString() }));
+  try {
+    const motivo = atividade.motivoDeRecusaPorScript(atividade.scriptDeIndexacaoEmCurso());
+    assert.match(motivo, /Marcador de script sem pid/, "a mensagem tem de dizer que o marcador não tem pid");
+    assert.match(motivo, /Só sai quando o ficheiro for apagado/);
+    assert.doesNotMatch(motivo, /Expira 10 min/, "sem pid não há expiração pelo tempo");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+  }
+});
+
+/** Worker de indexação: tem de sair quando o principal desaparece (PR 5, revisão, D2). */
+const WORKER = "lib/workers/catalog-index-worker.mjs";
+function verificarSaidaComOPai(texto) {
+  assert.ok(
+    texto.includes('process.on("disconnect", () => process.exit(1));'),
+    "o worker tem de sair quando o principal desaparece, senão fica órfão a escrever com uma marca de pid morto"
+  );
+}
+
+await caso("(aa) worker sai quando o principal desaparece", () => {
+  verificarSaidaComOPai(ler(WORKER));
+});
+
+await caso("mutação: o worker deixa de sair com o principal (o caso (aa) tem de ficar vermelho)", () => {
+  assert.throws(() => verificarSaidaComOPai(trocaUnica(ler(WORKER), 'process.on("disconnect", () => process.exit(1));', "")));
+});
+
+await caso("(ab) ciclo: o Relatório recebe a causa curta da decisão, não a frase da recusa", () => {
+  assert.ok(
+    ler(ROTA_CICLO_PUB).includes("markMarginErosionCycleSkipped(shop, `publicação saltada: ${decisao.causa}`);"),
+    "o Relatório tem de receber a causa curta"
+  );
+});
+
+await caso("mutação: o Relatório recebe a frase da recusa (o caso (ab) tem de ficar vermelho)", () => {
+  assert.throws(() =>
+    assert.ok(
+      trocaUnica(ler(ROTA_CICLO_PUB), "publicação saltada: ${decisao.causa}`", "publicação saltada: ${decisao.mensagem}`").includes(
+        "markMarginErosionCycleSkipped(shop, `publicação saltada: ${decisao.causa}`);"
+      )
+    )
+  );
 });
 
 await caso("(u) uma escrita de marca que falha não deixa ficheiro parcial (que bloquearia 10 min)", () => {

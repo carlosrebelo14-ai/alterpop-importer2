@@ -35,8 +35,9 @@ try {
   console.error("[reindex] Recusado: não foi possível marcar a atividade da app. Nada foi gravado.");
   process.exit(1);
 }
-// PR 5 (revisão): um sinal (terminal fechado, SIGTERM) não passa pelo finally. Sem isto, a marca fica com o pid deste
-// processo e bloqueia a app até o pid ser reutilizado. SIGKILL não se trata: fica como residual.
+// PR 5 (revisão): um sinal mata o processo sem chegar ao fim do script. A marca fica no disco com o pid morto. A app
+// ignora marcas de pid morto (processoVivo), por isso retirá-la aqui só limpa o ficheiro: não muda a guarda. SIGKILL
+// não passa por aqui.
 for (const sinal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
   process.on(sinal, () => {
     retirarMarcador();
