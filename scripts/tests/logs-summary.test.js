@@ -184,6 +184,16 @@ check("painel e arranque nulo do ciclo entram nas contagens (rodada 8: causa no 
   assert.equal(r.CICLOS_SALTADOS, 1, "o arranque nulo do ciclo conta como ciclo que não publicou");
 });
 
+check("ciclos que não publicam pela publicação recusada, pelo prazo da indexação ou pela reserva também se contam (rodada 9)", () => {
+  const texto = [
+    `${T(11, 0)} [ciclo] publicação recusada: indexação terminou sem linhas.`,
+    `${T(11, 1)} [trigger-sync] indexação excedeu o tempo limite — publish cancelado.`,
+    `${T(11, 2)} [trigger-sync] publicação de aprovados saltada: a reserva está ocupada por uma publicação manual ou por um reset em curso.`,
+  ].join("\n");
+  const r = resumirLogs(texto);
+  assert.equal(r.CICLOS_SALTADOS, 3, "as três linhas em que o ciclo não publicou");
+});
+
 check("tsValido aceita ISO e epoch em milissegundos, rejeita o resto", () => {
   assert.equal(tsValido(T(1, 0)), T(1, 0));
   assert.equal(tsValido(0), "1970-01-01T00:00:00.000Z");

@@ -368,7 +368,7 @@ A regra de não correr o reset em produção mantém-se até o PR 2b-3 estar em 
 
 **Critérios de verificação em produção (propostos, a confirmar pelo arquiteto).** O levantamento depende de a verificação pós-deploy do PR 5 mostrar:
 
-1. nenhum marcador de atividade com pid vivo fora de uma indexação em curso. Marcadores com pid morto não bloqueiam (a app ignora-os) e podem ficar na pasta até serem apagados à mão;
+1. nenhum marcador de atividade com pid vivo fora de uma atividade em curso (indexação, publicação ou reset). Marcadores com pid morto não bloqueiam (a app ignora-os) e podem ficar na pasta até serem apagados à mão;
 2. nenhum worker órfão (`ps` na máquina);
 3. `indexing_status` sem `running` preso depois de uma indexação completa;
 4. um Relatório de Margem com o ciclo a correr, sem recusas espúrias.

@@ -135,7 +135,7 @@ export const action = async ({ request }) => {
     // Sem registo, o Relatório mostrava o último ciclo como se este não tivesse sido pedido (PR 5, revisão de convergência).
     await markMarginErosionCycleSkipped(shop, `ciclo saltado: ${causaDeRecusaPorScript(atividadeScript)}`);
     return Response.json(
-      { ok: true, skipped: true, reason: "script_indexing_running" },
+      { ok: true, skipped: true, reason: atividadeScript.tipo === "script" ? "script_indexing_running" : "activity_marker_unreadable" },
       { status: 409, headers: JSON_HEADERS }
     );
   }
@@ -258,7 +258,7 @@ export const action = async ({ request }) => {
         // DBG-105: a reserva é tomada logo antes da chamada, sem await pelo meio. Se a publicação manual já a tem,
         // o ciclo salta a publicação de aprovados.
         // PR 5 (revisão): a reserva e a marca da app nascem no mesmo passo síncrono. Com a reserva na mão, confirma-se a
-        // indexação, que pode ter arrancado depois do arranque do ciclo. Se houver indexação ou script, a publicação salta.
+        // indexação, que pode ter arrancado depois do arranque do ciclo. Se houver indexação ou script, o ciclo para aqui, sem publicar nem seguir para o stock.
         let reserva = null;
         let marcaFalhou = false;
         try {

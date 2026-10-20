@@ -28,7 +28,10 @@ const LOTE_FILA_RE = /\[indexacao\] lote-fila duracao_ms=(\d+) itens=(\d+)/;
 // PR 5: arranque recusado pela guarda de atividade (script, pasta, leitura, ilegivel, sem_pid, publicacao_ou_reset).
 const RECUSA_INDEXACAO_RE = /\[indexacao\] recusada \(causa=/;
 // PR 5: ciclo que não publicou, por script, publicação ou reset, por confirmação da indexação, ou por arranque nulo.
-const CICLO_SALTADO_RE = /\[trigger-sync\] ciclo (saltado|parado antes da publicação)/;
+// Também conta a publicação recusada depois do ciclo (pré-existente), a indexação que excede o prazo e a publicação de
+// aprovados saltada pela reserva, para o contador bater com "Ciclos que não publicaram" (rodada 9).
+const CICLO_SALTADO_RE =
+  /\[trigger-sync\] ciclo (saltado|parado antes da publicação)|\[ciclo\] publicação recusada|\[trigger-sync\] indexação excedeu o tempo limite|\[trigger-sync\] publicação de aprovados saltada/;
 const ISO_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/;
 
 /** Marca de tempo em ISO, ou null se não for uma data válida. */

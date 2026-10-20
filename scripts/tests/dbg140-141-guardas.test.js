@@ -183,7 +183,7 @@ function verificarRotaCiclo(texto) {
   const bloco = texto.slice(decisao, iife);
   assert.match(
     bloco,
-    /return Response\.json\(\s*\{ ok: true, skipped: true, reason: "script_indexing_running" \},\s*\{ status: 409/,
+    /return Response\.json\(\s*\{ ok: true, skipped: true, reason: atividadeScript\.tipo === "script" \? "script_indexing_running" : "activity_marker_unreadable" \},\s*\{ status: 409/,
     "a recusa do ciclo tem de ser um return com reason e 409"
   );
 }
@@ -1447,15 +1447,15 @@ await caso("mutação: a sobra de antes do arranque volta a bloquear (o caso (aj
   }
 });
 
-await caso("(ak) marcador ilegível recente: a mensagem diz quando expira, e que só expira se a pasta deixar medir a idade", () => {
+await caso("(ak) marcador ilegível recente: a mensagem diz quando expira, e que só expira se a pasta der a data de escrita do ficheiro", () => {
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
   const ficheiro = path.join(dir, "catalog-busy-indexacao-1-ilegivel-recente.json");
   fs.writeFileSync(ficheiro, "{ truncado", "utf8");
   try {
     const motivo = atividade.motivoDeRecusaPorScript(atividade.scriptDeIndexacaoEmCurso());
-    assert.match(motivo, /Expira 10 min depois de escrito, se a pasta deixar medir a idade/);
-    assert.match(motivo, /ou sem essa medida/);
+    assert.match(motivo, /Expira 10 min depois de escrito, se a pasta der a data de escrita do ficheiro/);
+    assert.match(motivo, /Sem essa data, ou antes dos 10 min/);
   } finally {
     fs.rmSync(ficheiro, { force: true });
   }
@@ -1463,7 +1463,7 @@ await caso("(ak) marcador ilegível recente: a mensagem diz quando expira, e que
 
 await caso("mutação: a mensagem promete expiração sem a condição da sonda (o caso (ak) tem de ficar vermelho)", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "expira-sem-sonda", (t) =>
-    trocaUnica(t, "Expira 10 min depois de escrito, se a pasta deixar medir a idade.", "Expira 10 min depois de escrito.")
+    trocaUnica(t, "Expira 10 min depois de escrito, se a pasta der a data de escrita do ficheiro.", "Expira 10 min depois de escrito.")
   );
   limparMarcadores();
   const dir = dados.resolveCurationDataDir();
@@ -1472,7 +1472,7 @@ await caso("mutação: a mensagem promete expiração sem a condição da sonda 
   try {
     const mod = await import(pathToFileURL(m).href);
     const motivo = mod.motivoDeRecusaPorScript(mod.scriptDeIndexacaoEmCurso());
-    assert.throws(() => assert.match(motivo, /se a pasta deixar medir a idade/), "o caso (ak) tem de apanhar a mensagem sem a condição");
+    assert.throws(() => assert.match(motivo, /se a pasta der a data de escrita do ficheiro/), "o caso (ak) tem de apanhar a mensagem sem a condição");
   } finally {
     fs.rmSync(ficheiro, { force: true });
     fs.rmSync(m, { force: true });
@@ -1518,13 +1518,18 @@ await caso("mutação: o log diz marcador_ilegivel para qualquer causa (o caso (
 });
 
 const MENSAGEM_DA_RESERVA_OCUPADA = "Já há uma publicação ou um reset Shopify em curso. Aguarda que termine antes de publicar.";
+/** A mensagem da reserva ocupada tem de estar na rota da publicação manual. A mutação chama este mesmo verificador. */
+function verificarMensagemDaReservaOcupada(texto) {
+  assert.ok(texto.includes(MENSAGEM_DA_RESERVA_OCUPADA), "a mensagem da reserva ocupada tem de estar na rota da publicação manual");
+}
+
 await caso("(am) publicação manual: com a reserva ocupada por reset ou publicação, a mensagem diz isso e não fala de sincronização", () => {
-  assert.ok(ler(ROTA_PUBLICACAO).includes(MENSAGEM_DA_RESERVA_OCUPADA));
+  verificarMensagemDaReservaOcupada(ler(ROTA_PUBLICACAO));
 });
 
 await caso("mutação: a mensagem volta a dizer sincronização (o caso (am) tem de ficar vermelho)", () => {
   const mutado = trocaUnica(ler(ROTA_PUBLICACAO), MENSAGEM_DA_RESERVA_OCUPADA, "Já existe uma sincronização Shopify em curso.");
-  assert.throws(() => assert.ok(mutado.includes(MENSAGEM_DA_RESERVA_OCUPADA)));
+  assert.throws(() => verificarMensagemDaReservaOcupada(mutado));
 });
 
 await caso("(al2) marcador de leitura (uma pasta com nome de ficheiro) recusa o arranque com causa=leitura no log", async () => {
@@ -1917,6 +1922,85 @@ await caso("mutação: o Relatório volta a dizer 'falhou' para qualquer paragem
 await caso("mutação: sem a causa por omissão do arranque nulo (o caso (ad) tem de ficar vermelho)", () => {
   const mutado = trocaUnica(ler(ROTA_CICLO_PUB), 'let causa = "marcação ou gravação do estado falhou (ver log)";', "let causa;");
   assert.throws(() => verificarArranqueNulo(mutado));
+});
+
+// --- Rodada 9 de convergência (PR 5, revisão): pid já terminado, Relatório, 409 do ciclo, mensagem da pasta ---
+
+await caso("(ax) marcador de script de um processo já terminado não bloqueia: a guarda não se fica pelo registo do pid", async () => {
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const filho = spawn(process.execPath, ["-e", "0"], { stdio: "ignore" });
+  await new Promise((r) => filho.on("exit", r));
+  const marca = path.join(dir, "catalog-busy-indexacao-9-terminado.json");
+  fs.writeFileSync(marca, JSON.stringify({ tipo: "indexacao", pid: filho.pid, origem: "script", processo: "outro", startedAt: new Date().toISOString() }));
+  try {
+    assert.equal(atividade.scriptDeIndexacaoEmCurso(), null, "um pid que já não vive não bloqueia a indexação");
+    assert.equal(atividade.atividadeAppEmCurso(), null, "nem a guarda da app o vê como atividade");
+  } finally {
+    fs.rmSync(marca, { force: true });
+  }
+});
+
+await caso("mutação: um pid de processo terminado conta como vivo (o caso (ax) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "pid-sempre-vivo", (t) =>
+    trocaUnica(t, "function processoVivo(pid) {\n", "function processoVivo(pid) {\n  return true;\n")
+  );
+  limparMarcadores();
+  const dir = dados.resolveCurationDataDir();
+  const filho = spawn(process.execPath, ["-e", "0"], { stdio: "ignore" });
+  await new Promise((r) => filho.on("exit", r));
+  const marca = path.join(dir, "catalog-busy-indexacao-9-terminado-mut.json");
+  fs.writeFileSync(marca, JSON.stringify({ tipo: "indexacao", pid: filho.pid, origem: "script", processo: "outro", startedAt: new Date().toISOString() }));
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    assert.throws(() => assert.equal(mod.scriptDeIndexacaoEmCurso(), null), "o caso (ax) tem de apanhar o pid terminado");
+  } finally {
+    fs.rmSync(marca, { force: true });
+    fs.rmSync(m, { force: true });
+  }
+});
+
+const MARGEM_DO_RELATORIO = "lib/importer/curation/marginErosion.server.js";
+await caso("(ay) o Relatório grava a paragem como 'não correu — <motivo>', e o banner lê esse mesmo prefixo", () => {
+  posicao(ler(MARGEM_DO_RELATORIO), "reason: `não correu — ${reason}`", MARGEM_DO_RELATORIO);
+  posicao(ler("app/routes/app.reports.jsx"), 'String(marginErosionError).startsWith("não correu — ")', "app/routes/app.reports.jsx");
+});
+
+await caso("mutação: o produtor deixa de escrever o prefixo 'não correu' (o caso (ay) tem de ficar vermelho)", () => {
+  const mutado = trocaUnica(ler(MARGEM_DO_RELATORIO), "reason: `não correu — ${reason}`", "reason: `falhou — ${reason}`");
+  assert.throws(() => posicao(mutado, "reason: `não correu — ${reason}`", MARGEM_DO_RELATORIO));
+});
+
+await caso("(az) ciclo: o 409 diz script vivo só quando o marcador é de script; um marcador ilegível diz a sua causa", () => {
+  verificarRotaCiclo(ler(ROTA_CICLO));
+});
+
+await caso("mutação: o 409 do ciclo diz script para qualquer causa (o caso (az) tem de ficar vermelho)", () => {
+  const mutado = trocaUnica(
+    ler(ROTA_CICLO),
+    'reason: atividadeScript.tipo === "script" ? "script_indexing_running" : "activity_marker_unreadable" },',
+    'reason: "script_indexing_running" },'
+  );
+  assert.throws(() => verificarRotaCiclo(mutado));
+});
+
+await caso("(ba) a mensagem da pasta que não se lê diz que não expira pelo tempo, e nunca promete expiração", () => {
+  const motivo = atividade.motivoDeRecusaPorScript({ tipo: "desconhecida", causa: "pasta", pid: null, motivo: "/x (EACCES)" });
+  assert.match(motivo, /Não expira pelo tempo/);
+  assert.doesNotMatch(motivo, /Expira 10 min/);
+});
+
+await caso("mutação: a mensagem da pasta promete expiração (o caso (ba) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "pasta-expira", (t) =>
+    trocaUnica(t, "Não expira pelo tempo. Sai quando a pasta voltar a ler-se.", "Expira 10 min. Sai quando a pasta voltar a ler-se.")
+  );
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    const motivo = mod.motivoDeRecusaPorScript({ tipo: "desconhecida", causa: "pasta", pid: null, motivo: "/x (EACCES)" });
+    assert.throws(() => assert.match(motivo, /Não expira pelo tempo/), "o caso (ba) tem de apanhar a promessa de expiração");
+  } finally {
+    fs.rmSync(m, { force: true });
+  }
 });
 
 if (falhas) {
