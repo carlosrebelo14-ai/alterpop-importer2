@@ -4,7 +4,7 @@
 #   bash scripts/ci/maintenance.sh <tarefa> <fase>
 #
 # tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push
-#         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status   (estas só leem; nenhuma aceita execute)
+#         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status   (estas só leem; nenhuma aceita execute)
 # db_push recusa-se com a flag DB_DEGRADED presente no volume (Decisão 34), em dry-run e em execute.
 # fase    dry-run  só lê (ou lista o que mudaria)
 #         execute  escreve (só tags_cleanup, character_pages_sync e db_push; nas outras é igual ao dry-run)
@@ -47,7 +47,7 @@ RESTORE_OUT="$(mktemp)"
 LOG_SUM=""
 
 case "$TASK" in
-  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | esperar_indexacao) ;;
+  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | esperar_indexacao) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
 esac
 # As tarefas novas só leem: nenhuma aceita execute, nem como no-op.
@@ -55,9 +55,9 @@ case "$TASK" in
   db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
-# indexing_status e esperar_indexacao ficam numa guarda própria, para não tocar na linha das tarefas que já recusam execute.
+# indexing_status, machine_status e esperar_indexacao ficam numa guarda própria, para não tocar na linha das tarefas que já recusam execute.
 case "$TASK" in
-  indexing_status | esperar_indexacao)
+  indexing_status | machine_status | esperar_indexacao)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
 case "$PHASE" in
@@ -358,6 +358,26 @@ case "$TASK" in
     IS64="$(base64 -w0 "$ROOT/scripts/maintenance/indexing-status.mjs")"
     remote "echo $IS64 | base64 -d | node --input-type=module -"; RC=$?
     ;;
+  machine_status)
+    # Máquinas da app na Fly (só leitura). O JSON do flyctl fica em $OUT; só saem linhas MS: com contagens, estados,
+    # código, sinal e OOM. O id sai truncado (seis caracteres). Para cada máquina, o machine status só conta as
+    # linhas que falam de OOM (linhas MS_OOM:). O texto do machine status não sai.
+    DESC="Lê as máquinas da app na Fly: número, estado, região, memória configurada e a última saída de cada uma (código, sinal e OOM). Só lê."
+    MS_JSON="$("$FLYCTL" machines list -a "$APP" --json 2>>"$OUT")"; RC=$?
+    if [ "$RC" -eq 0 ]; then
+      echo "$MS_JSON" | node "$ROOT/scripts/maintenance/machine-status.mjs" >>"$OUT"; RC=$?
+    fi
+    if [ "$RC" -eq 0 ]; then
+      IDS_MS="$(echo "$MS_JSON" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{for(const m of JSON.parse(s))if(m&&/^[A-Za-z0-9]{1,40}$/.test(m.id||""))console.log(m.id)}catch{}})')"
+      while IFS= read -r ID_MS; do
+        [ -z "$ID_MS" ] && continue
+        N_OOM="$("$FLYCTL" machine status "$ID_MS" -a "$APP" 2>>"$OUT" | grep -ciE '(^|[^a-z])(oom|out of memory)([^a-z]|$)' || true)"
+        echo "MS_OOM: maquina=${ID_MS:0:6} linhas=${N_OOM:-0}" >>"$OUT"
+      done <<< "$IDS_MS"
+    else
+      CAUSE="não consegui ler as máquinas da app (flyctl machines list, ou o JSON não se lê)."
+    fi
+    ;;
 esac
 
 # ── resumo em português, só contagens e estados ───────────────────────
@@ -478,6 +498,7 @@ case "$TASK" in
       bullets="$bullets"$'\n'"- DbDegradedError: **$(kn DBD)**. Mensagens de modo degradado: **$(kn MODO_DEGRADADO)**. Escritas recusadas: **$(kn RECUSAS)**, das quais na fila de curadoria: **$(kn RECUSAS_FILA)**. \`database is locked\`: **$(kn DB_LOCKED)**."
       bullets="$bullets"$'\n'"- Indexação: **$(kn INDEX_INICIOS)** início(s), por causa: painel $(kn INDEX_CAUSA_PAINEL), ciclo $(kn INDEX_CAUSA_CICLO), script $(kn INDEX_CAUSA_SCRIPT), não registada $(kn INDEX_CAUSA_DESCONHECIDA). Fins: **$(kn INDEX_CONCLUIDAS)** concluída(s), **$(kn INDEX_FALHADAS)** falhada(s), **$(kn INDEX_PARADAS)** parada(s)."
       bullets="$bullets"$'\n'"- Reinícios do worker (saiu sem concluir): **$(kn REINICIOS)**. Arranques recusados pela guarda de atividade: **$(kn INDEX_RECUSADAS)**. Ciclos que não publicaram: **$(kn CICLOS_SALTADOS)**."
+      bullets="$bullets"$'\n'"- Linhas de OOM (memória esgotada: \"Out of memory\" ou \"oom\") nas linhas lidas: **$(kn OOM_LINHAS)**."
       bullets="$bullets"$'\n'"- Lote de fila mais lento: **$(kv FILA_LOTE_MAX_MS)** ms, em **$(kn FILA_LOTES)** lotes."
       if [ "$(kv INDEX_ULTIMA_CAUSA)" != "-" ] && [ -n "$(kv INDEX_ULTIMA_CAUSA)" ]; then
         bullets="$bullets"$'\n'"- Último fim de indexação: causa **$(kv INDEX_ULTIMA_CAUSA)**, estado **$(kv INDEX_ULTIMA_ESTADO)**, duração **$(kv INDEX_ULTIMA_DURACAO_S)** s, às $(kv INDEX_ULTIMO_FIM_TS)."
@@ -547,6 +568,25 @@ case "$TASK" in
       bullets="$bullets"$'\n'"- Última falha: causa **$(valorOuNenhuma falha_causa)**, em **$(valorOuNenhuma falha_em)**, classe **$(valorOuNenhuma falha_classe)**."
       bullets="$bullets"$'\n'"- Total rejeitado (totalRejected): **$(valorOuNenhuma totalRejected)**."
       KEY="estado $(isv state), erro $(isv erro)"
+    fi
+    ;;
+  machine_status)
+    # Lê as linhas MS: e MS_OOM: que o script e o loop de machine status imprimem. Campos simples, sem id completo.
+    campo() { echo "$1" | tr ' ' '\n' | grep -E "^$2=" | head -1 | cut -d= -f2-; }
+    total_ms="$(echo "$CLEAN" | grep -E '^MS: maquinas=' | head -1 | cut -d= -f2)"
+    if [ -z "$total_ms" ]; then
+      bullets="- Máquinas da app: sem leitura."; KEY="sem leitura"
+    else
+      bullets="- Máquinas da app: **$total_ms**."
+      while IFS= read -r linha_ms; do
+        [ -z "$linha_ms" ] && continue
+        bullets="$bullets"$'\n'"- Máquina \`$(campo "$linha_ms" maquina)\`: estado **$(campo "$linha_ms" estado)**, região **$(campo "$linha_ms" regiao)**, memória **$(campo "$linha_ms" memoria_mb)** MB. Última saída: código **$(campo "$linha_ms" codigo)**, sinal **$(campo "$linha_ms" sinal)**, OOM **$(campo "$linha_ms" oom)**, em **$(campo "$linha_ms" quando)**."
+      done < <(echo "$CLEAN" | grep -E '^MS: maquina=' || true)
+      while IFS= read -r linha_oom; do
+        [ -z "$linha_oom" ] && continue
+        bullets="$bullets"$'\n'"- Linhas de OOM no machine status, máquina \`$(campo "$linha_oom" maquina)\`: **$(campo "$linha_oom" linhas)**."
+      done < <(echo "$CLEAN" | grep -E '^MS_OOM: ' || true)
+      KEY="$total_ms máquina(s), $(count ' oom=sim') com OOM na última saída"
     fi
     ;;
 esac

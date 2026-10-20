@@ -57,6 +57,7 @@ Recusas novas do PR 5: como ler e como libertar.
 - `totalRejected`: linhas rejeitadas na última corrida.
 - O texto do erro não sai em lado nenhum. Fica no ficheiro de estado (`lastFailure.error`), e lê-se com acesso direto ao volume da Fly, nunca por esta tarefa.
 - Uma corrida concluída não apaga a falha anterior. A falha seguinte substitui-a.
+- Para confirmar um `worker_morto` como OOM da Fly, correr `machine_status` (só leitura). Mostra por máquina a última saída (código, sinal e OOM) e as linhas de OOM do machine status. O `logs_recent` conta as linhas de OOM dos logs (`OOM_LINHAS`).
 
 ## Vetos ativos
 

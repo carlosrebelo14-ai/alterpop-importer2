@@ -411,3 +411,15 @@ e) O PR 6 (DBG-142) sai do 2b-3. O `scripts/catalog/run-approved-sync.js` fica v
 - Ronda 4: PR 7 (DBG-72 e DBG-30), sozinho. Levanta o veto ao reset só depois de verificado em produção.
 
 **Pendente, não bloqueia.** Diferença de 140 entre 26087 indexados e 26227 no catálogo. O PR 3 confirma se é `totalRejected` da última corrida, e mostra esse número no `indexing_status`. V5 está verde.
+
+## Decisão 39 — critério de revisão e de bloqueio do merge
+
+**Data:** 20/10/2026
+**Estado:** decidida pelo arquiteto, registada no PR da tarefa `machine_status`. Substitui a regra de convergência sem teto, usada até à ronda 10 do PR 5 (#125).
+**Origem:** a ronda 10 do PR 5 não fechou. Cada ronda encontrava achados novos, quase todos de texto ou de teste, e o PR 5 parou na ronda 10 com DBG-158 a DBG-176 em aberto.
+
+1. No máximo duas rondas de revisão por PR: a revisão inicial e uma lente de delta depois das correções.
+2. Só bloqueia o merge um achado que possa estragar dados, a fila ou a loja, ou que deixe uma escrita sem proteção.
+3. Os restantes achados viram DBG novos, com origem e estado, e não bloqueiam o merge.
+4. O teste de mutação continua obrigatório, mas só para as correções que bloqueiam o merge.
+5. Um PR que para por esta regra regista na descrição e no relatório a ronda em que parou, e os achados em aberto com o seu DBG.
