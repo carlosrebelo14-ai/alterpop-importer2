@@ -340,11 +340,11 @@ const yml = fs.readFileSync(YML, "utf8");
 await check("a tarefa está nas opções do workflow", () => {
   assert.match(yml, /^ {10}- elite_purge_dry_run$/m);
 });
-await check("o job de escrita (production) só aceita as quatro tarefas de escrita", () => {
+await check("o job de escrita (production) só aceita as cinco tarefas de escrita (scale_memory incluída, Decisão 41)", () => {
   const linhaExecute = yml.split("\n").find((l) => l.includes("contains(fromJSON(") && l.includes("volume_snapshot"));
   assert.ok(linhaExecute, "condição do job execute em falta");
   assert.doesNotMatch(linhaExecute, /elite_purge_dry_run/);
-  assert.match(linhaExecute, /\["volume_snapshot","tags_cleanup","character_pages_sync","db_push"\]/);
+  assert.match(linhaExecute, /\["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory"\]/);
 });
 
 console.log("(e) guarda da BD");

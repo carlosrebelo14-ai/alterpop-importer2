@@ -59,6 +59,20 @@ Recusas novas do PR 5: como ler e como libertar.
 - Uma corrida concluída não apaga a falha anterior. A falha seguinte substitui-a.
 - Para confirmar um `worker_morto` como OOM da Fly, correr `machine_status` (só leitura). Mostra por máquina a última saída (código, sinal e OOM) e as linhas de OOM do machine status. O `logs_recent` conta as linhas de OOM dos logs (`OOM_LINHAS`).
 
+## Running preso depois de uma morte da máquina (Decisão 41)
+
+Sintoma: o `deploy` recusa-se na espera (`esperar_indexacao`, 15 tentativas com "indexação a decorrer"), ou o `catalog_health` e o `db:push` esperam sem fim. O `indexing_status` mostra `running` com `fim` nulo e um checkpoint parado. O `machine_status` mostra uma saída com código 137 e OOM, depois do início do `running`.
+
+Causa: a máquina morreu inteira e nenhum processo gravou o `failed`. O estado só sai de `running` quando uma indexação nova acaba (DBG-177, lote 3, corrige isto).
+
+Passos:
+
+1. Confirmar que não há indexação viva: `indexing_status` com `running` há muito tempo e checkpoint sem andar, e `machine_status` com a morte como última saída.
+2. Subir a memória com a tarefa `scale_memory` do workflow `maintenance`, modo `execute`, com aprovação do environment `production`. A troca reinicia a máquina.
+3. Confirmar com `machine_status` que a máquina tem 1024 MB.
+4. Esperar pela indexação do próximo ciclo e confirmar com `indexing_status` que ficou `completed`. Se continuar `running` mais de 15 min sem indexação nova, parar e avisar o arquiteto. Não limpar o ficheiro de estado à mão.
+5. Relançar o `deploy`.
+
 ## Vetos ativos
 
 - ~~Tarefa `db_push` em modo `execute`~~: levantado em 17/10, DBG-156 em produção (Decisão 37, deploy run `39055860291`).

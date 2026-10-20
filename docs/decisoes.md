@@ -435,7 +435,25 @@ e) O PR 6 (DBG-142) sai do 2b-3. O `scripts/catalog/run-approved-sync.js` fica v
 
 **Decisão:**
 
-1. A memória da máquina sobe para 1024 MB, na secção `[[vm]]` de `fly.toml` (`memory = "1gb"`). Não se muda por `fly scale` nem por flag de deploy: o deploy repõe o que está em `fly.toml`.
+1. A memória da máquina sobe para 1024 MB, na secção `[[vm]]` de `fly.toml` (`memory = "1gb"`). Não se muda por `fly scale` nem por flag de deploy: o deploy repõe o que está em `fly.toml`. A única exceção é a tarefa `scale_memory` (Decisão 41).
 2. CPU, região e número de máquinas não mudam. Antes do deploy, o `machine_status` mostra o tipo e o número de CPUs atuais (`cpu_kind`, `cpus`). Se não forem os que o deploy aplica, o deploy não corre, e volta-se a esta decisão.
 3. Depois do deploy, o `machine_status` tem de mostrar 1 máquina, 1024 MB e nenhuma saída OOM nova. O `catalog_health` e o `active_vs_queue` têm de passar.
 4. O deploy de memória vem antes do deploy da ronda 4. O reset e a republicação só correm com a memória verificada.
+
+## Decisão 41 — troca de memória pela tarefa `scale_memory`, fora do deploy
+
+**Data:** 20/10/2026
+**Estado:** aprovada pelo arquiteto a 20/10. Registada no PR que a implementa, antes do merge.
+**Origem:** o deploy `39458101651` (de `main`, merge do #127) recusou-se na espera do `deploy.sh`: 15 tentativas com "indexação a decorrer" e sem chamar o `flyctl deploy`. O `indexing_status` (run `39472352933`) mostra `running` desde 17:46:57Z, sem fim, com `checkpointScanned` 24540. O `machine_status` (run `39472486891`) mostra a máquina `shared` × 1, com 512 MB, e a última saída com código 137 e OOM às 17:49:18Z. A máquina morreu inteira. Nenhum processo gravou o `failed`, por isso o estado ficou preso. A memória só chega à máquina com o deploy, e o deploy está parado pela espera: a correção está bloqueada pelo próprio problema.
+
+**Decisão:**
+
+1. A tarefa `scale_memory` do workflow `maintenance` muda a memória da única máquina da app para 1024 MB com `flyctl machine update --vm-memory 1024 --yes`, e confirma com `machines list`. Só corre em `execute`, no job com o environment `production`, com aprovação do Carlos.
+2. A tarefa não toca no código, no volume nem no estado da indexação, e não espera por indexação: um `running` preso bloquearia a própria espera. A troca reinicia a máquina, e um processo vivo morre com ela. Antes do execute, quem opera confirma no `indexing_status` e no `machine_status` que não há indexação viva.
+3. A tarefa recusa, sem trocar nada, se houver mais de uma máquina ou se o id não se ler. Se a Fly não confirmar 1024 MB, falha com código 1.
+4. Esta exceção não muda a Decisão 40. O deploy continua sem comando de memória: `deploy.sh`, `deploy.yml` e `Dockerfile` não têm `fly scale`, `flyctl scale`, `machines update` nem `--vm-memory`, e o teste `deploy-guards` verifica-o. O comando de memória de `maintenance.sh` só existe uma vez, dentro do bloco `scale_memory`.
+5. Depois da troca, o `machine_status` tem de mostrar 1024 MB. Depois, a espera do deploy só passa quando o `indexing_status` estiver `completed`, ou quando uma indexação do próximo ciclo acabar. Se o `running` continuar mais de 15 min sem indexação nova, para-se e avisa-se o arquiteto. O ficheiro de estado não se limpa à mão.
+6. A correção definitiva do `running` preso é o DBG-177 (lote 3). Até lá, o mesmo estado pode voltar a bloquear a espera do deploy, o gate do `catalog_health` e o `db:push` sempre que uma máquina morrer a meio de uma indexação.
+
+**Risco aberto:** as mortes de hoje param todas perto da linha 24540 do CSV. Se a máquina de 1024 MB morrer na mesma linha, a memória não é a causa única. Nesse caso o arquiteto decide antes de qualquer novo deploy.
+**Não verificado localmente:** a flag `--vm-memory` de `flyctl machine update` vem de fontes da comunidade Fly. Não há `flyctl` neste ambiente, por isso a primeira execução é a verificação. Se a flag não existir, o flyctl recusa antes de mudar a máquina, e a tarefa falha com código 1.

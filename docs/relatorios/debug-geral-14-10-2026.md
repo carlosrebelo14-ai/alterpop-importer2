@@ -433,6 +433,14 @@ Achados em aberto do PR 5, passados para DBG novos:
 | DBG-175 | Média | main | `scripts/catalog/full-catalog-reindex.js:156` | A mensagem gravada depois de uma falha diz "corre com RESUME=1". A Decisão 36 e o runbook proíbem RESUME=1 em produção até o veto ser levantado. Aberto. |
 | DBG-176 | Baixa | main | `docs/relatorios/debug-geral-14-10-2026.md:398` | Grafia `[indacao]` no DBG-155. A marca real é `[indexacao]`. Aberto. |
 
+### Achado de 20/10: `running` preso depois de uma morte da máquina (Decisão 41)
+
+Origem: o deploy `39458101651` recusou-se na espera (15 tentativas) com o estado `running` desde 17:46:57Z, sem fim. A máquina morreu com OOM às 17:49:18Z. Ver a Decisão 41.
+
+| ID | Sev | Origem | Local | Achado e estado |
+|---|---|---|---|---|
+| DBG-177 | Média | main | `scripts/maintenance/check-no-indexing.mjs` | Um `running` preso, depois de a máquina morrer sem o processo gravar o `failed`, bloqueia a espera do deploy, o gate do `catalog_health` e o `db:push` até uma indexação nova acabar. Correção esperada (lote 3): um `running` com `startedAt` mais antigo que um limite e sem worker vivo passa a `interrupted`, com `lastFailure` de causa `estado_preso` e o checkpoint mantido. Teste proposto: ficheiro de estado `running` de há 2 h, sem worker, com resultado esperado `interrupted`; a mutação que tira a transição tem de deixar o caso vermelho. Aberto. Não entra no PR da Decisão 41. |
+
 Decisão 39 (texto a registar no PR da próxima ronda): ver o rascunho em `scratchpad`, e a secção de decisões quando esse PR for aberto.
 
 ---
