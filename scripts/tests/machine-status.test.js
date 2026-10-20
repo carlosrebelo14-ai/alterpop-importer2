@@ -63,10 +63,21 @@ await check("(a) uma linha MS: por máquina, com estado, região, memória e a �
   assert.equal(codigo, 0);
   assert.equal(linhas[0], "MS: maquinas=2");
   const primeira = linhas[1];
-  for (const parte of ["maquina=1854e9", "estado=started", "regiao=mad", "memoria_mb=1024", "saida=ok", "codigo=137", "sinal=9", "oom=sim", "quando=2026-10-20T14:49:27Z"]) {
+  for (const parte of ["maquina=1854e9", "estado=started", "regiao=mad", "memoria_mb=1024", "saida=ok", "codigo=137", "sinal=9", "oom=sim", "quando=2026-10-20T14:49:27.000Z"]) {
     assert.ok(primeira.includes(parte), `falta ${parte} em: ${primeira}`);
   }
   assert.ok(linhas[2].includes("saida=nenhuma"), "máquina sem eventos de saída");
+});
+
+await check("(a) instante: número em milissegundos (como a Machines API) vira ISO UTC; texto de data também", async () => {
+  const dados = [{ id: "abc123", state: "started", region: "fra", config: { guest: { memory_mb: 512 } }, events: [{ type: "exit", timestamp: 1792510401353, request: { exit_event: { exit_code: 137, oom_killed: true } } }] }];
+  assert.ok(resumir(JSON.stringify(dados)).linhas[1].includes("quando=2026-10-20T15:33:21.353Z"), resumir(JSON.stringify(dados)).linhas[1]);
+});
+
+await check("(a) CPU da máquina sai na linha: tipo e número de CPUs, para a verificação pré-deploy", async () => {
+  const dados = [{ id: "abc123", state: "started", region: "fra", config: { guest: { memory_mb: 1024, cpu_kind: "shared", cpus: 1 } }, events: [] }];
+  const linha = resumir(JSON.stringify(dados)).linhas[1];
+  assert.ok(linha.includes("memoria_mb=1024 cpu_kind=shared cpus=1"), linha);
 });
 
 await check("(a) o id completo não sai do parser", async () => {

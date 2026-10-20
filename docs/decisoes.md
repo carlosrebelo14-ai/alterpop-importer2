@@ -423,3 +423,19 @@ e) O PR 6 (DBG-142) sai do 2b-3. O `scripts/catalog/run-approved-sync.js` fica v
 3. Os restantes achados viram DBG novos, com origem e estado, e não bloqueiam o merge.
 4. O teste de mutação continua obrigatório, mas só para as correções que bloqueiam o merge.
 5. Um PR que para por esta regra regista na descrição e no relatório a ronda em que parou, e os achados em aberto com o seu DBG.
+
+## Decisão 40 — memória da máquina da app: 1024 MB
+
+**Data:** 20/10/2026
+**Estado:** aprovada pelo Carlos a 20/10. Registada no PR de memória, antes de qualquer outro deploy. Pré-requisito do reset e da republicação, que só correm com esta memória verificada em produção.
+**Origem:** a máquina da app tem 512 MB. Em 20/10 há duas saídas de natureza diferente:
+
+- **15:33:21Z, confirmada por OOM.** Última saída da máquina, código 137, `oom_killed` verdadeiro (`machine_status`, run `39451300809`). É a única saída por OOM que a Fly confirma.
+- **14:46:56Z a 14:49:27Z, indício de OOM, não confirmado.** Indexação terminada como `worker_morto` (`indexing_status`, run `39447507798`): saída por sinal. O `machine_status` só mostra a última saída, por isso a Fly não confirma se esta foi OOM.
+
+**Decisão:**
+
+1. A memória da máquina sobe para 1024 MB, na secção `[[vm]]` de `fly.toml` (`memory = "1gb"`). Não se muda por `fly scale` nem por flag de deploy: o deploy repõe o que está em `fly.toml`.
+2. CPU, região e número de máquinas não mudam. Antes do deploy, o `machine_status` mostra o tipo e o número de CPUs atuais (`cpu_kind`, `cpus`). Se não forem os que o deploy aplica, o deploy não corre, e volta-se a esta decisão.
+3. Depois do deploy, o `machine_status` tem de mostrar 1 máquina, 1024 MB e nenhuma saída OOM nova. O `catalog_health` e o `active_vs_queue` têm de passar.
+4. O deploy de memória vem antes do deploy da ronda 4. O reset e a republicação só correm com a memória verificada.

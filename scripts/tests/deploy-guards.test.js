@@ -219,6 +219,24 @@ check("ordem — branch errado E working tree sujo: pára na guarda 1", () => {
   assertRefused(runDeploy(repo), /guarda 1/);
 });
 
+// Memória da máquina (Decisão 40): fixada em fly.toml, e nenhum script de deploy a sobrepõe.
+const RAIZ_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const VM_MEMORIA = /^\[\[vm\]\]\n\s+memory = "1gb"$/m;
+check("memória da máquina fixada em fly.toml: [[vm]] com 1gb (1024 MB), e nenhum script de deploy a muda", () => {
+  const toml = fs.readFileSync(path.join(RAIZ_REPO, "fly.toml"), "utf8");
+  assert.match(toml, VM_MEMORIA, "fly.toml tem de fixar 1gb em [[vm]]");
+  for (const rel of ["scripts/deploy.sh", ".github/workflows/deploy.yml", "scripts/ci/maintenance.sh", "Dockerfile"]) {
+    const texto = fs.readFileSync(path.join(RAIZ_REPO, rel), "utf8");
+    assert.doesNotMatch(texto, /fly\s+scale|flyctl\s+scale|machines?\s+update|--vm-memory/, `${rel} não pode mudar a memória da máquina`);
+  }
+});
+check("mutação: memória de 512 MB em fly.toml faz o caso da memória ficar vermelho", () => {
+  const toml = fs.readFileSync(path.join(RAIZ_REPO, "fly.toml"), "utf8");
+  const mutado = toml.replace('memory = "1gb"', 'memory = "512mb"');
+  assert.notEqual(mutado, toml, "a mutação tem de mudar o fly.toml");
+  assert.throws(() => assert.match(mutado, VM_MEMORIA), "o caso da memória tem de apanhar 512 MB");
+});
+
 if (failures) {
   console.error(`\n${failures} falha(s)`);
   process.exit(1);
