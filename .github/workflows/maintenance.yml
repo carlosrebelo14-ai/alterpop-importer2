@@ -1,8 +1,8 @@
 # Manutenção da app na Fly, disparada à mão: Actions → maintenance → Run workflow.
 #
 # task  lista fechada: catalog_health, diagnose_theme, diagnose_characters, price_check, volume_snapshot, tags_cleanup,
-#       character_pages_sync, db_push, db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run, indexing_status
-#       (db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run e indexing_status só leem: nunca entram no job de escrita)
+#       character_pages_sync, db_push, db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run, indexing_status, machine_status
+#       (db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run, indexing_status e machine_status só leem: nunca entram no job de escrita)
 #       db_push recusa-se com a flag DB_DEGRADED presente (Decisão 34).
 # mode  dry-run (por omissão) ou execute
 #
@@ -51,6 +51,7 @@ on:
           - active_vs_queue
           - elite_purge_dry_run
           - indexing_status
+          - machine_status
       mode:
         description: "dry-run (por omissão) ou execute; execute só tem efeito em volume_snapshot, tags_cleanup, character_pages_sync e db_push"
         type: choice

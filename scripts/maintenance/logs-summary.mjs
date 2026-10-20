@@ -33,6 +33,8 @@ const RECUSA_INDEXACAO_RE = /\[indexacao\] recusada \(causa=/;
 const CICLO_SALTADO_RE =
   /\[trigger-sync\] ciclo (saltado|parado antes da publicação)|\[ciclo\] publicação recusada|\[trigger-sync\] indexação excedeu o tempo limite|\[trigger-sync\] publicação de aprovados saltada/;
 const ISO_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/;
+// Memória esgotada: a Fly ou o kernel escrevem "Out of memory", ou "oom" como palavra (também "oom_killed"). Não casa com "room".
+const OOM_RE = /Out of memory|(?:^|[^a-z])oom(?![a-z])/i;
 
 /** Marca de tempo em ISO, ou null se não for uma data válida. */
 export function tsValido(valor) {
@@ -125,6 +127,7 @@ export function resumirLogs(texto) {
     MODO_DEGRADADO: degr,
     RECUSAS: contagem(/\[dbDegraded\] recusado: /),
     RECUSAS_FILA: contagem(/\[dbDegraded\] recusado: [^\n]*fila/),
+    OOM_LINHAS: contagem(OOM_RE),
     DB_LOCKED: contagem(/database is locked/i),
     REINICIOS: contagem(/\[indexacao\] worker terminou sem concluir/),
     INDEX_INICIOS: inicios,

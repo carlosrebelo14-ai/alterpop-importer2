@@ -194,6 +194,17 @@ check("ciclos que não publicam pela publicação recusada, pelo prazo da indexa
   assert.equal(r.CICLOS_SALTADOS, 3, "as três linhas em que o ciclo não publicou");
 });
 
+check("linhas de OOM contam-se por 'Out of memory' e por 'oom' como palavra inteira, nunca por 'room' (ronda 3)", () => {
+  const texto = [
+    `${T(12, 0)} kernel: Out of memory: Killed process 42 (node)`,
+    `${T(12, 1)} app: exit oom_killed=true`,
+    `${T(12, 2)} app: room 3 livre`,
+    `${T(12, 3)} app ok`,
+  ].join("\n");
+  const r = resumirLogs(texto);
+  assert.equal(r.OOM_LINHAS, 2, "as duas linhas de OOM, e a linha com 'room' fica de fora");
+});
+
 check("tsValido aceita ISO e epoch em milissegundos, rejeita o resto", () => {
   assert.equal(tsValido(T(1, 0)), T(1, 0));
   assert.equal(tsValido(0), "1970-01-01T00:00:00.000Z");

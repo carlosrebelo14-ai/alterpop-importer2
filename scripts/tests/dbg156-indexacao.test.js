@@ -174,7 +174,7 @@ check("esperar_indexacao recusa execute (sai com 64) e não chama a Fly", () => 
   assert.deepEqual(r.calls, [], "com execute, a Fly não pode ser chamada");
 });
 check("mutação: deixar esperar_indexacao sair da guarda de execute faz a verificação falhar", () => {
-  const script = mutante("sem-recusa", "  indexing_status | esperar_indexacao)", "  indexing_status)");
+  const script = mutante("sem-recusa", "  indexing_status | machine_status | esperar_indexacao)", "  indexing_status | machine_status)");
   const r = correrSh({ task: "esperar_indexacao", livres: 1e9, fase: "execute", script });
   assert.equal(r.status, 0, "o mutante tem de aceitar execute, como o código antigo");
   assert.throws(() => assert.equal(r.status, 64, "a recusa tem de sair com 64"));
