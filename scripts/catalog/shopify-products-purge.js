@@ -64,9 +64,9 @@ async function main() {
 
   const count = await countShopifyProductsForReset(session);
   console.log(`produtos na loja: ${count}`);
+  // Loja vazia não sai já: o motor confirma o zero (D37), põe em PENDING os PUBLISHED sem produto e verifica o fim.
   if (count === 0) {
-    console.log(`\nLoja já vazia — nada a fazer.`);
-    return;
+    console.log(`\nLoja já vazia — o motor reconcilia a fila e verifica o fim.`);
   }
 
   console.log(`\n=== a apagar ${count} produto(s) ===`);

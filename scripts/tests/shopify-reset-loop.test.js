@@ -9,6 +9,9 @@
  *   Retomada (D39): reset morto (sem batimento há mais de 10 min) retoma-se sem contar outra vez o que já foi apagado.
  *   Verificação final: zero produtos na loja e zero PUBLISHED na fila, senão o reset não fica concluído.
  *   Dry-run: conta, não escreve. Reserva da publicação dentro do motor. Recusa com script vivo (mensagem).
+ *   D2 na retoma: o instante do primeiro arranque passa de uma retoma para a outra, e a publicação na pausa não conta.
+ *   D39: o batimento renova-se enquanto o processo vive. Arranque com trinco entre processos.
+ *   CLI de libertação: o batimento decide, e a trava de idade recusa um valor não numérico.
  *   D42: o ciclo salta a publicação com reset em curso, e regista o salto (verificação estática).
  *   Mutações: cada correção tem uma troca que tem de deixar um caso vermelho (cópia do módulo no mesmo diretório).
  *
@@ -17,6 +20,7 @@
 import "./_isolate-curation.js";
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -422,6 +426,112 @@ function verificarRetoma(r) {
   assert.equal(r.estado.retomadoDe, "shopify-reset-antigo");
 }
 
+/** Retoma com decisão humana entre o arranque original (60 min) e o batimento morto (55 min): a decisão (30 min) ganha. */
+async function cenarioRetomaComDecisao(m) {
+  reiniciarLoja([[1, "S1"]]);
+  limparEstado();
+  const arranque = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const batimento = new Date(Date.now() - 55 * 60 * 1000).toISOString();
+  escreverEstado({ jobId: "shopify-reset-antigo", state: "deleting", deleted: 0, revertedLocal: 0, updatedAt: batimento, startedAt: arranque });
+  escreverFila([item("S1", "APPROVED", 1, new Date(Date.now() - 30 * 60 * 1000).toISOString())]);
+  return correr(m, {});
+}
+function verificarRetomaComDecisao(r) {
+  assert.equal(r.erro, null, r.erro?.message);
+  assert.equal(r.estado.state, "completed", r.estado.error);
+  assert.equal(
+    r.fila.find((i) => i.sku === "S1").status,
+    "APPROVED",
+    "decisão humana tomada durante a tentativa interrompida ganha ao apagamento (D2 desde o primeiro arranque)"
+  );
+}
+
+/** Retoma com uma publicação feita durante a pausa: o produto foi apagado, e o item não é decisão humana. */
+async function cenarioRetomaComPublicacaoNaPausa(m) {
+  reiniciarLoja([[1, "S1"], [2, "S2"]]);
+  limparEstado();
+  const arranque = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const batimento = new Date(Date.now() - 55 * 60 * 1000).toISOString();
+  escreverEstado({ jobId: "shopify-reset-antigo", state: "deleting", deleted: 0, revertedLocal: 0, updatedAt: batimento, startedAt: arranque });
+  escreverFila([item("S1", "PENDING"), item("S2", "PUBLISHED", 2, new Date(Date.now() - 30 * 60 * 1000).toISOString())]);
+  return correr(m, {});
+}
+function verificarRetomaComPublicacaoNaPausa(r) {
+  assert.equal(r.erro, null, r.erro?.message);
+  assert.equal(r.estado.state, "completed", r.estado.error);
+  const s2 = r.fila.find((i) => i.sku === "S2");
+  assert.equal(s2.status, "PENDING", "uma publicação feita na pausa não é decisão humana: o produto foi apagado");
+  assert.equal(s2.metadata.origem, "reset");
+}
+
+/** Retoma sem decisão: o instante do primeiro arranque passa de uma retoma para a seguinte (D2). */
+async function cenarioRetomaDoArranque(m) {
+  limparEstado();
+  const primeiro = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const ultimo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  escreverEstado({ jobId: "retomado-antes", state: "deleting", deleted: 1, revertedLocal: 1, updatedAt: ultimo, startedAt: ultimo, inicioDoPrimeiroArranque: primeiro });
+  return { retomado: await m.initShopifyResetJob(SHOP), primeiro, ultimo };
+}
+function verificarRetomaDoArranque({ retomado, primeiro, ultimo }) {
+  assert.equal(retomado.inicioDoPrimeiroArranque, primeiro, "a retoma herda o primeiro arranque, e não o da retoma");
+  assert.equal(retomado.retomadoDe, "retomado-antes");
+  assert.notEqual(retomado.startedAt, ultimo, "o arranque da retoma é novo");
+}
+
+/** D39: o batimento renova-se enquanto o processo vive. Um reset com batimento antigo fica vivo. */
+async function cenarioBatimento(m) {
+  limparEstado();
+  const antigo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  escreverEstado({ jobId: "sem-batimento", state: "deleting", deleted: 0, updatedAt: antigo, startedAt: antigo });
+  const antes = m.resetEstaVivo(await m.readShopifyResetStatus(SHOP));
+  const parar = m.iniciarBatimento(SHOP, 20);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  parar();
+  const depois = await m.readShopifyResetStatus(SHOP);
+  return { antes, depois, vivoDepois: m.resetEstaVivo(depois) };
+}
+
+/** Dois arranques no mesmo instante (purga e app). Com trinco, só um arranca. */
+async function cenarioArranqueSimultaneo(m) {
+  limparEstado();
+  const agora = Date.now();
+  return Promise.allSettled([m.initShopifyResetJob(SHOP, agora), m.initShopifyResetJob(SHOP, agora + 1)]);
+}
+function verificarArranqueSimultaneo(resultados) {
+  const ok = resultados.filter((r) => r.status === "fulfilled");
+  const recusadas = resultados.filter((r) => r.status === "rejected");
+  assert.equal(ok.length, 1, "com trinco, a segunda chamada espera e vê o reset vivo");
+  assert.match(String(recusadas[0]?.reason?.message), /Já existe um reset Shopify em curso/);
+}
+
+/** CLI de libertação: o batimento (não o arranque) decide. Corre o script como processo à parte. */
+function correrLibertacao(argumentos) {
+  return spawnSync(process.execPath, [path.join(REPO, "scripts", "catalog", "reset-lock-release.js"), ...argumentos], {
+    encoding: "utf8",
+    env: process.env,
+  });
+}
+async function cenarioLibertacao(batimentoMinutos, argumentos) {
+  limparEstado();
+  const agora = Date.now();
+  escreverEstado({
+    jobId: "orfao",
+    state: "deleting",
+    deleted: 0,
+    revertedLocal: 0,
+    startedAt: new Date(agora - 40 * 60 * 1000).toISOString(),
+    updatedAt: new Date(agora - batimentoMinutos * 60 * 1000).toISOString(),
+  });
+  const saida = correrLibertacao(argumentos);
+  return { saida, estado: await job.readShopifyResetStatus(SHOP) };
+}
+
+/** Estático (M16): o motor liga o batimento antes do trabalho e para-o no fim, em qualquer saída. */
+function batimentoLigadoNoMotor(texto) {
+  assert.match(texto, /const pararBatimento = iniciarBatimento\(shop\);/, "o reset liga o batimento");
+  assert.match(texto, /\} finally \{\n    pararBatimento\(\);\n  \}/, "e para-o em qualquer saída");
+}
+
 async function cenarioVerificacao(m) {
   reiniciarLoja([[1, "S1"]]);
   loja.naoApaga.add(gid(1));
@@ -531,6 +641,33 @@ await caso("D38: três falhas seguidas param o reset", async () => verificarD38(
 await caso("D2 (DBG-72): decisão humana depois do arranque não é reescrita pelo apagamento", async () => verificarD2(await cenarioD2(reset)));
 await caso("D39: reset com batimento recente recusa-se, sem apagar", async () => verificarD39Vivo(await cenarioD39Vivo(reset)));
 await caso("D39: reset morto (batimento antigo) retoma-se: apagado e revertido contam-se uma vez", async () => verificarRetoma(await cenarioRetoma(reset)));
+await caso("D2 na retoma: decisão humana tomada durante a tentativa interrompida ganha ao apagamento", async () => verificarRetomaComDecisao(await cenarioRetomaComDecisao(reset)));
+await caso("D2 na retoma: publicação feita durante a pausa não é decisão humana, e volta a PENDING", async () => verificarRetomaComPublicacaoNaPausa(await cenarioRetomaComPublicacaoNaPausa(reset)));
+await caso("D2 na retoma: o instante do primeiro arranque passa de uma retoma para a seguinte", async () => verificarRetomaDoArranque(await cenarioRetomaDoArranque(job)));
+await caso("D39: o batimento renova-se enquanto o processo vive: reset com batimento antigo fica vivo", async () => {
+  const r = await cenarioBatimento(job);
+  assert.equal(r.antes, false, "sem batimento, o reset está morto");
+  assert.equal(r.vivoDepois, true, "o batimento renovou-o");
+  assert.equal(r.depois.state, "deleting", "o batimento não muda o estado");
+});
+await caso("arranque com trinco entre processos: duas chamadas no mesmo instante, só uma arranca", async () => verificarArranqueSimultaneo(await cenarioArranqueSimultaneo(job)));
+await caso("CLI de libertação: reset vivo (batimento recente) não se liberta, mesmo com arranque antigo", async () => {
+  const r = await cenarioLibertacao(0.5, ["--execute"]);
+  assert.equal(r.saida.status, 1, r.saida.stdout + r.saida.stderr);
+  assert.match(r.saida.stdout, /Reset vivo/);
+  assert.equal(r.estado.state, "deleting", "o estado fica como estava");
+});
+await caso("CLI de libertação: --min-age-minutes não numérico recusa-se (NaN não desliga a trava)", async () => {
+  const r = await cenarioLibertacao(20, ["--execute", "--min-age-minutes", "abc"]);
+  assert.equal(r.saida.status, 2, r.saida.stdout + r.saida.stderr);
+  assert.equal(r.estado.state, "deleting", "o estado fica como estava");
+});
+await caso("CLI de libertação: batimento antigo, sem processo vivo, liberta-se como failed/orphaned", async () => {
+  const r = await cenarioLibertacao(20, ["--execute"]);
+  assert.equal(r.saida.status, 0, r.saida.stdout + r.saida.stderr);
+  assert.equal(r.estado.state, "failed");
+  assert.equal(r.estado.failureReason, "orphaned");
+});
 await caso("verificação final: produto que sobrevive ao apagamento → reset não fica concluído", async () => verificarVerificacao(await cenarioVerificacao(reset)));
 await caso("reserva da publicação dentro do motor: reserva alheia → recusa, nada apagado", async () => verificarReserva(await cenarioReserva(reset)));
 await caso("dry-run: conta produtos e entradas para PENDING, sem escrever", async () => verificarDryRun(await cenarioDryRun(reset)));
@@ -561,6 +698,9 @@ await caso("purga CLI: dry-run por defeito, recusa com atividade e modo degradad
   assert.match(purga, /runShopifyCatalogReset\(session, \{ dryRun: true \}\)/);
   assert.match(purga, /recusarSeAtividadeApp\("shopify-products-purge"\)/);
   assert.match(purga, /readDbDegraded\(\)/);
+  // Loja vazia não sai antes do motor: a fila com PUBLISHED sem produto também tem de ficar fechada.
+  assert.doesNotMatch(purga, /Loja já vazia — nada a fazer/);
+  assert.match(purga, /if \(count === 0\) \{\n    console\.log\(`\\nLoja já vazia — o motor reconcilia a fila e verifica o fim\.`\);\n  \}/);
 });
 
 // ── Mutações: cada correção tem a sua troca, e a suíte tem de a apanhar ──
@@ -638,6 +778,35 @@ await caso("mutação M11 (D44): SYNC_ERROR com id volta a PENDING, como antes",
     '    if (item.status === "SYNC_ERROR" && false) {\n      continue;\n    }'
   );
   await mutacaoTemDeFalhar("M11", async () => verificarD44(await cenarioD44(m)));
+});
+await caso("mutação M12 (D2 na retoma): o arranque da retoma, e não o primeiro, é o instante do D2", async () => {
+  const m = await moduloMutado(SHOPIFY_RESET, "M12", "  const desde = job.inicioDoPrimeiroArranque || job.startedAt || null;", "  const desde = job.startedAt || null;");
+  await mutacaoTemDeFalhar("M12", async () => verificarRetomaComDecisao(await cenarioRetomaComDecisao(m)));
+});
+await caso("mutação M13 (D2 na retoma): a retoma não herda o primeiro arranque", async () => {
+  const m = await moduloMutado(SHOPIFY_JOB, "M13", "    const inicioOriginal = retoma ? anterior.inicioDoPrimeiroArranque || anterior.startedAt || inicio : inicio;", "    const inicioOriginal = inicio;");
+  await mutacaoTemDeFalhar("M13", async () => verificarRetomaDoArranque(await cenarioRetomaDoArranque(m)));
+});
+await caso("mutação M14 (D2): publicação feita na pausa volta a ser tratada como decisão humana", async () => {
+  const m = await moduloMutado(SHOPIFY_RESET, "M14", '  if (item.status === "PUBLISHED") return false;\n', "  // M14 mutado\n");
+  await mutacaoTemDeFalhar("M14", async () => verificarRetomaComPublicacaoNaPausa(await cenarioRetomaComPublicacaoNaPausa(m)));
+});
+await caso("mutação M15 (D39): sem o batimento, o reset parado expira", async () => {
+  const m = await moduloMutado(SHOPIFY_JOB, "M15", "    writeShopifyResetStatus(shop, {}).catch(() => {});", "    void shop;");
+  await mutacaoTemDeFalhar("M15", async () => {
+    const r = await cenarioBatimento(m);
+    assert.equal(r.vivoDepois, true);
+  });
+});
+await caso("mutação M16 (D39): o motor não liga o batimento (estático: o reset tem de o ligar e parar)", async () => {
+  const texto = fs.readFileSync(path.join(REPO, SHOPIFY_RESET), "utf8");
+  const antigo = "  const pararBatimento = iniciarBatimento(shop);";
+  assert.equal(texto.split(antigo).length - 1, 1, "M16: a âncora tem de existir uma vez");
+  await mutacaoTemDeFalhar("M16", async () => batimentoLigadoNoMotor(texto.replace(antigo, "  const pararBatimento = () => {};")));
+});
+await caso("mutação M17 (trinco): sem trinco por instante de arranque, dois arranques passam", async () => {
+  const m = await moduloMutado(SHOPIFY_JOB, "M17", "  const trinco = await adquirirLockDoFicheiro(trincoDoArranque(shop), {", "  const trinco = await adquirirLockDoFicheiro(trincoDoArranque(shop) + agora, {");
+  await mutacaoTemDeFalhar("M17", async () => verificarArranqueSimultaneo(await cenarioArranqueSimultaneo(m)));
 });
 
 if (falhas) {
