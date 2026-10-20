@@ -145,14 +145,27 @@ async function escreverEmParalelo(moduloCaminho, shop, { prazoMs = PRAZO_DO_FILH
       if (codigo !== 0) reject(new Error(`filho saiu com ${codigo}: ${erro}`));
     });
   }));
-  let prontos;
+  // Qualquer falha, na barreira ou na saída, mata todos os filhos e espera que saiam. Um filho que sobra continua a escrever
+  // no estado e apanha o caso seguinte (ENOTEMPTY e lock alheio). O lock que um filho morto a meio deixa também sai aqui.
   try {
-    prontos = await Promise.all(filhos);
+    const prontos = await Promise.all(filhos);
+    fs.writeFileSync(barreira, "");
+    await Promise.all(prontos.map((p) => new Promise((resolve, reject) => {
+      const prazo = setTimeout(() => {
+        p.kill();
+        reject(new Error(`filho não saiu em ${prazoMs} ms`));
+      }, prazoMs);
+      const acabou = (codigo, sinal) => {
+        clearTimeout(prazo);
+        if (codigo === 0) resolve();
+        else reject(new Error(`filho saiu com ${codigo ?? sinal}`));
+      };
+      p.on("exit", acabou);
+      // Um filho que saiu antes deste listener já não emite exit. Quando sai por sinal, exitCode fica null: vê-se também signalCode.
+      if (p.exitCode !== null || p.signalCode !== null) acabou(p.exitCode, p.signalCode);
+    })));
   } catch (err) {
-    // Um filho que falha deixa os irmãos à espera da barreira. Matam-se todos, para o teste não ficar pendurado.
     for (const p of processos) p.kill();
-    // Um filho morto a meio pode deixar o lock do estado. Espera-se que todos saiam, e o lock que deixaram sai com eles,
-    // para o caso seguinte não herdar um lock de outro processo (PR 5, revisão).
     await Promise.all(processos.map((p) => new Promise((resolve) => {
       if (p.exitCode !== null || p.signalCode !== null) resolve();
       else p.once("exit", resolve);
@@ -160,21 +173,6 @@ async function escreverEmParalelo(moduloCaminho, shop, { prazoMs = PRAZO_DO_FILH
     fs.rmSync(`${ficheiroDoEstado(shop)}.lock`, { force: true });
     throw err;
   }
-  fs.writeFileSync(barreira, "");
-  await Promise.all(prontos.map((p) => new Promise((resolve, reject) => {
-    const prazo = setTimeout(() => {
-      p.kill();
-      reject(new Error(`filho não saiu em ${prazoMs} ms`));
-    }, prazoMs);
-    const acabou = (codigo, sinal) => {
-      clearTimeout(prazo);
-      if (codigo === 0) resolve();
-      else reject(new Error(`filho saiu com ${codigo ?? sinal}`));
-    };
-    p.on("exit", acabou);
-    // Um filho que saiu antes deste listener já não emite exit. Quando sai por sinal, exitCode fica null: vê-se também signalCode.
-    if (p.exitCode !== null || p.signalCode !== null) acabou(p.exitCode, p.signalCode);
-  })));
   const lido = JSON.parse(fs.readFileSync(ficheiroDoEstado(shop), "utf8"));
   return Object.keys(lido).filter((k) => k.startsWith("k_")).length;
 }
