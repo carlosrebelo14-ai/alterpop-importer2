@@ -31,3 +31,9 @@ primary_region = "fra"
   source = "sqlite_data"
   destination = "/app/data"
 
+
+# Memória da máquina: 1024 MB (1gb). Com 512 MB, a máquina morreu por OOM (código 137) às 15:33:21Z, 20/10 (machine_status).
+# Aprovado pelo Carlos a 20/10 (Decisão 40). Não se muda por `fly scale`: o deploy repõe o que está aqui.
+# CPU, região e número de máquinas não são definidos aqui; ver a verificação pré-deploy na Decisão 40.
+[[vm]]
+  memory = "1gb"

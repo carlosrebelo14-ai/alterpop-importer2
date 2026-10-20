@@ -45,6 +45,22 @@ export function ultimaSaida(eventos) {
   return saidas[saidas.length - 1];
 }
 
+/**
+ * Instante em ISO (UTC). A Machines API devolve número em milissegundos; aceita também texto de data.
+ * Sem data válida, sai o valor como token simples.
+ */
+export function instante(valor) {
+  if (typeof valor === "number" && Number.isFinite(valor)) {
+    const data = new Date(valor);
+    return Number.isNaN(data.getTime()) ? "?" : data.toISOString();
+  }
+  if (typeof valor === "string") {
+    const ms = Date.parse(valor);
+    if (Number.isFinite(ms)) return new Date(ms).toISOString();
+  }
+  return token(valor);
+}
+
 /** Nomes das chaves de um objeto, só nomes simples, limitados. Nunca os valores. */
 export function nomesDeChaves(objeto) {
   if (!objeto || typeof objeto !== "object") return "nenhum";
@@ -60,6 +76,8 @@ export function linhaDaMaquina(maquina) {
     `estado=${token(m.state)}`,
     `regiao=${token(m.region)}`,
     `memoria_mb=${token(m.config?.guest?.memory_mb ?? m.config?.memory_mb)}`,
+    `cpu_kind=${token(m.config?.guest?.cpu_kind)}`,
+    `cpus=${token(m.config?.guest?.cpus)}`,
   ];
   const saida = ultimaSaida(m.events);
   const exitEvent = saida?.request?.exit_event;
@@ -75,7 +93,7 @@ export function linhaDaMaquina(maquina) {
       `codigo=${token(codigo)}`,
       `sinal=${token(exitEvent.guest_signal ?? exitEvent.signal)}`,
       `oom=${oom === true ? "sim" : oom === false ? "nao" : "?"}`,
-      `quando=${token(saida.timestamp)}`
+      `quando=${instante(saida.timestamp)}`
     );
   }
   return `MS: ${partes.join(" ")}`;
