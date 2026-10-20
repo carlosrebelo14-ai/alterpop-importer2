@@ -222,13 +222,32 @@ check("ordem — branch errado E working tree sujo: pára na guarda 1", () => {
 // Memória da máquina (Decisão 40): fixada em fly.toml, e nenhum script de deploy a sobrepõe.
 const RAIZ_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const VM_MEMORIA = /^\[\[vm\]\]\n\s+memory = "1gb"$/m;
-check("memória da máquina fixada em fly.toml: [[vm]] com 1gb (1024 MB), e nenhum script de deploy a muda", () => {
+const COMANDO_DE_MEMORIA = /fly\s+scale|flyctl\s+scale|machines?\s+update|--vm-memory/g;
+/**
+ * Ocorrências do comando de memória em maintenance.sh fora do bloco scale_memory (Decisão 41). 0 é o certo.
+ * -1 se o bloco não existir.
+ */
+function comandoDeMemoriaForaDoBloco(maint) {
+  const bloco = /^  scale_memory\)\n([\s\S]*?)^    ;;$/m.exec(maint);
+  if (!bloco) return -1;
+  return (maint.match(COMANDO_DE_MEMORIA) || []).length - (bloco[1].match(COMANDO_DE_MEMORIA) || []).length;
+}
+check("memória da máquina fixada em fly.toml: [[vm]] com 1gb (1024 MB); o deploy não a muda, só scale_memory (Decisão 41)", () => {
   const toml = fs.readFileSync(path.join(RAIZ_REPO, "fly.toml"), "utf8");
   assert.match(toml, VM_MEMORIA, "fly.toml tem de fixar 1gb em [[vm]]");
-  for (const rel of ["scripts/deploy.sh", ".github/workflows/deploy.yml", "scripts/ci/maintenance.sh", "Dockerfile"]) {
+  for (const rel of ["scripts/deploy.sh", ".github/workflows/deploy.yml", "Dockerfile"]) {
     const texto = fs.readFileSync(path.join(RAIZ_REPO, rel), "utf8");
     assert.doesNotMatch(texto, /fly\s+scale|flyctl\s+scale|machines?\s+update|--vm-memory/, `${rel} não pode mudar a memória da máquina`);
   }
+  const maint = fs.readFileSync(path.join(RAIZ_REPO, "scripts/ci/maintenance.sh"), "utf8");
+  assert.equal(comandoDeMemoriaForaDoBloco(maint), 0, "o comando de memória em maintenance.sh só pode estar dentro de scale_memory");
+  assert.equal((maint.match(/--vm-memory 1024/g) || []).length, 1, "um só comando de memória, com 1024");
+});
+check("mutação: comando de memória fora do bloco scale_memory faz o caso ficar vermelho", () => {
+  const maint = fs.readFileSync(path.join(RAIZ_REPO, "scripts/ci/maintenance.sh"), "utf8");
+  const mutado = maint.replace("  machine_status)\n", "  machine_status)\n    flyctl machine update x --vm-memory 512\n");
+  assert.notEqual(mutado, maint, "a âncora tem de existir");
+  assert.notEqual(comandoDeMemoriaForaDoBloco(mutado), 0, "o caso tem de apanhar o comando fora do bloco");
 });
 check("mutação: memória de 512 MB em fly.toml faz o caso da memória ficar vermelho", () => {
   const toml = fs.readFileSync(path.join(RAIZ_REPO, "fly.toml"), "utf8");

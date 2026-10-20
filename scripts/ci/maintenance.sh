@@ -5,9 +5,10 @@
 #
 # tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push
 #         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status   (estas só leem; nenhuma aceita execute)
+#         | scale_memory   (muda a memória da única máquina da app; só execute, com aprovação do environment production; Decisão 41)
 # db_push recusa-se com a flag DB_DEGRADED presente no volume (Decisão 34), em dry-run e em execute.
 # fase    dry-run  só lê (ou lista o que mudaria)
-#         execute  escreve (só tags_cleanup, character_pages_sync e db_push; nas outras é igual ao dry-run)
+#         execute  escreve (só tags_cleanup, character_pages_sync, db_push e scale_memory; nas outras é igual ao dry-run)
 #
 # O repositório é público: logs e resumos só levam CONTAGENS e ESTADOS. A saída bruta da Fly vai para um
 # ficheiro temporário e nunca para o log; daí só se extraem números, ids de verificação (V5...) e estados.
@@ -47,7 +48,7 @@ RESTORE_OUT="$(mktemp)"
 LOG_SUM=""
 
 case "$TASK" in
-  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | esperar_indexacao) ;;
+  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | esperar_indexacao | scale_memory) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
 esac
 # As tarefas novas só leem: nenhuma aceita execute, nem como no-op.
@@ -66,7 +67,7 @@ case "$PHASE" in
 esac
 
 WRITES=false
-case "$TASK" in volume_snapshot | tags_cleanup | character_pages_sync | db_push) WRITES=true ;; esac
+case "$TASK" in volume_snapshot | tags_cleanup | character_pages_sync | db_push | scale_memory) WRITES=true ;; esac
 EFFECTIVE="$PHASE"
 if [ "$WRITES" = false ]; then EFFECTIVE="dry-run"; fi
 
@@ -378,6 +379,60 @@ case "$TASK" in
       CAUSE="não consegui ler as máquinas da app (flyctl machines list, ou o JSON não se lê)."
     fi
     ;;
+  scale_memory)
+    # Decisão 41: a única troca de memória fora do deploy. Muda a memória da única máquina da app com
+    # `flyctl machine update --vm-memory`. Não toca no código, no volume nem no estado da indexação, e não espera
+    # por indexação: um running preso bloquearia a própria espera. A troca reinicia a máquina: um processo vivo morre.
+    # O id completo fica em variável e nunca sai no log nem no resumo; o flyctl escreve só no ficheiro temporário.
+    SM_BULLETS=""; SM_KEY=""
+    if [ "$EFFECTIVE" = "execute" ]; then
+      DESC="Muda a memória da única máquina da app para 1024 MB (flyctl machine update --vm-memory) e confirma na Fly. Escreve na Fly e reinicia a máquina. Não toca no código nem no estado da indexação."
+    else
+      DESC="Lê a única máquina da app e mostra a memória atual e o que o execute faria. Só lê."
+    fi
+    campo_sm() { echo "$PLANO" | grep -E "^$1=" | head -1 | cut -d= -f2-; }
+    MS_JSON="$("$FLYCTL" machines list -a "$APP" --json 2>>"$OUT")"; RC=$?
+    if [ "$RC" -eq 0 ]; then
+      PLANO="$(echo "$MS_JSON" | node "$ROOT/scripts/maintenance/scale-memory-plan.mjs" 2>>"$OUT")"; RC=$?
+    fi
+    if [ "$RC" -ne 0 ]; then
+      CAUSE="não consegui ler as máquinas da app (flyctl machines list, ou o JSON não se lê): não mudei nada."
+    elif [ "$(campo_sm SM_MAQUINAS)" != "1" ]; then
+      CAUSE="Esperava exatamente 1 máquina e encontrei $(campo_sm SM_MAQUINAS). Não escolho uma à sorte: não mudei nada."; RC=3
+    elif ! [[ "$(campo_sm SM_ID)" =~ ^[A-Za-z0-9]{1,40}$ ]]; then
+      CAUSE="o id da máquina não se lê: não mudei nada."; RC=2
+    elif ! [[ "$(campo_sm SM_MEMORIA_MB)" =~ ^[0-9]+$ ]]; then
+      CAUSE="não consegui ler a memória atual da máquina: não mudei nada."; RC=2
+    fi
+    if [ "$RC" -eq 0 ]; then
+      SM_ID="$(campo_sm SM_ID)"; SM_MEM="$(campo_sm SM_MEMORIA_MB)"
+      SM_BULLETS="- Máquinas da app: **1**. Máquina \`$(campo_sm SM_MAQUINA)\`: estado **$(campo_sm SM_ESTADO)**, memória **$SM_MEM** MB, CPU **$(campo_sm SM_CPU)** × **$(campo_sm SM_CPUS)**."
+      SM_KEY="1 máquina, memória $SM_MEM MB"
+      if [ "$SM_MEM" = "1024" ]; then
+        SM_BULLETS="$SM_BULLETS"$'\n'"- Já estava em 1024 MB: nada a fazer."
+        SM_KEY="já 1024 MB"
+      elif [ "$EFFECTIVE" = "dry-run" ]; then
+        SM_BULLETS="$SM_BULLETS"$'\n'"- Com o execute, a memória passava a **1024** MB, com reinício da máquina."
+        SM_KEY="$SM_MEM → 1024 MB (com execute)"
+      else
+        # Lê a Fly outra vez mesmo quando o flyctl falha: a troca pode ter sido aplicada antes do erro.
+        "$FLYCTL" machine update "$SM_ID" --vm-memory 1024 --yes -a "$APP" >>"$OUT" 2>&1; UPD_RC=$?
+        DEPOIS="$("$FLYCTL" machines list -a "$APP" --json 2>>"$OUT" | node "$ROOT/scripts/maintenance/scale-memory-plan.mjs" 2>>"$OUT")"
+        MEM_DEPOIS="$(echo "$DEPOIS" | grep -E '^SM_MEMORIA_MB=' | head -1 | cut -d= -f2-)"
+        EST_DEPOIS="$(echo "$DEPOIS" | grep -E '^SM_ESTADO=' | head -1 | cut -d= -f2-)"
+        if [ "$UPD_RC" -ne 0 ]; then
+          RC=1; CAUSE="o flyctl machine update falhou (código $UPD_RC). Memória lida agora: ${MEM_DEPOIS:-?} MB. O detalhe fica fora do log."
+        elif [ "$MEM_DEPOIS" != "1024" ]; then
+          RC=1; CAUSE="a Fly não confirmou 1024 MB depois da troca (memória lida: ${MEM_DEPOIS:-?})."
+        elif [ "$EST_DEPOIS" != "started" ]; then
+          RC=1; CAUSE="a Fly confirma 1024 MB, mas a máquina não está iniciada (estado: ${EST_DEPOIS:-?}). Ver machine_status."
+        else
+          SM_BULLETS="$SM_BULLETS"$'\n'"- Memória confirmada pela Fly: **1024** MB, máquina **$EST_DEPOIS**."
+          SM_KEY="$SM_MEM → 1024 MB"
+        fi
+      fi
+    fi
+    ;;
 esac
 
 # ── resumo em português, só contagens e estados ───────────────────────
@@ -588,6 +643,9 @@ case "$TASK" in
       done < <(echo "$CLEAN" | grep -E '^MS_OOM: ' || true)
       KEY="$total_ms máquina(s), $(count ' oom=sim') com OOM na última saída"
     fi
+    ;;
+  scale_memory)
+    bullets="$SM_BULLETS"; KEY="$SM_KEY"
     ;;
 esac
 

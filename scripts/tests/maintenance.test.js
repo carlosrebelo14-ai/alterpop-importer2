@@ -40,7 +40,7 @@ check("só workflow_dispatch, só main", () => {
 check("task: lista fechada exata", () => {
   assert.match(
     code,
-    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- price_check\n\s+- volume_snapshot\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+- db_flag_check\n\s+- logs_recent\n\s+- restore_dry_run\n\s+- active_vs_queue\n\s+- elite_purge_dry_run\n\s+- indexing_status\n\s+- machine_status\n\s+mode:/
+    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- price_check\n\s+- volume_snapshot\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+- db_flag_check\n\s+- logs_recent\n\s+- restore_dry_run\n\s+- active_vs_queue\n\s+- elite_purge_dry_run\n\s+- indexing_status\n\s+- machine_status\n\s+- scale_memory\n\s+mode:/
   );
 });
 check("mode: dry-run por omissão, execute", () => {
@@ -57,7 +57,7 @@ check("o job execute: needs dry-run, environment production, só mode=execute na
   assert.match(job, /needs: dry-run/);
   assert.match(job, /environment: production/);
   assert.match(job, /inputs\.mode == 'execute'/);
-  assert.match(job, /\["volume_snapshot","tags_cleanup","character_pages_sync","db_push"\]/);
+  assert.match(job, /\["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory"\]/);
   assert.match(job, /maintenance\.sh "\$TASK" execute/);
 });
 check("nenhum texto livre vai para comandos; token só por secrets.FLY_API_TOKEN; sem flags de loja", () => {
