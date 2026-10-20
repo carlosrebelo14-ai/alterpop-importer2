@@ -399,5 +399,41 @@ Verificados em `origin/main` (e575971), por leitura do código e reexecução de
 | DBG-156 | Média | main | `lib/importer/catalog/indexingStream.server.js:194-205`; `lib/workers/catalog-index-worker.mjs:25`, `:59`; `lib/importer/catalog/catalogRebuildStatus.server.js:76-90`; `lib/importer/catalog/syncCatalogWithProgress.server.js:128-145`; `scripts/ci/maintenance.sh:85`, `:271` | O arranque da indexação escreve `running` só em memória (`:194-205`). O primeiro `running` chega ao disco com o debounce de 5 s (`catalogRebuildStatus.server.js:76-90`), depois do primeiro progresso do worker (`catalog-index-worker.mjs:25`, `:59`). A fase `clearing` apaga o catálogo antes disso (`syncCatalogWithProgress.server.js:128-145`). O `wait_for_indexing` faz uma só sonda, e com 0 retorna logo (`maintenance.sh:85`). O `db_push` usa a mesma sonda (`:271`). Efeitos: o gate do deploy avalia um catálogo parcial (V5, V6 e V7 vermelhas no deploy `39035938600`), e o gate do db:push pode deixar correr um db:push durante o clearing. Correção: flush imediato de `running` antes do fork, e o gate repete a sonda durante alguns segundos. Teste de mutação obrigatório. Vai para o 2b-3. Não corrigido. |
 
 
+### Revisão do PR 5 (#125): parada na ronda 10 por decisão do arquiteto (20/10/2026)
+
+A revisão parou na ronda 10, por decisão do arquiteto. A partir do próximo PR vale a Decisão 39 (em `docs/decisoes.md`, a registar no PR da próxima ronda): no máximo duas rondas por PR, e só bloqueia o merge um achado que possa estragar dados, a fila ou a loja, ou que deixe uma escrita sem proteção. Os achados abaixo não bloqueiam o merge do PR 5.
+
+Ronda 10 sobre `938914a`. Corrigida em `4702f5f`:
+
+- Lente 1: dois achados. L1-R1 corrigido: o reset diz "pasta de marcadores não lida" para a pasta que não se lê, e não "atividade ilegível". Teste (an) e mutação novos. L1-R2 refutado (uma confirmação em três).
+- Lente 2: cinco achados. T-1 corrigido: os casos (ab) e (ac) provam que a linha do Relatório é alcançável, e não só que existe. Mutações novas. T-2 a T-5 em aberto, abaixo.
+- Lentes 3 e 4: não correram. O limite de sessão interrompeu a ronda, e o resume não as completou. A lacuna fica em DBG-162.
+
+Achados em aberto do PR 5, passados para DBG novos:
+
+| ID | Sev | Origem | Local | Achado e estado |
+|---|---|---|---|---|
+| DBG-158 | Baixa | diff | `lib/curation/atividadeApp.js:254` | A sonda que mede a idade de um marcador ilegível (`idadeDoMarcadorMs`) devolve 0 quando falha, e o marcador conta como recente. Nenhum caso cobre esse ramo: trocar o fail-closed por fail-open passa a suíte. Confirmado em dois de três. Aberto. Teste proposto: caso com a sonda a falhar. |
+| DBG-159 | Baixa | diff | `scripts/tests/dbg140-141-guardas.test.js:1128` | O caso (aa) depende de o download do worker ficar pendurado. Com um proxy que recusa ligações, a mutação dá falso vermelho e o caso positivo passa sem testar o disconnect. Confirmado em dois de três; classificação não concluída. Aberto. |
+| DBG-160 | Baixa | diff | `lib/curation/atividadeApp.js:77` | Um marcador de script com pid 0 ou negativo conta como vivo para sempre, e bloqueia indexação e publicação até ser apagado à mão. É fail-closed: não deixa escrita sem proteção. Não refutado (sem votos). Aberto. |
+| DBG-161 | Baixa | diff | `scripts/tests/dbg154-157-estado.test.js:124` | Os filhos da barreira não ouvem o evento `error` do spawn. Uma falha de fork termina o ficheiro com exceção não tratada. Só afeta o harness de teste. Não refutado (sem votos). Aberto. |
+| DBG-162 | Média | diff | revisão da ronda 10 | As lentes 3 (mensagens e comunicação com o operador) e 4 (processo, deploy e documentação) não correram. O limite de sessão interrompeu a ronda, e o resume não as completou. Aberto: o arquiteto decide se estas lentes são feitas antes do deploy. |
+| DBG-163 | Média | main | `scripts/ci/maintenance.sh:78-87`, `scripts/maintenance/check-no-indexing.mjs:61`, `scripts/deploy.sh:76-81` | Um `running` preso bloqueia a espera do deploy e o gate até uma indexação nova acabar. O runbook já o descreve (Efeitos do PR 5). A espera em si é de main. Aberto. Ver a decisão do arquiteto antes do deploy. |
+| DBG-164 | Baixa | main | `lib/curation/atividadeApp.js:115`, `:161-169` | No reset, um marcador ilegível que ordena antes de um script vivo dá a mensagem de ilegível, e não a de script. Aberto. |
+| DBG-165 | Baixa | main | `lib/curation/atividadeApp.js:80` | O ramo EPERM de `processoVivo` não tem teste. Aberto. |
+| DBG-166 | Baixa | main | `app/routes/app.reports.jsx:317` | O banner diz "Abaixo, o último resultado bom" também quando não há resultado bom. Aberto. |
+| DBG-167 | Baixa | main | `scripts/catalog/full-catalog-reindex.js:35` | A recusa por falha ao marcar a atividade não diz o código do erro. As rotas e a purga dizem. Aberto. |
+| DBG-168 | Baixa | main | `lib/importer/curation/marginErosion.server.js:240` | `markMarginErosionCycleSkipped` engole o erro de escrita. Se o "não correu" não se grava, o Relatório mostra um ciclo antigo como se fosse atual. Aberto. |
+| DBG-169 | Baixa | main | `lib/importer/shopify/publicacaoEmCurso.js:8-9` | A reserva em memória e os marcadores assumem uma máquina com um volume. Aberto. |
+| DBG-170 | Baixa | main | `scripts/tests/indexing-marcador-falha.test.js:14` | O comentário diz que o worker é criado antes do marcador, porque o marcador leva o pid do worker. Em main a ordem é a contrária. Aberto. |
+| DBG-171 | Baixa | main | `scripts/catalog/catalog-purge-reindex.js:51` | A marca do worker da purga fica para trás em sinal (SIGHUP, SIGINT, SIGTERM). Aberto. |
+| DBG-172 | Baixa | main | `lib/curation/atividadeApp.js:108` | Um marcador ilegível sai só com o nome base, sem a pasta, na guarda da app. A guarda de script dá o caminho completo. Aberto. |
+| DBG-173 | Média | main | `app/routes/app._index.jsx:226` | A purga pedida pelo painel não corre quando há uma indexação do ciclo em curso, e a resposta diz que arrancou. Aberto. |
+| DBG-174 | Baixa | main | `lib/curation/atividadeApp.js:117` | O ramo de marcador sem pid na guarda da app não tem teste. Tirar o ramo deixa a suíte verde. Aberto. |
+| DBG-175 | Média | main | `scripts/catalog/full-catalog-reindex.js:156` | A mensagem gravada depois de uma falha diz "corre com RESUME=1". A Decisão 36 e o runbook proíbem RESUME=1 em produção até o veto ser levantado. Aberto. |
+| DBG-176 | Baixa | main | `docs/relatorios/debug-geral-14-10-2026.md:398` | Grafia `[indacao]` no DBG-155. A marca real é `[indexacao]`. Aberto. |
+
+Decisão 39 (texto a registar no PR da próxima ronda): ver o rascunho em `scratchpad`, e a secção de decisões quando esse PR for aberto.
+
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._
