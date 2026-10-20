@@ -8,6 +8,7 @@ import {
 } from "../../lib/importer/shopify/shopifySyncJob.server.js";
 import { startApprovedShopifySyncInBackground } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
 import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
+import { marcarAtividadeApp } from "../../lib/curation/atividadeApp.js";
 import { listApprovedSkusForShopifySync, loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { resolveSyncSkus } from "../../lib/importer/shopify/resolveSyncSkus.js";
 import {
@@ -20,6 +21,12 @@ import { assertBulkConfirm, BulkConfirmError } from "../../lib/curation/bulkConf
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { assertThemeContractValid, ThemeContractError } from "../../lib/importer/shopify/themeContract.server.js";
 import { readDbDegraded } from "../../lib/health/dbDegraded.js";
+import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
+import {
+  atividadeAppEmCurso,
+  motivoDeRecusaDaPublicacaoManual,
+  scriptDeIndexacaoEmCurso,
+} from "../../lib/curation/atividadeApp.js";
 
 /**
  * GET /api/shopify-sync — estado do job em curso (polling UI).
@@ -119,6 +126,17 @@ export const action = async ({ request }) => {
     );
   }
 
+  // PR 5 (DBG-141): a publicação manual não corre com indexação do catálogo em curso, nem com a do ciclo, nem com um
+  // script de reindexação vivo. A indexação esvazia o catálogo, e a publicação marcaria SYNC_ERROR "SKU ausente".
+  const motivoIndexacao = motivoDeRecusaDaPublicacaoManual({
+    indexacaoEmCurso: isCatalogIndexingRunning(session.shop) || atividadeAppEmCurso()?.tipo === "indexacao",
+    atividadeScript: scriptDeIndexacaoEmCurso(),
+  });
+  if (motivoIndexacao) {
+    console.log(`[shopify-sync] publicação recusada: ${motivoIndexacao}`);
+    return Response.json({ ok: false, error: motivoIndexacao }, { status: 409 });
+  }
+
   if (await isShopifyResetRunning(session.shop)) {
     return Response.json(
       {
@@ -201,9 +219,39 @@ export const action = async ({ request }) => {
 
   // DBG-105: a reserva é tomada aqui, sem await entre ela e o initShopifySyncJob, e segue com o job até ao arranque
   // em background. Não depende de force: force só salta o gate de estado, acima. Se o ciclo já publica, responde 409.
-  const reserva = tentarReservarPublicacao();
+  // PR 5 (revisão): a reserva e a marca da app nascem no mesmo passo síncrono. Um script que arranque depois já a vê.
+  let reserva = null;
+  try {
+    reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+  } catch (err) {
+    console.error(`[shopify-sync] marcação da atividade falhou (${err?.code || "erro"}). Nada foi gravado.`);
+    return Response.json(
+      { ok: false, error: "Não foi possível marcar a atividade da app. Nada foi gravado." },
+      { status: 503 }
+    );
+  }
   if (!reserva) {
-    return Response.json({ ok: false, error: "Já existe uma sincronização Shopify em curso." }, { status: 409 });
+    return Response.json(
+      { ok: false, error: "Já há uma publicação ou um reset Shopify em curso. Aguarda que termine antes de publicar." },
+      { status: 409 }
+    );
+  }
+
+  // PR 5 (DBG-141): a indexação pode ter arrancado nos awaits acima, depois da verificação de indexação. Confirma-se aqui,
+  // com a reserva na mão. Se a decisão falhar, a reserva sai antes de o erro subir.
+  try {
+    const motivoDepoisDaReserva = motivoDeRecusaDaPublicacaoManual({
+      indexacaoEmCurso: isCatalogIndexingRunning(session.shop) || atividadeAppEmCurso()?.tipo === "indexacao",
+      atividadeScript: scriptDeIndexacaoEmCurso(),
+    });
+    if (motivoDepoisDaReserva) {
+      reserva.libertar();
+      console.log(`[shopify-sync] publicação recusada: ${motivoDepoisDaReserva}`);
+      return Response.json({ ok: false, error: motivoDepoisDaReserva }, { status: 409 });
+    }
+  } catch (err) {
+    reserva.libertar();
+    throw err;
   }
   try {
     await initShopifySyncJob(session.shop, approvedSkus.length);

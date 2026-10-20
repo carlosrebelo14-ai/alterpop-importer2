@@ -97,24 +97,82 @@ async function caso(nome, fn) {
 const N_PROCESSOS = 4;
 const N_ESCRITAS = 40;
 
-/** Corre N_PROCESSOS filhos; cada um grava N_ESCRITAS chaves próprias no mesmo ficheiro. */
-async function escreverEmParalelo(moduloCaminho, shop) {
+let contadorBarreira = 0;
+
+/**
+ * Corre N_PROCESSOS filhos; cada um grava N_ESCRITAS chaves próprias no mesmo ficheiro. Os filhos só começam a
+ * escrever quando todos estão carregados (barreira por ficheiro). Sem isto, um filho pode acabar antes de outro
+ * começar, não há sobreposição, e a mutação sem lock passa sem perder chaves (corrida de tempo, não de código).
+ */
+/** Prazo de cada filho (PR 5, revisão). Um filho que não fica pronto, ou não sai, em prazo é morto e a escrita falha. */
+const PRAZO_DO_FILHO_MS = 60_000;
+
+async function escreverEmParalelo(moduloCaminho, shop, { prazoMs = PRAZO_DO_FILHO_MS, semPronto = false, morreDoFilho = null } = {}) {
+  const barreira = path.join(raiz, `barreira-${contadorBarreira++}`);
   const script = `
+    import fs from "node:fs";
     const m = await import(process.env.MOD);
+    if (process.env.SEM_PRONTO !== "1") await new Promise((r) => process.stdout.write("pronto\\n", r));
+    if (process.env.MORRE === process.env.ID) process.kill(process.pid, "SIGKILL");
+    while (!fs.existsSync(process.env.BARREIRA)) await new Promise((r) => setTimeout(r, 1));
     for (let i = 0; i < ${N_ESCRITAS}; i += 1) {
       m.setInMemoryStatus(process.env.SHOP, { state: "running", ["k_" + process.env.ID + "_" + i]: i });
       await m.flushCatalogRebuildStatus(process.env.SHOP, {});
     }`;
+  const processos = [];
   const filhos = Array.from({ length: N_PROCESSOS }, (_, id) => new Promise((resolve, reject) => {
     const p = spawn(process.execPath, ["--input-type=module", "-e", script], {
-      env: { ...process.env, PROJECT_ROOT: raiz, MOD: moduloCaminho, SHOP: shop, ID: String(id) },
-      stdio: ["ignore", "ignore", "pipe"],
+      env: { ...process.env, PROJECT_ROOT: raiz, MOD: moduloCaminho, SHOP: shop, ID: String(id), BARREIRA: barreira, SEM_PRONTO: semPronto ? "1" : "0", MORRE: morreDoFilho === null ? "-1" : String(morreDoFilho) },
+      stdio: ["ignore", "pipe", "pipe"],
     });
+    processos.push(p);
     let erro = "";
+    let saida = "";
+    const prazo = setTimeout(() => {
+      p.kill();
+      reject(new Error(`filho ${id} não ficou pronto em ${prazoMs} ms`));
+    }, prazoMs);
+    p.stdout.on("data", (d) => {
+      saida += d;
+      if (saida.includes("pronto")) {
+        clearTimeout(prazo);
+        resolve(p);
+      }
+    });
     p.stderr.on("data", (d) => (erro += d));
-    p.on("exit", (codigo) => (codigo === 0 ? resolve() : reject(new Error(`filho saiu com ${codigo}: ${erro}`))));
+    p.on("exit", (codigo) => {
+      clearTimeout(prazo);
+      if (codigo !== 0) reject(new Error(`filho saiu com ${codigo}: ${erro}`));
+    });
   }));
-  await Promise.all(filhos);
+  // Qualquer falha, na barreira ou na saída, mata todos os filhos e espera que saiam. Um filho que sobra continua a escrever
+  // no estado e apanha o caso seguinte (ENOTEMPTY e lock alheio). O lock que um filho morto a meio deixa também sai aqui.
+  try {
+    const prontos = await Promise.all(filhos);
+    fs.writeFileSync(barreira, "");
+    await Promise.all(prontos.map((p) => new Promise((resolve, reject) => {
+      const prazo = setTimeout(() => {
+        p.kill();
+        reject(new Error(`filho não saiu em ${prazoMs} ms`));
+      }, prazoMs);
+      const acabou = (codigo, sinal) => {
+        clearTimeout(prazo);
+        if (codigo === 0) resolve();
+        else reject(new Error(`filho saiu com ${codigo ?? sinal}`));
+      };
+      p.on("exit", acabou);
+      // Um filho que saiu antes deste listener já não emite exit. Quando sai por sinal, exitCode fica null: vê-se também signalCode.
+      if (p.exitCode !== null || p.signalCode !== null) acabou(p.exitCode, p.signalCode);
+    })));
+  } catch (err) {
+    for (const p of processos) p.kill();
+    await Promise.all(processos.map((p) => new Promise((resolve) => {
+      if (p.exitCode !== null || p.signalCode !== null) resolve();
+      else p.once("exit", resolve);
+    })));
+    fs.rmSync(`${ficheiroDoEstado(shop)}.lock`, { force: true });
+    throw err;
+  }
   const lido = JSON.parse(fs.readFileSync(ficheiroDoEstado(shop), "utf8"));
   return Object.keys(lido).filter((k) => k.startsWith("k_")).length;
 }
@@ -127,6 +185,16 @@ await caso("quatro processos a escrever o mesmo estado não perdem chaves", asyn
   const perdidas = ESPERADO - (await escreverEmParalelo(LOCK_ESTADO, SHOP));
   assert.equal(perdidas, 0, `chaves perdidas: ${perdidas}`);
   assert.equal(fs.existsSync(`${ficheiroDoEstado(SHOP)}.lock`), false, "o lock tem de ser libertado no fim");
+});
+
+await caso("barreira com prazo: um filho que nunca fica pronto faz a escrita falhar em prazo", async () => {
+  await assert.rejects(escreverEmParalelo(LOCK_ESTADO, SHOP, { prazoMs: 1500, semPronto: true }), /não ficou pronto em 1500 ms/);
+});
+await caso("barreira: um filho morto por sinal depois de pronto falha a escrita logo, sem esperar o prazo do filho", async () => {
+  // Com prazo de 20 s, a falha tem de sair em muito menos: a fase 2 vê o sinal de saída, e não espera o prazo.
+  const inicio = Date.now();
+  await assert.rejects(escreverEmParalelo(LOCK_ESTADO, SHOP, { prazoMs: 20000, morreDoFilho: 1 }), /saiu com SIGKILL/);
+  assert.ok(Date.now() - inicio < 10000, `a falha tem de sair antes do prazo do filho (${Date.now() - inicio} ms)`);
 });
 await caso("mutação: sem lock e com uma janela na leitura-escrita perde chaves (o caso acima tem de ficar vermelho)", async () => {
   // Lock trocado por um titular falso, e uma pausa entre ler o ficheiro e escrevê-lo. A pausa só aumenta a
@@ -257,7 +325,7 @@ async function terminarComFlush(ind, shop, { bloquear }) {
   const eventos = [];
   const parar = ind.subscribeIndexingEvents(shop, (e) => eventos.push(e));
   try {
-    await ind.startCatalogIndexingWorker(shop, {}, { causa: "script" });
+    await ind.startCatalogIndexingWorker(shop, {}, { causa: "painel" });
     if (bloquear) bloquearEscrita();
     filhos[0].emit("message", { type: "done", indexed: 3, scanned: 3 });
     await esperarAte(() => eventos.some((e) => e.type === "closed"));
@@ -304,8 +372,8 @@ await caso("dois arranques no mesmo tick dão um só fork e a mesma promessa", a
     return new FakeChild();
   });
   try {
-    const p1 = indexacao.startCatalogIndexingWorker("loja-tick.myshopify.com", {}, { causa: "script" });
-    const p2 = indexacao.startCatalogIndexingWorker("loja-tick.myshopify.com", {}, { causa: "script" });
+    const p1 = indexacao.startCatalogIndexingWorker("loja-tick.myshopify.com", {}, { causa: "painel" });
+    const p2 = indexacao.startCatalogIndexingWorker("loja-tick.myshopify.com", {}, { causa: "painel" });
     assert.equal(p1, p2, "o segundo arranque tem de receber a mesma promessa");
     await Promise.all([p1, p2]);
     assert.equal(forks, 1, "tem de haver um só fork");
@@ -327,8 +395,8 @@ await caso("mutação: sem a reserva, dois arranques no mesmo tick fazem dois fo
       forks += 1;
       return new FakeChild();
     });
-    const p1 = mutado.startCatalogIndexingWorker("loja-tick-mut.myshopify.com", {}, { causa: "script" });
-    const p2 = mutado.startCatalogIndexingWorker("loja-tick-mut.myshopify.com", {}, { causa: "script" });
+    const p1 = mutado.startCatalogIndexingWorker("loja-tick-mut.myshopify.com", {}, { causa: "painel" });
+    const p2 = mutado.startCatalogIndexingWorker("loja-tick-mut.myshopify.com", {}, { causa: "painel" });
     await Promise.all([p1, p2]);
     assert.equal(forks, 2, "o mutante tem de fazer dois forks, como o código antigo");
     assert.throws(() => assert.equal(forks, 1));
@@ -348,11 +416,11 @@ await caso("flush do arranque com erro: não há fork, o arranque devolve null, 
   const shop = "loja-arranque-falha.myshopify.com";
   try {
     bloquearEscrita();
-    const r1 = await indexacao.startCatalogIndexingWorker(shop, {}, { causa: "script" });
+    const r1 = await indexacao.startCatalogIndexingWorker(shop, {}, { causa: "painel" });
     assert.equal(r1, null, "sem estado no disco, o arranque não se faz");
     assert.equal(forks, 0, "sem estado no disco, não pode haver fork");
     desbloquearEscrita();
-    const r2 = await indexacao.startCatalogIndexingWorker(shop, {}, { causa: "script" });
+    const r2 = await indexacao.startCatalogIndexingWorker(shop, {}, { causa: "painel" });
     assert.notEqual(r2, null, "a reserva tem de estar libertada: o arranque seguinte faz-se");
     assert.equal(forks, 1);
   } finally {
@@ -376,9 +444,9 @@ await caso("mutação: sem libertar a reserva, o arranque seguinte fica preso ao
     });
     const shop = "loja-arranque-falha-mut.myshopify.com";
     bloquearEscrita();
-    await mutado.startCatalogIndexingWorker(shop, {}, { causa: "script" });
+    await mutado.startCatalogIndexingWorker(shop, {}, { causa: "painel" });
     desbloquearEscrita();
-    const r2 = await mutado.startCatalogIndexingWorker(shop, {}, { causa: "script" });
+    const r2 = await mutado.startCatalogIndexingWorker(shop, {}, { causa: "painel" });
     assert.equal(r2, null, "o mutante tem de devolver o resultado antigo, como o código antigo");
     assert.throws(() => assert.notEqual(r2, null));
   } finally {

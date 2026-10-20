@@ -358,15 +358,22 @@ A regra de não correr o reset em produção mantém-se até o PR 2b-3 estar em 
 
 **Referência cruzada:** Decisões 13, 28, 30, 33 e 34; plano `docs/planos/plano-2b.md`; relatório `docs/relatorios/debug-geral-14-10-2026.md`.
 
-## Decisão 36 — veto ao reindex completo até ao 2b-3
+## Decisão 36 — veto ao reindex completo até ao PR 5 (ronda 3)
 
 **Data:** 2026-10-17
-**Estado:** fechada pelo arquiteto. Vale até o PR 2b-3 estar em produção.
+**Estado:** fechada pelo arquiteto. Vale até o PR 5 estar em produção e verificado (ronda 3, Decisão 38). O levantamento é do arquiteto, depois da verificação pós-deploy.
 **Origem:** DBG-155 em `docs/relatorios/debug-geral-14-10-2026.md`.
 
-`scripts/catalog/full-catalog-reindex.js` não corre em produção, nem com `RESUME=1`. Motivo: escreve o estado da app sem marcador de atividade e sem lock, e pode deixar `running` com `indexing: true` no ficheiro de estado. Isso bloqueia o db:push e impede a retoma.
+`scripts/catalog/full-catalog-reindex.js` não corre em produção, nem com `RESUME=1`. Motivo (antes do PR 4): o script escrevia o estado da app sem marcador de atividade e sem lock, e podia deixar `running` com `indexing: true` no ficheiro de estado. Isso bloqueava o db:push e impedia a retoma. Estado em 17/10: o PR 4 (DBG-155) pôs a marca e a recusa no próprio script. O PR 5 (DBG-140 e DBG-141) faz a app recusar arrancar indexação, publicação manual, ciclo, painel e reset enquanto houver um marcador de atividade vivo com origem script. Um marcador desconhecido (ilegível, sem pid, com erro de leitura, ou com a pasta de marcadores não lida) também recusa, com a causa na mensagem. A origem de um marcador ilegível não se conhece, por isso a recusa não o atribui a script. O veto não se levanta antes da verificação em produção do PR 5. A guarda, tanto de script como de atividade da app, assume uma loja por volume: os marcadores não levam o domínio, e com várias lojas no mesmo volume a recusa valeria para todas.
 
-O veto fica ao lado do de `scripts/catalog/run-approved-sync.js` (DBG-142). Esse veto está registado em `docs/execucoes.md`, e não neste ficheiro. Os três (reindex completo, `run-approved-sync.js` e reset) ficam proibidos em produção até ao 2b-3.
+**Critérios de verificação em produção (propostos, a confirmar pelo arquiteto).** O levantamento depende de a verificação pós-deploy do PR 5 mostrar:
+
+1. nenhum marcador de atividade com pid vivo fora de uma atividade em curso (indexação, publicação ou reset). Marcadores com pid morto não bloqueiam (a app ignora-os) e podem ficar na pasta até serem apagados à mão;
+2. nenhum worker órfão (`ps` na máquina);
+3. `indexing_status` sem `running` preso depois de uma indexação completa;
+4. um Relatório de Margem com o ciclo a correr, sem recusas espúrias.
+
+O veto de `scripts/catalog/full-catalog-reindex.js` levanta-se com o PR 5 em produção e verificado, por decisão do arquiteto. Os outros dois vetos não mudam com esta decisão. `scripts/catalog/run-approved-sync.js` (DBG-142) fica vetado até haver exclusão real entre processos (Decisão 38, alínea e). Esse veto está registado em `docs/execucoes.md`, e não neste ficheiro. O reset fica proibido em produção até o PR 2b-3 estar em produção (Decisão 35).
 
 ## Decisão 37 — veto ao db:push até o DBG-156 estar em produção
 

@@ -477,7 +477,7 @@ case "$TASK" in
       bullets="- Linhas lidas: **$(kn LINHAS)**. Janela coberta pelo que a Fly devolve: de $(kv JANELA_INICIO) a $(kv JANELA_FIM)."
       bullets="$bullets"$'\n'"- DbDegradedError: **$(kn DBD)**. Mensagens de modo degradado: **$(kn MODO_DEGRADADO)**. Escritas recusadas: **$(kn RECUSAS)**, das quais na fila de curadoria: **$(kn RECUSAS_FILA)**. \`database is locked\`: **$(kn DB_LOCKED)**."
       bullets="$bullets"$'\n'"- Indexação: **$(kn INDEX_INICIOS)** início(s), por causa: painel $(kn INDEX_CAUSA_PAINEL), ciclo $(kn INDEX_CAUSA_CICLO), script $(kn INDEX_CAUSA_SCRIPT), não registada $(kn INDEX_CAUSA_DESCONHECIDA). Fins: **$(kn INDEX_CONCLUIDAS)** concluída(s), **$(kn INDEX_FALHADAS)** falhada(s), **$(kn INDEX_PARADAS)** parada(s)."
-      bullets="$bullets"$'\n'"- Reinícios do worker (saiu sem concluir): **$(kn REINICIOS)**."
+      bullets="$bullets"$'\n'"- Reinícios do worker (saiu sem concluir): **$(kn REINICIOS)**. Arranques recusados pela guarda de atividade: **$(kn INDEX_RECUSADAS)**. Ciclos que não publicaram: **$(kn CICLOS_SALTADOS)**."
       bullets="$bullets"$'\n'"- Lote de fila mais lento: **$(kv FILA_LOTE_MAX_MS)** ms, em **$(kn FILA_LOTES)** lotes."
       if [ "$(kv INDEX_ULTIMA_CAUSA)" != "-" ] && [ -n "$(kv INDEX_ULTIMA_CAUSA)" ]; then
         bullets="$bullets"$'\n'"- Último fim de indexação: causa **$(kv INDEX_ULTIMA_CAUSA)**, estado **$(kv INDEX_ULTIMA_ESTADO)**, duração **$(kv INDEX_ULTIMA_DURACAO_S)** s, às $(kv INDEX_ULTIMO_FIM_TS)."

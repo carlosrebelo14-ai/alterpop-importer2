@@ -314,7 +314,7 @@ export default function ReportsPage() {
                   {marginErosionError && (
                     <Banner tone="critical">
                       {marginErosionFailedAt
-                        ? `Erosão de margem: o ciclo de ${fmtLisbon(marginErosionFailedAt)} falhou — ${marginErosionError}. Abaixo, o último resultado bom.`
+                        ? `Erosão de margem: o ciclo de ${fmtLisbon(marginErosionFailedAt)} ${String(marginErosionError).startsWith("não correu — ") ? "não correu" : "falhou"} — ${String(marginErosionError).replace(/^não correu — /, "")}. Abaixo, o último resultado bom.`
                         : `Erosão de margem: ${marginErosionError}`}
                     </Banner>
                   )}

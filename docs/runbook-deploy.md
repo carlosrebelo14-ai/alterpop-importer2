@@ -2,6 +2,31 @@
 
 Este ficheiro não existia no repositório. Foi criado em 17/10 com a regra da Decisão 38 (`docs/decisoes.md`).
 
+## Efeitos do PR 5 no deploy
+
+Os passos desta secção são propostos, a confirmar pelo arquiteto.
+
+- O worker de indexação sai quando o processo principal desaparece. Um reinício do principal, incluindo o que o deploy faz à máquina, corta a indexação em curso. A purga do catálogo corre no mesmo worker e sai com ele.
+- O estado fica em `running` no disco. Nada no arranque corrige o ficheiro de estado. O estado sai de `running` quando uma nova indexação termina, completa ou falhada, ou com `RESUME=1` à mão. Até o veto da Decisão 36 ser levantado, o `RESUME=1` não se usa em produção.
+- Enquanto o estado estiver em `running`, o gate e o db:push recusam (ver "Risco que sobra").
+- Um `running` preso também bloqueia a espera do deploy (`esperar_indexacao` em `scripts/ci/maintenance.sh`, chamada pelo `scripts/deploy.sh` antes do `flyctl deploy`). A espera sai com 75 e o deploy não corre. A espera não limpa o estado. O estado sai de `running` quando uma indexação nova acaba. Essa indexação pode ser a do ciclo de sync, ou a que o painel arranca com a intenção `refresh-catalog`: nenhuma das duas lê o `running` do disco antes de arrancar.
+
+Verificação pós-deploy. A máquina da Fly é `alterpop-importer-app`. O volume de marcadores é `/app/data`, porque `CURATION_DATA_DIR` não está definido em produção.
+
+1. Confirmar que não há worker órfão. `flyctl ssh console -a alterpop-importer-app -C "sh -lc 'ps -eo pid,etime,comm | grep [n]ode'"`. O processo principal da app é um `node`. Um segundo `node` é o worker, e só pode existir com indexação em curso (ver `indexing_status`). Não usar `ps -o args` nem `/proc/*/cmdline`: a linha de comando do worker leva as definições da loja, com as chaves.
+2. Confirmar que a pasta de marcadores não tem marcadores com pid vivo que não correspondam a uma atividade em curso. Listar com `flyctl ssh console -a alterpop-importer-app -C "sh -lc 'ls -l /app/data/catalog-busy-*.json'"`, e ver o pid de cada um com `cat`. Testar cada pid com `kill -0 <pid> && echo VIVO || echo MORTO`. Um marcador de publicação (`tipo publicacao`) com pid vivo é normal enquanto a publicação corre. Fora disso, um pid vivo é anómalo: anotar e tratar com o arquiteto antes de repetir o deploy. Marcadores com pid morto não bloqueiam: a app ignora-os. Podem ser apagados à mão.
+3. Confirmar que `indexing_status` não mostra `running` preso. Se mostrar, não repetir o deploy: tratar com o arquiteto, como em "Risco que sobra".
+4. Confirmar que o Relatório de Margem mede o último ciclo, sem `não correu`, quando a loja não tinha script nem publicação em curso. No `logs_recent`, `Arranques recusados` e `Ciclos que não publicaram` ficam a zero, ou cada recusa tem a causa explicada na secção seguinte.
+
+Recusas novas do PR 5: como ler e como libertar.
+
+- Logs. No arranque da indexação: `[indexacao] recusada (causa=<causa>)`. O painel escreve a mesma marca com o prefixo `[painel]`. O ciclo escreve `[trigger-sync] ciclo saltado: <mensagem>` ou `[trigger-sync] ciclo parado antes da publicação: <mensagem>`. Se o arranque da indexação devolver nulo, o ciclo escreve `[trigger-sync] ciclo parado antes da publicação: indexação não arrancou (<causa>)`. A publicação manual só escreve log quando a indexação ou um script a recusa: `[shopify-sync] publicação recusada`. Na publicação manual e no reset, as recusas por reserva ocupada respondem 409 sem linha de log: a resposta é o que o operador vê. No Relatório de Margem: `não correu — ciclo parado: <causa>` ou `não correu — ciclo saltado: <causa>`. Se o ciclo não conseguiu gravar a marca antes de publicar, o Relatório diz `não correu — não foi possível marcar a atividade da app antes da publicação`, e o log diz `[trigger-sync] ciclo parado antes da publicação: não foi possível marcar a atividade da app`. Erro de escrita no volume (disco cheio ou permissões): corrigir antes de repetir.
+- Marcadores da app (`origem app`). Um marcador de indexação (`tipo indexacao`) com pid vivo faz recusar a publicação manual, o ciclo e o reset: "Aguarda que a indexação do catálogo termine antes de publicar." e "Aguarda que a indexação em curso termine antes do reset.". Um marcador de publicação (`tipo publicacao`) não recusa o reset nem a publicação pela guarda: essa recusa é a reserva em memória, que só existe no processo que publica. A indexação não é recusada por marcadores da app; é recusada pela reserva de publicação ou reset (`causa=publicacao_ou_reset`). Um marcador de indexação com pid vivo sai quando a indexação acaba. Se a indexação já não corre e o pid ainda vive, é uma marca presa: reiniciar a app, e confirmar com `kill -0` que o pid morreu. Depois disso, a app ignora o marcador. Um script de publicação (`scripts/catalog/run-approved-sync.js`) não é visto pelo reset: é o risco do DBG-142, vetado em produção.
+- `causa=script`, ou `reindexação por script em curso (pid N, desde <hora de Lisboa>)`: há um script vivo. Esperar que termine. Se o pid já não existir, o marcador é de um processo morto e a app já o ignora.
+- `causa=leitura`, `ilegivel` ou `sem_pid`: a mensagem diz o ficheiro. Não há pid para testar. Confirmar pelo log e pelo `indexing_status` que não há indexação em curso, anotar a causa, e só então apagar o ficheiro à mão. Um JSON ilegível expira sozinho 10 min depois de escrito, se a pasta der a data de escrita do ficheiro. Sem essa data, só sai quando o ficheiro for apagado.
+- `causa=pasta`: a pasta de marcadores não se lê. Corrigir a permissão ou o disco antes de repetir.
+- `causa=publicacao_ou_reset`: há uma publicação manual, uma publicação do ciclo ou um reset em curso. Esperar que termine. A reserva é partilhada, por isso o rótulo não diz qual dos dois.
+
 ## Antes do deploy
 
 - `main` tem o PR que se quer publicar, e o CI está verde.
@@ -36,6 +61,6 @@ Este ficheiro não existia no repositório. Foi criado em 17/10 com a regra da D
 ## Vetos ativos
 
 - ~~Tarefa `db_push` em modo `execute`~~: levantado em 17/10, DBG-156 em produção (Decisão 37, deploy run `39055860291`).
-- `scripts/catalog/full-catalog-reindex.js`: até o 2b-3 estar em produção (Decisão 36).
+- `scripts/catalog/full-catalog-reindex.js`: até o PR 5 estar em produção e verificado (Decisão 36).
 - `scripts/catalog/run-approved-sync.js`: até haver exclusão real entre processos (Decisão 38, DBG-142 no 2c).
 - Reset: ver Decisão 35.

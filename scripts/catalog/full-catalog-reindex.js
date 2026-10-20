@@ -27,12 +27,21 @@ import { marcarAtividadeApp, recusarSeAtividadeApp } from "../../lib/curation/at
 recusarSeAtividadeApp("full-catalog-reindex");
 
 // DBG-155: a corrida marca a atividade da app, como o worker. O marcador leva o pid deste processo e sai no fim.
+// PR 5 (DBG-140 e DBG-141): origem "script". A app não arranca indexação nem publicação por cima deste marcador.
 let retirarMarcador;
 try {
-  retirarMarcador = marcarAtividadeApp({ tipo: "indexacao" });
+  retirarMarcador = marcarAtividadeApp({ tipo: "indexacao", origem: "script" });
 } catch {
   console.error("[reindex] Recusado: não foi possível marcar a atividade da app. Nada foi gravado.");
   process.exit(1);
+}
+// PR 5 (revisão): num sinal (SIGHUP, SIGINT, SIGTERM) a marca é retirada antes de sair. SIGKILL não passa por aqui: a
+// marca fica no disco com o pid morto, e a app ignora marcas de pid morto (processoVivo).
+for (const sinal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+  process.on(sinal, () => {
+    retirarMarcador();
+    process.exit(sinal === "SIGINT" ? 130 : 143);
+  });
 }
 
 const shop = process.env.SHOP || process.env.SHOPIFY_SHOP_URL || "alterpop-store.myshopify.com";

@@ -30,6 +30,8 @@ import { DECISION_GROUP_PREFIX } from "../../lib/curation/decisionQueue.js";
 import { MARKET_STORE_SUGGESTIONS } from "../../lib/importer/pricing/marketPrice.js";
 import { getCurationLiteStats } from "../../lib/importer/dashboard/getDashboardStats.server.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
+import { motivoDeRecusaPorScript, scriptDeIndexacaoEmCurso } from "../../lib/curation/atividadeApp.js";
+import { publicacaoOuResetEmCurso } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import {
   startCatalogCleanupInBackground,
   startCatalogRebuildInBackground,
@@ -207,6 +209,19 @@ export const action = async ({ request }) => {
     const fileStatus = await readCatalogRebuildStatus(session.shop);
     const willResume =
       !purge && !forceFull && canResumeCatalogRebuild(fileStatus);
+
+    // PR 5 (revisão): a recusa é verificada logo antes do arranque, sem await pelo meio. Assim o worker não recusa depois
+    // de a resposta já ter dito "iniciada". A causa vai ao toast (fetcher.data.error) e ao log.
+    const atividadeScript = scriptDeIndexacaoEmCurso();
+    const recusaScript = motivoDeRecusaPorScript(atividadeScript);
+    if (recusaScript) {
+      console.log(`[painel] [indexacao] recusada (causa=${atividadeScript.causa}): ${recusaScript}`);
+      return { ok: false, error: recusaScript };
+    }
+    if (publicacaoOuResetEmCurso()) {
+      console.log("[painel] [indexacao] recusada (causa=publicacao_ou_reset): há uma publicação ou um reset Shopify em curso.");
+      return { ok: false, error: "Aguarda que a publicação ou o reset Shopify em curso termine antes de reindexar." };
+    }
 
     if (purge) {
       startCatalogCleanupInBackground(session.shop, settings, { causa: "painel" });

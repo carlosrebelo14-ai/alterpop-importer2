@@ -9,6 +9,15 @@ import {
   readCatalogRebuildStatus,
 } from "../../lib/importer/catalog/catalogRebuildStatus.server.js";
 import { runApprovedShopifySync } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
+import { publicacaoOuResetEmCurso } from "../../lib/importer/shopify/publicacaoEmCurso.js";
+import {
+  atividadeAppEmCurso,
+  causaDeRecusaPorScript,
+  decisaoDaPublicacaoManual,
+  marcarAtividadeApp,
+  motivoDeRecusaPorScript,
+  scriptDeIndexacaoEmCurso,
+} from "../../lib/curation/atividadeApp.js";
 import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import { syncPublishedStockLevels } from "../../lib/importer/shopify/publishedStockSync.server.js";
 import { isShopifySyncRunning } from "../../lib/importer/shopify/shopifySyncJob.server.js";
@@ -118,6 +127,27 @@ export const action = async ({ request }) => {
       { status: 409, headers: JSON_HEADERS }
     );
   }
+  // PR 5 (DBG-140 e DBG-141): um script de reindexação vivo tem a loja. O ciclo não arranca por cima dele.
+  const atividadeScript = scriptDeIndexacaoEmCurso();
+  const recusaScript = motivoDeRecusaPorScript(atividadeScript);
+  if (recusaScript) {
+    console.log(`[trigger-sync] ciclo saltado: ${recusaScript}`);
+    // Sem registo, o Relatório mostrava o último ciclo como se este não tivesse sido pedido (PR 5, revisão de convergência).
+    await markMarginErosionCycleSkipped(shop, `ciclo saltado: ${causaDeRecusaPorScript(atividadeScript)}`);
+    return Response.json(
+      { ok: true, skipped: true, reason: atividadeScript.tipo === "script" ? "script_indexing_running" : "activity_marker_unreadable" },
+      { status: 409, headers: JSON_HEADERS }
+    );
+  }
+  // PR 5 (revisão): um reset ou uma publicação com a reserva tomada faz o ciclo responder 409 já aqui, e não 202.
+  if (publicacaoOuResetEmCurso()) {
+    console.log("[trigger-sync] ciclo saltado: publicação ou reset Shopify em curso.");
+    await markMarginErosionCycleSkipped(shop, "ciclo saltado: publicação ou reset Shopify em curso");
+    return Response.json(
+      { ok: true, skipped: true, reason: "publish_or_reset_running" },
+      { status: 409, headers: JSON_HEADERS }
+    );
+  }
   if (await isShopifySyncRunning(shop)) {
     console.log("[trigger-sync] ciclo saltado: publicação já em curso.");
     return Response.json(
@@ -174,7 +204,19 @@ export const action = async ({ request }) => {
     try {
       console.log(`[trigger-sync] ciclo iniciado @ ${startedAt}`);
       if (!settingsError) {
-        await startCatalogIndexingWorker(shop, settings, { runPurge: false, resume: false, causa: "ciclo" });
+        // PR 5: null é recusa (script, publicação ou reset em curso) ou falha ao gravar o estado. O ciclo não segue,
+        // nem publica com o estado antigo do disco (que ainda diz completed com linhas).
+        const arranque = await startCatalogIndexingWorker(shop, settings, { runPurge: false, resume: false, causa: "ciclo" });
+        if (arranque === null) {
+          // null é recusa por script, por publicação ou reset, ou falha ao gravar o estado. O Relatório diz a causa.
+          const scriptVivo = scriptDeIndexacaoEmCurso();
+          let causa = "marcação ou gravação do estado falhou (ver log)";
+          if (scriptVivo) causa = causaDeRecusaPorScript(scriptVivo);
+          else if (publicacaoOuResetEmCurso()) causa = "publicação ou reset Shopify em curso";
+          console.error(`[trigger-sync] ciclo parado antes da publicação: indexação não arrancou (${causa}).`);
+          await markMarginErosionCycleSkipped(shop, `ciclo parado: ${causa}`);
+          return;
+        }
 
         const deadline = Date.now() + INDEXING_TIMEOUT_MS;
         while (isCatalogIndexingRunning(shop)) {
@@ -215,17 +257,55 @@ export const action = async ({ request }) => {
       if (!settingsError) {
         // DBG-105: a reserva é tomada logo antes da chamada, sem await pelo meio. Se a publicação manual já a tem,
         // o ciclo salta a publicação de aprovados.
-        const reserva = tentarReservarPublicacao();
-        if (reserva) {
-          console.log("[trigger-sync] a publicar aprovados…");
-          try {
-            await runApprovedShopifySync(session, { skipInit: true, reserva });
-            console.log("[trigger-sync] publicação de aprovados concluída.");
-          } catch (err) {
-            console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
-          }
+        // PR 5 (revisão): a reserva e a marca da app nascem no mesmo passo síncrono. Com a reserva na mão, confirma-se a
+        // indexação, que pode ter arrancado depois do arranque do ciclo. Se houver indexação ou script, o ciclo para aqui, sem publicar nem seguir para o stock.
+        let reserva = null;
+        let marcaFalhou = false;
+        try {
+          reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+        } catch (err) {
+          marcaFalhou = true;
+          console.error("[trigger-sync] ciclo parado antes da publicação: não foi possível marcar a atividade da app.", err?.message || err);
+        }
+        if (marcaFalhou) {
+          // PR 5 (revisão): sem marca, a exclusão com a indexação não se garante. O ciclo para, como no caso de confirmação.
+          await markMarginErosionCycleSkipped(shop, "não foi possível marcar a atividade da app antes da publicação");
+          return;
+        } else if (!reserva) {
+          console.log(
+            "[trigger-sync] publicação de aprovados saltada: a reserva está ocupada por uma publicação manual ou por um reset em curso."
+          );
         } else {
-          console.log("[trigger-sync] publicação de aprovados saltada: já há uma publicação em curso.");
+          let decisao = null;
+          try {
+            decisao = decisaoDaPublicacaoManual({
+              indexacaoEmCurso: isCatalogIndexingRunning(shop) || atividadeAppEmCurso()?.tipo === "indexacao",
+              atividadeScript: scriptDeIndexacaoEmCurso(),
+            });
+          } catch (err) {
+            // A falha da confirmação conta como recusa: o ciclo para com a causa, e a exceção não sai do IIFE.
+            decisao = {
+              causa: "não foi possível confirmar a indexação",
+              mensagem: `não foi possível confirmar a indexação (${err?.message || err})`,
+            };
+          }
+          if (decisao) {
+            // PR 5 (revisão): sem confirmação de que não há indexação, o ciclo para aqui. Não publica nem corre o stock,
+            // as franquias, a erosão nem as coleções, porque as coleções publicam sem reserva. O Relatório recebe a causa
+            // curta. A frase da recusa fica no log.
+            reserva.libertar();
+            console.log(`[trigger-sync] ciclo parado antes da publicação: ${decisao.mensagem}`);
+            await markMarginErosionCycleSkipped(shop, `ciclo parado: ${decisao.causa}`);
+            return;
+          } else {
+            console.log("[trigger-sync] a publicar aprovados…");
+            try {
+              await runApprovedShopifySync(session, { skipInit: true, reserva });
+              console.log("[trigger-sync] publicação de aprovados concluída.");
+            } catch (err) {
+              console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
+            }
+          }
         }
       }
 
