@@ -635,7 +635,12 @@ case "$TASK" in
       bullets="- Máquinas da app: **$total_ms**."
       while IFS= read -r linha_ms; do
         [ -z "$linha_ms" ] && continue
-        bullets="$bullets"$'\n'"- Máquina \`$(campo "$linha_ms" maquina)\`: estado **$(campo "$linha_ms" estado)**, região **$(campo "$linha_ms" regiao)**, memória **$(campo "$linha_ms" memoria_mb)** MB, CPU **$(campo "$linha_ms" cpu_kind)** × **$(campo "$linha_ms" cpus)**. Última saída: código **$(campo "$linha_ms" codigo)**, sinal **$(campo "$linha_ms" sinal)**, OOM **$(campo "$linha_ms" oom)**, em **$(campo "$linha_ms" quando)**."
+        case "$(campo "$linha_ms" saida)" in
+          ok) ultima="Última saída: código **$(campo "$linha_ms" codigo)**, sinal **$(campo "$linha_ms" sinal)**, OOM **$(campo "$linha_ms" oom)**, em **$(campo "$linha_ms" quando)**." ;;
+          evento_sem_campos) ultima="Última saída sem campos legíveis." ;;
+          *) ultima="Sem saída registada." ;;
+        esac
+        bullets="$bullets"$'\n'"- Máquina \`$(campo "$linha_ms" maquina)\`: estado **$(campo "$linha_ms" estado)**, região **$(campo "$linha_ms" regiao)**, memória **$(campo "$linha_ms" memoria_mb)** MB, CPU **$(campo "$linha_ms" cpu_kind)** × **$(campo "$linha_ms" cpus)**. $ultima"
       done < <(echo "$CLEAN" | grep -E '^MS: maquina=' || true)
       while IFS= read -r linha_oom; do
         [ -z "$linha_oom" ] && continue
