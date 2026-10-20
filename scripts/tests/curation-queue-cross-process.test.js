@@ -485,14 +485,14 @@ async function casoGSemId() {
   const copiaDoPai = structuredClone((await q.loadCurationQueue()).items.find((i) => i.sku === "Z"));
   assert.equal(copiaDoPai.status, "SYNC_ERROR", "pré-condição: a cópia tem de estar em SYNC_ERROR");
 
-  // Reset com apagado. SYNC_ERROR sem id nunca chegou à Shopify e volta a PENDING, sem marca de apagado.
+  // Reset com apagado. D44 (Decisão 35): SYNC_ERROR fica como está, com ou sem id. O reset não o reverte.
   const revertidos = await reset.revertAllPublishedInQueue({ deletedInAdmin: true });
-  assert.equal(revertidos, 1, "o reset tem de reverter Z");
-  assert.equal(itemDoDisco("Z").status, "PENDING", "pré-condição: o reset põe Z em PENDING em disco");
+  assert.equal(revertidos, 0, "o reset não reverte SYNC_ERROR (D44)");
+  assert.equal(itemDoDisco("Z").status, "SYNC_ERROR", "pré-condição: Z continua SYNC_ERROR em disco");
 
   q.invalidateCurationMemoryCache();
   await q.flushCurationQueueItems([copiaDoPai], { readAt: lidoEm });
-  assert.equal(itemDoDisco("Z").status, "PENDING", "o flush com a cópia SYNC_ERROR repôs SYNC_ERROR depois do reset");
+  assert.equal(itemDoDisco("Z").status, "SYNC_ERROR", "o flush com a cópia SYNC_ERROR não o altera depois do reset");
 }
 
 async function main() {
@@ -523,7 +523,7 @@ async function main() {
   await caso("F", "decisão humana depois da leitura do worker não é revertida pelo flush (D2)", casoF);
   await caso("IPC1", "upsert pelo worker devolve a entrada gravada pelo principal (IPC)", casoEntradaVoltaPelaIPC);
   await caso("G", "reset sem apagado: cópia PUBLISHED lida antes do reset não repõe PUBLISHED nem o id", casoG);
-  await caso("G-sem-id", "reset com apagado: cópia SYNC_ERROR sem id lida antes do reset não repõe SYNC_ERROR", casoGSemId);
+  await caso("G-sem-id", "reset com apagado deixa SYNC_ERROR sem id (D44): o flush com a cópia não o repõe", casoGSemId);
   await caso("E-lote", "upsert em lote sobre SYNC_ERROR mantém o estado e o erro (fila em disco)", () => casoE("lote"));
   await caso("E-fila-externa", "upsert em lote sobre SYNC_ERROR mantém o estado (fila externa, sem gravar)", () => casoE("externa"));
 

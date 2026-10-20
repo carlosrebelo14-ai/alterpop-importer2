@@ -19,6 +19,7 @@ import {
   scriptDeIndexacaoEmCurso,
 } from "../../lib/curation/atividadeApp.js";
 import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
+import { isShopifyResetRunning } from "../../lib/importer/shopify/shopifyResetJob.server.js";
 import { syncPublishedStockLevels } from "../../lib/importer/shopify/publishedStockSync.server.js";
 import { isShopifySyncRunning } from "../../lib/importer/shopify/shopifySyncJob.server.js";
 import { listApprovedSkusForShopifySync } from "../../lib/curation/curationQueue.server.js";
@@ -259,22 +260,29 @@ export const action = async ({ request }) => {
         // o ciclo salta a publicação de aprovados.
         // PR 5 (revisão): a reserva e a marca da app nascem no mesmo passo síncrono. Com a reserva na mão, confirma-se a
         // indexação, que pode ter arrancado depois do arranque do ciclo. Se houver indexação ou script, o ciclo para aqui, sem publicar nem seguir para o stock.
+        // D42 (Decisão 35): com um reset em curso, o ciclo salta a publicação e regista o salto. O reset pode correr
+        // noutro processo (purga CLI), por isso confirma-se também pelo estado em disco, não só pela reserva em memória.
+        const resetEmCurso = await isShopifyResetRunning(shop);
         let reserva = null;
         let marcaFalhou = false;
-        try {
-          reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
-        } catch (err) {
-          marcaFalhou = true;
-          console.error("[trigger-sync] ciclo parado antes da publicação: não foi possível marcar a atividade da app.", err?.message || err);
+        if (!resetEmCurso) {
+          try {
+            reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+          } catch (err) {
+            marcaFalhou = true;
+            console.error("[trigger-sync] ciclo parado antes da publicação: não foi possível marcar a atividade da app.", err?.message || err);
+          }
         }
         if (marcaFalhou) {
           // PR 5 (revisão): sem marca, a exclusão com a indexação não se garante. O ciclo para, como no caso de confirmação.
           await markMarginErosionCycleSkipped(shop, "não foi possível marcar a atividade da app antes da publicação");
           return;
         } else if (!reserva) {
-          console.log(
-            "[trigger-sync] publicação de aprovados saltada: a reserva está ocupada por uma publicação manual ou por um reset em curso."
-          );
+          const causa = resetEmCurso
+            ? "reset Shopify em curso (estado em disco)"
+            : "reserva ocupada por uma publicação manual ou por um reset em curso";
+          console.log(`[trigger-sync] publicação de aprovados saltada: ${causa}.`);
+          await markMarginErosionCycleSkipped(shop, `publicação de aprovados saltada: ${causa}`);
         } else {
           let decisao = null;
           try {

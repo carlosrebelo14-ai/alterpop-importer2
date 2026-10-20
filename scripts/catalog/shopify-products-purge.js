@@ -8,15 +8,17 @@
  * o mesmo que o botão "APAGAR" no Admin dispara):
  *   - lista todos os produtos da loja (paginação GraphQL, scope "all")
  *   - `productDelete` em lotes de 20, 1s entre lotes
- *   - reverte a fila local de curadoria: PUBLISHED / SYNC_ERROR → APPROVED, limpa
- *     shopifyProductId → os produtos voltam ao pool aprovado para republicação limpa
- *     pelo pipeline novo (Fase 6b escreve alterpop.franchise no publish)
+ *   - reverte a fila local de curadoria: PUBLISHED → PENDING, limpa shopifyProductId. Os itens ficam
+ *     em PENDING, marcados como apagados no admin: nada volta a APPROVED sem aprovação humana (regra de 09/10).
+ *     SYNC_ERROR fica como está (Decisão 35, D44).
  *   - desativa os sync errors antigos
+ *   - verificação final: zero produtos na loja e zero PUBLISHED na fila
  *
  * NÃO toca em coleções (já limpas), na definição alterpop.franchise, nem no catálogo
  * local indexado (CatalogProduct) — só nos produtos Shopify e no estado da fila.
  *
- * DRY-RUN por defeito (só conta). `--execute` apaga.
+ * DRY-RUN por defeito: conta os produtos na loja e os itens da fila que passariam a PENDING, sem escrever.
+ * `--execute` apaga. Reserva a publicação dentro do motor, e recusa-se com atividade da app ou modo degradado.
  *
  * Precisa de sessão OAuth offline (correr na Fly):
  *   node scripts/catalog/shopify-products-purge.js            # dry-run (conta)
@@ -28,6 +30,7 @@ import {
 } from "../../lib/importer/shopify/shopifyReset.server.js";
 
 import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
+import { readDbDegraded } from "../../lib/health/dbDegraded.js";
 
 const args = process.argv.slice(2);
 const EXECUTE = args.includes("--execute");
@@ -41,15 +44,26 @@ async function main() {
   recusarSeAtividadeApp("shopify-products-purge");
   const session = { shop: SHOP };
 
-  const count = await countShopifyProductsForReset(session);
   console.log(`=== shopify-products-purge (${SHOP})${EXECUTE ? "" : " · DRY-RUN"} ===`);
-  console.log(`produtos na loja: ${count}`);
 
   if (!EXECUTE) {
-    console.log(`\nDRY-RUN — nada apagado. Corre com --execute.`);
+    const plano = await runShopifyCatalogReset(session, { dryRun: true });
+    console.log(`produtos na loja: ${plano.produtosNaLoja}`);
+    console.log(`itens da fila que passariam a PENDING: ${plano.entradasParaPending}`);
+    console.log(`SYNC_ERROR preservado (não se mexe): ${plano.sincroErroPreservado}`);
+    console.log(`\nDRY-RUN — nada apagado nem gravado. Corre com --execute.`);
     return;
   }
 
+  // Modo degradado (Decisão 34): o motor também o verifica antes de cada apagamento. Aqui recusa-se logo.
+  const degradado = readDbDegraded();
+  if (degradado) {
+    console.error(`Recusado: BD em modo degradado (${degradado.cause ?? "causa desconhecida"}). Nada foi apagado.`);
+    process.exit(1);
+  }
+
+  const count = await countShopifyProductsForReset(session);
+  console.log(`produtos na loja: ${count}`);
   if (count === 0) {
     console.log(`\nLoja já vazia — nada a fazer.`);
     return;

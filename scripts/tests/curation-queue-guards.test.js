@@ -183,39 +183,38 @@ await check("upsert de importação não mexe num PUBLISHED, e o vínculo à Sho
   assert.equal(item.metadata.shopifyProductId, "gid://shopify/Product/77");
 });
 
-await check("reset: sweep põe PENDING retido, exceto apagamentos falhados (por SKU ou por id)", async () => {
+await check("reset: sweep põe PENDING retido; apagamento falhado fica pelo id, nunca pelo SKU de um item com id (DBG-30, 2.8 (7))", async () => {
   clearFlag();
   writeQueue([
     { sku: "D1", status: "PUBLISHED", metadata: { shopifyProductId: "gid://shopify/Product/10" } },
     { sku: "F1", status: "PUBLISHED", metadata: { shopifyProductId: "gid://shopify/Product/11" } },
     { sku: "X9", status: "PUBLISHED", metadata: { shopifyProductId: "gid://shopify/Product/9" } },
+    { sku: "F2", status: "PUBLISHED", metadata: {} },
   ]);
   const n = await reset.revertAllPublishedInQueue({
     deletedInAdmin: true,
-    exceptSkus: ["F1"],
+    exceptSkus: ["F1", "F2"],
     exceptIds: ["gid://shopify/Product/9"],
   });
-  assert.equal(n, 1);
+  assert.equal(n, 2, "D1 e F1 revertem: F1 tem id e a exceção por SKU não o protege; X9 fica pelo id; F2 fica pelo SKU por não ter id");
   const items = (await q.loadCurationQueue()).items;
   const d1 = items.find((i) => i.sku === "D1");
   assert.equal(d1.status, "PENDING");
   assert.ok(d1.metadata.deletedInAdmin, "tem de ficar com a marca de apagado no admin");
   assert.equal(d1.metadata.shopifyProductId, undefined);
-  assert.equal(items.find((i) => i.sku === "F1").status, "PUBLISHED");
-  assert.equal(items.find((i) => i.sku === "F1").metadata.shopifyProductId, "gid://shopify/Product/11");
+  assert.equal(items.find((i) => i.sku === "F1").status, "PENDING", "com id, o id decide: F1 não está na exceção de ids");
   assert.equal(items.find((i) => i.sku === "X9").status, "PUBLISHED");
+  assert.equal(items.find((i) => i.sku === "F2").status, "PUBLISHED");
 });
 
-await check("reset: SYNC_ERROR que nunca chegou à Shopify volta a PENDING sem marca de apagado", async () => {
+await check("reset: SYNC_ERROR fica como está, com ou sem id (D44, D11): nunca volta a PENDING", async () => {
   clearFlag();
   writeQueue([{ sku: "E1", status: "SYNC_ERROR", metadata: { syncError: "x" } }]);
   const n = await reset.revertAllPublishedInQueue({ deletedInAdmin: true });
-  assert.equal(n, 1);
+  assert.equal(n, 0, "SYNC_ERROR não conta como revertido");
   const item = (await q.loadCurationQueue()).items.find((i) => i.sku === "E1");
-  assert.equal(item.status, "PENDING");
-  assert.equal(item.metadata.deletedInAdmin, undefined, "não foi publicado: não é apagado no admin");
-  assert.equal(item.metadata.wasPublished, undefined);
-  assert.equal(item.metadata.syncError, null);
+  assert.equal(item.status, "SYNC_ERROR", "o reset não põe SYNC_ERROR em PENDING");
+  assert.equal(item.metadata.syncError, "x", "o erro de sincronização fica");
 });
 
 await check("reset: produto apagado com sucesso volta a PENDING retido, nunca a APPROVED", async () => {
