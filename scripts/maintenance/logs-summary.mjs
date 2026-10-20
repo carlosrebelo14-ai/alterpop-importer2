@@ -12,7 +12,7 @@
  *   [indexacao] fim causa=<...> estado=<concluida|falhou|parada> duracao_s=<n> [indexados=<n>]
  *   [indexacao] worker terminou sem concluir (code=... signal=...)     → reinício do worker
  *   [indexacao] lote-fila duracao_ms=<n> itens=<n>                    → um lote de escrita da fila
- *   [indexacao] recusada (causa=<script|pasta|leitura|ilegivel|sem_pid|publicacao>)  → arranque recusado (PR 5)
+ *   [indexacao] recusada (causa=<script|pasta|leitura|ilegivel|sem_pid|publicacao_ou_reset>)  → arranque recusado (PR 5); o painel escreve a mesma marca com prefixo [painel]
  *   [trigger-sync] ciclo saltado: <motivo> | ciclo parado antes da publicação: <motivo> → o ciclo não publicou (PR 5)
  *   [dbDegraded] recusado: <ação>                                      → escrita recusada
  *
@@ -25,9 +25,9 @@ const CAUSAS = ["painel", "ciclo", "script", "desconhecida"];
 const INICIO_RE = /\[indexacao\] inicio causa=(\w+) modo=(\w+)/;
 const FIM_RE = /\[indexacao\] fim causa=(\w+) estado=(\w+) duracao_s=(\d+)/;
 const LOTE_FILA_RE = /\[indexacao\] lote-fila duracao_ms=(\d+) itens=(\d+)/;
-// PR 5: arranque recusado pela guarda de atividade (script, pasta, leitura, ilegivel, sem_pid, publicacao).
+// PR 5: arranque recusado pela guarda de atividade (script, pasta, leitura, ilegivel, sem_pid, publicacao_ou_reset).
 const RECUSA_INDEXACAO_RE = /\[indexacao\] recusada \(causa=/;
-// PR 5: ciclo que não publicou, por script, publicação ou reset, ou por confirmação da indexação.
+// PR 5: ciclo que não publicou, por script, publicação ou reset, por confirmação da indexação, ou por arranque nulo.
 const CICLO_SALTADO_RE = /\[trigger-sync\] ciclo (saltado|parado antes da publicação)/;
 const ISO_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/;
 

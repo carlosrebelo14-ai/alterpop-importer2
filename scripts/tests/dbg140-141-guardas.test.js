@@ -21,7 +21,7 @@
 import "./_isolate-curation.js";
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import http from "node:http";
 import fs from "node:fs";
@@ -119,6 +119,21 @@ function limparMarcadores() {
   const dir = dados.resolveCurationDataDir();
   if (!fs.existsSync(dir)) return;
   for (const nome of fs.readdirSync(dir).filter((n) => n.startsWith("catalog-busy-"))) fs.rmSync(path.join(dir, nome), { force: true });
+}
+
+/**
+ * Corre fn com o uptime da máquina fixado em dez anos. A guarda ignora marcas escritas antes do arranque da máquina
+ * (atividadeApp.js), por isso um caso com data fixa depende da hora em que o runner arrancou. Com este uptime, qualquer
+ * marca de 2026 conta, em qualquer runner (PR 5, revisão: o CI falhou num runner arrancado depois de 03:49Z).
+ */
+async function comUptimeLongo(fn) {
+  const real = os.uptime;
+  os.uptime = () => 10 * 365 * 24 * 3600;
+  try {
+    return await fn();
+  } finally {
+    os.uptime = real;
+  }
 }
 
 /** Lê o texto de um ficheiro da app, para as verificações de rota. */
@@ -232,10 +247,12 @@ function verificarCicloAbortaSemArranque(texto) {
 
 const ROTA_PAINEL = "app/routes/app._index.jsx";
 function verificarPainel(texto) {
-  const recusa = posicao(texto, "const recusaScript = motivoDeRecusaPorScript(scriptDeIndexacaoEmCurso());", ROTA_PAINEL);
+  const recusa = posicao(texto, "const recusaScript = motivoDeRecusaPorScript(atividadeScript);", ROTA_PAINEL);
   const retoma = posicao(texto, "startCatalogRebuildInBackground(session.shop", ROTA_PAINEL);
   const purga = posicao(texto, "startCatalogCleanupInBackground(session.shop", ROTA_PAINEL);
   assert.ok(recusa < retoma && recusa < purga, "o painel tem de recusar antes de arrancar a reindexação ou a purga");
+  // A recusa do painel leva causa= no log, para o logs-summary a contar (PR 5, revisão de convergência).
+  posicao(texto, "console.log(`[painel] [indexacao] recusada (causa=${atividadeScript.causa}): ${recusaScript}`);", ROTA_PAINEL);
   assert.ok(posicao(texto, "const fileStatus = await readCatalogRebuildStatus(session.shop);", ROTA_PAINEL) < recusa, "a recusa vem depois do último await");
   assert.ok(!texto.slice(recusa, retoma).includes("await"), "sem await entre a recusa e o arranque");
   assert.match(texto.slice(recusa, retoma), /if \(publicacaoOuResetEmCurso\(\)\) \{/, "a publicação ou o reset também recusa, na mesma verificação");
@@ -405,7 +422,8 @@ await caso("(d) rota da publicação manual: a decisão de indexação vem antes
 
 await caso("mutação: a rota da publicação manual deixa de recusar com indexação (o caso (d) tem de ficar vermelho)", () => {
   const texto = ler(ROTA_PUBLICACAO);
-  assert.throws(() => verificarRotaPublicacaoManual(trocaUnica(texto, "if (motivoIndexacao) {", "if (false) {")), /âncora|antes da reserva/);
+  const mutado = trocaUnica(texto, "if (motivoIndexacao) {", "if (false) {");
+  assert.throws(() => verificarRotaPublicacaoManual(mutado), /âncora|antes da reserva/);
 });
 
 await caso("(d) rota do ciclo: recusa com script antes do IIFE, com 409 e causa", () => {
@@ -414,9 +432,8 @@ await caso("(d) rota do ciclo: recusa com script antes do IIFE, com 409 e causa"
 
 await caso("mutação: o ciclo deixa de recusar com script (o caso (d) do ciclo tem de ficar vermelho)", () => {
   const texto = ler(ROTA_CICLO);
-  assert.throws(() =>
-    verificarRotaCiclo(trocaUnica(texto, "const recusaScript = motivoDeRecusaPorScript(atividadeScript);", "const recusaScript = null;"))
-  );
+  const mutado = trocaUnica(texto, "const recusaScript = motivoDeRecusaPorScript(atividadeScript);", "const recusaScript = null;");
+  assert.throws(() => verificarRotaCiclo(mutado));
 });
 
 await caso("(d) painel: recusa com script antes de arrancar a reindexação ou a purga", () => {
@@ -425,9 +442,8 @@ await caso("(d) painel: recusa com script antes de arrancar a reindexação ou a
 
 await caso("mutação: o painel deixa de recusar com script (o caso (d) do painel tem de ficar vermelho)", () => {
   const texto = ler(ROTA_PAINEL);
-  assert.throws(() =>
-    verificarPainel(trocaUnica(texto, "const recusaScript = motivoDeRecusaPorScript(scriptDeIndexacaoEmCurso());", "const recusaScript = null;"))
-  );
+  const mutado = trocaUnica(texto, "const recusaScript = motivoDeRecusaPorScript(atividadeScript);", "const recusaScript = null;");
+  assert.throws(() => verificarPainel(mutado));
 });
 
 await caso("(e) DBG-140: enquanto o ciclo tem a reserva, o reset não a toma; a reserva volta quando sai", () => {
@@ -450,16 +466,14 @@ await caso("(e) reset em background: a reserva sai no fim do job", () => {
 
 await caso("mutação: o reset deixa de tomar a reserva (o caso (e) da rota tem de ficar vermelho)", () => {
   const texto = ler(ROTA_RESET);
-  assert.throws(() =>
-    verificarRotaReset(trocaUnica(texto, "reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: \"publicacao\" }) });", "reserva = { libertar() {} };"))
-  );
+  const mutado = trocaUnica(texto, "reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: \"publicacao\" }) });", "reserva = { libertar() {} };");
+  assert.throws(() => verificarRotaReset(mutado));
 });
 
 await caso("mutação: o reset deixa de libertar a reserva no fim (o caso (e) do background tem de ficar vermelho)", () => {
   const texto = ler(RESET_BG);
-  assert.throws(() =>
-    verificarLibertacaoDoReset(trocaUnica(texto, "      .finally(() => opts.reserva?.libertar());", ""))
-  );
+  const mutado = trocaUnica(texto, "      .finally(() => opts.reserva?.libertar());", "");
+  assert.throws(() => verificarLibertacaoDoReset(mutado));
 });
 
 // --- Casos novos (revisão adversarial do PR 5) ---
@@ -584,9 +598,8 @@ await caso("(h) a publicação manual confirma a indexação depois de tomar a r
 
 await caso("mutação: sem a confirmação depois da reserva, o caso (h) tem de ficar vermelho", () => {
   const texto = ler(ROTA_PUBLICACAO);
-  assert.throws(() =>
-    verificarRotaPublicacaoManualDepoisDaReserva(trocaUnica(texto, "if (motivoDepoisDaReserva) {", "if (false) {"))
-  );
+  const mutado = trocaUnica(texto, "if (motivoDepoisDaReserva) {", "if (false) {");
+  assert.throws(() => verificarRotaPublicacaoManualDepoisDaReserva(mutado));
 });
 
 await caso("(i) o ciclo para quando a indexação não arranca, antes da publicação", () => {
@@ -595,9 +608,8 @@ await caso("(i) o ciclo para quando a indexação não arranca, antes da publica
 
 await caso("mutação: sem o aborto, o ciclo segue para a publicação e o caso (i) tem de ficar vermelho", () => {
   const texto = ler(ROTA_CICLO);
-  assert.throws(() =>
-    verificarCicloAbortaSemArranque(trocaUnica(texto, "if (arranque === null) {", "if (false) {"))
-  );
+  const mutado = trocaUnica(texto, "if (arranque === null) {", "if (false) {");
+  assert.throws(() => verificarCicloAbortaSemArranque(mutado));
 });
 
 await caso("(j) marcador ilegível: conta enquanto é recente, e deixa de contar ao fim de 10 min", () => {
@@ -855,14 +867,14 @@ await caso("(p) a purga recusa, marca-se como script antes do arranque, e uma re
 
 await caso("mutação: a purga não se marca antes do arranque (o caso (p) tem de ficar vermelho)", () => {
   const texto = ler(PURGA);
-  assert.throws(() =>
-    verificarPurga(trocaUnica(texto, '  retirarMarcador = marcarAtividadeApp({ tipo: "indexacao", origem: "script" });', "  retirarMarcador = () => {};"))
-  );
+  const mutado = trocaUnica(texto, '  retirarMarcador = marcarAtividadeApp({ tipo: "indexacao", origem: "script" });', "  retirarMarcador = () => {};");
+  assert.throws(() => verificarPurga(mutado));
 });
 
 await caso("mutação: uma recusa do worker deixa de sair com código 1 (o caso (p) tem de ficar vermelho)", () => {
   const texto = ler(PURGA);
-  assert.throws(() => verificarPurga(trocaUnica(texto, "if (concluiu === false) {", "if (concluiu === undefined) {")));
+  const mutado = trocaUnica(texto, "if (concluiu === false) {", "if (concluiu === undefined) {");
+  assert.throws(() => verificarPurga(mutado));
 });
 
 await caso("(q) ciclo: o POST responde 409 com reset ou publicação, e a indexação é confirmada depois da reserva com marca", () => {
@@ -870,38 +882,39 @@ await caso("(q) ciclo: o POST responde 409 com reset ou publicação, e a indexa
 });
 
 await caso("mutação: o POST deixa de recusar com reset ou publicação (o caso (q) tem de ficar vermelho)", () => {
-  assert.throws(() => verificarCicloPublicacao(trocaUnica(ler(ROTA_CICLO_PUB), "if (publicacaoOuResetEmCurso()) {", "if (false) {")));
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), "if (publicacaoOuResetEmCurso()) {", "if (false) {");
+  assert.throws(() => verificarCicloPublicacao(mutado));
 });
 
 await caso("mutação: o POST responde 200 em vez de 409 (o caso (q) tem de ficar vermelho)", () => {
   const texto = ler(ROTA_CICLO_PUB);
-  assert.throws(() =>
-    verificarCicloPublicacao(trocaUnica(texto, 'reason: "publish_or_reset_running" },\n      { status: 409', 'reason: "publish_or_reset_running" },\n      { status: 200'))
-  );
+  const mutado = trocaUnica(texto, 'reason: "publish_or_reset_running" },\n      { status: 409', 'reason: "publish_or_reset_running" },\n      { status: 200');
+  assert.throws(() => verificarCicloPublicacao(mutado));
 });
 
 await caso("mutação: o ciclo confirma a indexação sem repetir a decisão depois da reserva (o caso (q) tem de ficar vermelho)", () => {
-  assert.throws(() => verificarCicloPublicacao(trocaUnica(ler(ROTA_CICLO_PUB), "decisao = decisaoDaPublicacaoManual({", "decisao = null({")));
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), "decisao = decisaoDaPublicacaoManual({", "decisao = null({");
+  assert.throws(() => verificarCicloPublicacao(mutado));
 });
 
 await caso("mutação: o ciclo reserva sem marca da app (o caso (q) tem de ficar vermelho)", () => {
-  assert.throws(() =>
-    verificarCicloPublicacao(trocaUnica(ler(ROTA_CICLO_PUB), 'reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', "reserva = tentarReservarPublicacao();"))
-  );
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), 'reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', "reserva = tentarReservarPublicacao();");
+  assert.throws(() => verificarCicloPublicacao(mutado));
 });
 
 await caso("mutação: a publicação manual reserva sem marca da app (o caso (d) da rota tem de ficar vermelho)", () => {
-  assert.throws(() =>
-    verificarRotaPublicacaoManual(trocaUnica(ler(ROTA_PUBLICACAO), 'reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', "reserva = tentarReservarPublicacao();"))
-  );
+  const mutado = trocaUnica(ler(ROTA_PUBLICACAO), 'reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', "reserva = tentarReservarPublicacao();");
+  assert.throws(() => verificarRotaPublicacaoManual(mutado));
 });
 
 await caso("mutação: o reset deixa de confirmar a indexação depois da reserva (o caso do reset tem de ficar vermelho)", () => {
-  assert.throws(() => verificarRotaReset(trocaUnica(ler(ROTA_RESET), "motivoDepoisDaReserva = motivoDeRecusaDoReset({", "motivoDepoisDaReserva = null({")));
+  const mutado = trocaUnica(ler(ROTA_RESET), "motivoDepoisDaReserva = motivoDeRecusaDoReset({", "motivoDepoisDaReserva = null({");
+  assert.throws(() => verificarRotaReset(mutado));
 });
 
 await caso("mutação: o painel deixa de recusar com publicação em curso (o caso do painel tem de ficar vermelho)", () => {
-  assert.throws(() => verificarPainel(trocaUnica(ler(ROTA_PAINEL), "if (publicacaoOuResetEmCurso()) {", "if (false) {")));
+  const mutado = trocaUnica(ler(ROTA_PAINEL), "if (publicacaoOuResetEmCurso()) {", "if (false) {");
+  assert.throws(() => verificarPainel(mutado));
 });
 
 // --- Rodada 2 de convergência: leitura, identificador de processo, mensagem por tipo, marca falhada, purga ---
@@ -1011,9 +1024,8 @@ await caso("(z) os dois scripts de escrita retiram a marca também em sinal", ()
 
 await caso("mutação: o script não retira a marca em sinal (o caso (z) tem de ficar vermelho)", () => {
   const texto = ler("scripts/catalog/full-catalog-reindex.js");
-  assert.throws(() =>
-    verificarSinaisDoScript(trocaUnica(texto, "    retirarMarcador();\n    process.exit(sinal", "    process.exit(sinal"), "full-catalog-reindex.js")
-  );
+  const mutado = trocaUnica(texto, "    retirarMarcador();\n    process.exit(sinal", "    process.exit(sinal");
+  assert.throws(() => verificarSinaisDoScript(mutado, "full-catalog-reindex.js"));
 });
 
 await caso("(z2) marca falhada no ciclo: o ciclo para e não segue para as coleções", () => {
@@ -1022,9 +1034,8 @@ await caso("(z2) marca falhada no ciclo: o ciclo para e não segue para as cole�
 
 await caso("mutação: a marca falhada deixa o ciclo seguir (o caso (z2) tem de ficar vermelho)", () => {
   const texto = ler(ROTA_CICLO_PUB);
-  assert.throws(() =>
-    verificarCicloParaSemMarca(trocaUnica(texto, 'await markMarginErosionCycleSkipped(shop, "não foi possível marcar a atividade da app antes da publicação");\n          return;', 'await markMarginErosionCycleSkipped(shop, "não foi possível marcar a atividade da app antes da publicação");'))
-  );
+  const mutado = trocaUnica(texto, 'await markMarginErosionCycleSkipped(shop, "não foi possível marcar a atividade da app antes da publicação");\n          return;', 'await markMarginErosionCycleSkipped(shop, "não foi possível marcar a atividade da app antes da publicação");');
+  assert.throws(() => verificarCicloParaSemMarca(mutado));
 });
 
 await caso("(y) marcador não lido por erro de leitura: a mensagem diz que não expira pelo tempo", () => {
@@ -1183,11 +1194,13 @@ await caso("(ab) ciclo: o salto da confirmação grava no Relatório a causa cur
 });
 
 await caso("mutação: o Relatório recebe a frase da recusa (o caso (ab) tem de ficar vermelho)", () => {
-  assert.throws(() => verificarRelatorioDoSalto(trocaUnica(ler(ROTA_CICLO_PUB), "${decisao.causa}`);", "${decisao.mensagem}`);")));
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), "${decisao.causa}`);", "${decisao.mensagem}`);");
+  assert.throws(() => verificarRelatorioDoSalto(mutado));
 });
 
 await caso("mutação: a linha do Relatório fica em comentário (o caso (ab) tem de ficar vermelho)", () => {
-  assert.throws(() => verificarRelatorioDoSalto(trocaUnica(ler(ROTA_CICLO_PUB), RELATORIO_DO_SALTO, "// " + RELATORIO_DO_SALTO)));
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), RELATORIO_DO_SALTO, "// " + RELATORIO_DO_SALTO);
+  assert.throws(() => verificarRelatorioDoSalto(mutado));
 });
 
 const RELATORIO_DO_PEDIDO_SCRIPT = "await markMarginErosionCycleSkipped(shop, `ciclo saltado: ${causaDeRecusaPorScript(atividadeScript)}`);";
@@ -1212,17 +1225,23 @@ await caso("(ac) ciclo: o POST grava no Relatório as recusas que responde com 4
 });
 
 await caso("mutação: a recusa por script deixa de ir ao Relatório (o caso (ac) tem de ficar vermelho)", () => {
-  assert.throws(() => verificarRelatorioDoPedido(trocaUnica(ler(ROTA_CICLO_PUB), RELATORIO_DO_PEDIDO_SCRIPT, "")));
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), RELATORIO_DO_PEDIDO_SCRIPT, "");
+  assert.throws(() => verificarRelatorioDoPedido(mutado));
 });
 
 await caso("mutação: a recusa por publicação deixa de ir ao Relatório (o caso (ac) tem de ficar vermelho)", () => {
-  assert.throws(() => verificarRelatorioDoPedido(trocaUnica(ler(ROTA_CICLO_PUB), RELATORIO_DO_PEDIDO_PUB, "")));
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), RELATORIO_DO_PEDIDO_PUB, "");
+  assert.throws(() => verificarRelatorioDoPedido(mutado));
 });
 
 const ARRANQUE_NULO = [
   "if (scriptVivo) causa = causaDeRecusaPorScript(scriptVivo);",
   'else if (publicacaoOuResetEmCurso()) causa = "publicação ou reset Shopify em curso";',
   "await markMarginErosionCycleSkipped(shop, `ciclo parado: ${causa}`);",
+  // Causa por omissão: a falha ao marcar ou a gravar o estado. Sem este pin, `let causa;` passava (PR 5, revisão).
+  'let causa = "marcação ou gravação do estado falhou (ver log)";',
+  // A linha do log do ciclo leva o prefixo que o logs-summary conta (CICLO_SALTADO_RE).
+  "[trigger-sync] ciclo parado antes da publicação: indexação não arrancou (${causa}).",
 ];
 function verificarArranqueNulo(texto) {
   const inicio = posicao(texto, "if (arranque === null) {", ROTA_CICLO_PUB);
@@ -1238,7 +1257,8 @@ await caso("(ad) ciclo: quando o arranque devolve null, o Relatório diz a causa
 });
 
 await caso("mutação: sem a causa de script no arranque nulo (o caso (ad) tem de ficar vermelho)", () => {
-  assert.throws(() => verificarArranqueNulo(trocaUnica(ler(ROTA_CICLO_PUB), ARRANQUE_NULO[0], "")));
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), ARRANQUE_NULO[0], "");
+  assert.throws(() => verificarArranqueNulo(mutado));
 });
 
 function verificarSaltoLiberta(texto) {
@@ -1255,11 +1275,9 @@ await caso("(ae) ciclo: o salto por confirmação liberta a reserva e para o cic
 });
 
 await caso("mutação: o salto deixa a reserva presa (o caso (ae) tem de ficar vermelho)", () => {
-  assert.throws(() =>
-    verificarSaltoLiberta(
-      trocaUnica(ler(ROTA_CICLO_PUB), "reserva.libertar();\n            console.log(`[trigger-sync] ciclo parado antes da publicação", "console.log(`[trigger-sync] ciclo parado antes da publicação")
-    )
-  );
+  // A troca roda fora do assert.throws: uma âncora em falta lança aqui, e o caso fica vermelho em vez de passar em vazio.
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), "reserva.libertar();\n            console.log(`[trigger-sync] ciclo parado antes da publicação", "console.log(`[trigger-sync] ciclo parado antes da publicação");
+  assert.throws(() => verificarSaltoLiberta(mutado));
 });
 
 function verificarConfirmacaoNaoLanca(texto) {
@@ -1276,7 +1294,8 @@ await caso("(af) ciclo: a confirmação da indexação, se lançar, vira recusa 
 });
 
 await caso("mutação: a causa da exceção desaparece (o caso (af) tem de ficar vermelho)", () => {
-  assert.throws(() => verificarConfirmacaoNaoLanca(trocaUnica(ler(ROTA_CICLO_PUB), 'causa: "não foi possível confirmar a indexação",', 'causa: "",')));
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), 'causa: "não foi possível confirmar a indexação",', 'causa: "",');
+  assert.throws(() => verificarConfirmacaoNaoLanca(mutado));
 });
 
 await caso("(ag) causas curtas: cada marcador desconhecido e o script vivo dizem a sua causa, e o script ganha à indexação", () => {
@@ -1341,7 +1360,7 @@ await caso("(ah) pasta de marcadores que não se lê: a guarda recusa (fail clos
 
 await caso("mutação: uma pasta que não se lê volta a passar (o caso (ah) tem de ficar vermelho)", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "pasta-passa", (t) =>
-    trocaUnica(t, 'return { tipo: "desconhecida", causa: "pasta", pid: null, motivo: `${dir} (${err?.code || "erro"})` };', "return null;")
+    trocaUnica(t, 'Fail closed (PR 5, revisão de convergência).\n    return { tipo: "desconhecida", causa: "pasta", pid: null, motivo: `${dir} (${err?.code || "erro"})` };', "Fail closed (PR 5, revisão de convergência).\n    return null;")
   );
   const ficheiro = path.join(raiz, "nao-e-uma-pasta-mut.txt");
   fs.writeFileSync(ficheiro, "x");
@@ -1504,9 +1523,8 @@ await caso("(am) publicação manual: com a reserva ocupada por reset ou publica
 });
 
 await caso("mutação: a mensagem volta a dizer sincronização (o caso (am) tem de ficar vermelho)", () => {
-  assert.throws(() =>
-    assert.ok(trocaUnica(ler(ROTA_PUBLICACAO), MENSAGEM_DA_RESERVA_OCUPADA, "Já existe uma sincronização Shopify em curso.").includes(MENSAGEM_DA_RESERVA_OCUPADA))
-  );
+  const mutado = trocaUnica(ler(ROTA_PUBLICACAO), MENSAGEM_DA_RESERVA_OCUPADA, "Já existe uma sincronização Shopify em curso.");
+  assert.throws(() => assert.ok(mutado.includes(MENSAGEM_DA_RESERVA_OCUPADA)));
 });
 
 await caso("(al2) marcador de leitura (uma pasta com nome de ficheiro) recusa o arranque com causa=leitura no log", async () => {
@@ -1559,7 +1577,7 @@ await caso("(an) pasta de marcadores que não se lê: a app devolve a causa e n�
 
 await caso("mutação: a app volta a lançar com a pasta que não se lê (o caso (an) tem de ficar vermelho)", async () => {
   const m = mutanteDo("lib/curation/atividadeApp.js", "pasta-lanca", (t) =>
-    trocaUnica(t, '    return { tipo: "desconhecida", pid: null, motivo: `${dir} (${err?.code || "erro"})` };\n  }\n  // Um marcador escrito antes', "    throw err;\n  }\n  // Um marcador escrito antes")
+    trocaUnica(t, '    return { tipo: "desconhecida", causa: "pasta", pid: null, motivo: `${dir} (${err?.code || "erro"})` };\n  }\n  // Um marcador escrito antes', "    throw err;\n  }\n  // Um marcador escrito antes")
   );
   const ficheiro = path.join(raiz, "pasta-nao-lida-mut.txt");
   fs.writeFileSync(ficheiro, "x");
@@ -1572,44 +1590,50 @@ await caso("mutação: a app volta a lançar com a pasta que não se lê (o caso
   }
 });
 
-await caso("(ao) a recusa por script vivo diz a hora de Lisboa, não o ISO em UTC", () => {
-  limparMarcadores();
-  const dir = dados.resolveCurationDataDir();
-  const alheio = processoAlheio();
-  const vivo = path.join(dir, "catalog-busy-indexacao-9-hora.json");
-  fs.writeFileSync(vivo, JSON.stringify({ tipo: "indexacao", pid: alheio.pid, origem: "script", processo: "outro", startedAt: "2026-10-18T03:49:22.861Z" }));
-  try {
-    const motivo = atividade.motivoDeRecusaPorScript(atividade.scriptDeIndexacaoEmCurso());
-    assert.doesNotMatch(motivo, /2026-10-18T03:49:22\.861Z/, "não pode sair o ISO em UTC");
-    assert.match(motivo, /04:49:22/, "a hora tem de sair em Lisboa (UTC+1 em outubro)");
-  } finally {
-    alheio.kill();
-    fs.rmSync(vivo, { force: true });
-  }
-});
+await caso("(ao) a recusa por script vivo diz a hora de Lisboa, não o ISO em UTC", () =>
+  comUptimeLongo(() => {
+    limparMarcadores();
+    const dir = dados.resolveCurationDataDir();
+    const alheio = processoAlheio();
+    const vivo = path.join(dir, "catalog-busy-indexacao-9-hora.json");
+    fs.writeFileSync(vivo, JSON.stringify({ tipo: "indexacao", pid: alheio.pid, origem: "script", processo: "outro", startedAt: "2026-10-18T03:49:22.861Z" }));
+    try {
+      const motivo = atividade.motivoDeRecusaPorScript(atividade.scriptDeIndexacaoEmCurso());
+      assert.doesNotMatch(motivo, /2026-10-18T03:49:22\.861Z/, "não pode sair o ISO em UTC");
+      assert.match(motivo, /04:49:22/, "a hora tem de sair em Lisboa (UTC+1 em outubro)");
+    } finally {
+      alheio.kill();
+      fs.rmSync(vivo, { force: true });
+    }
+  })
+);
 
-await caso("mutação: a hora sai em UTC (o caso (ao) tem de ficar vermelho)", async () => {
-  const m = mutanteDo("lib/curation/atividadeApp.js", "hora-utc", (t) =>
-    trocaUnica(t, "motivo: `pid ${dados.pid}, desde ${horaDeLisboa(dados.startedAt)}` };", "motivo: `pid ${dados.pid}, desde ${dados.startedAt}` };")
-  );
-  limparMarcadores();
-  const dir = dados.resolveCurationDataDir();
-  const alheio = processoAlheio();
-  const vivo = path.join(dir, "catalog-busy-indexacao-9-hora.json");
-  fs.writeFileSync(vivo, JSON.stringify({ tipo: "indexacao", pid: alheio.pid, origem: "script", processo: "outro", startedAt: "2026-10-18T03:49:22.861Z" }));
-  try {
-    const mod = await import(pathToFileURL(m).href);
-    const motivo = mod.motivoDeRecusaPorScript(mod.scriptDeIndexacaoEmCurso());
-    assert.throws(() => assert.match(motivo, /04:49:22/), "o caso (ao) tem de apanhar a hora em UTC");
-  } finally {
-    alheio.kill();
-    fs.rmSync(vivo, { force: true });
-    fs.rmSync(m, { force: true });
-  }
-});
+await caso("mutação: a hora sai em UTC (o caso (ao) tem de ficar vermelho)", () =>
+  comUptimeLongo(async () => {
+    const m = mutanteDo("lib/curation/atividadeApp.js", "hora-utc", (t) =>
+      trocaUnica(t, "motivo: `pid ${dados.pid}, desde ${horaDeLisboa(dados.startedAt)}` };", "motivo: `pid ${dados.pid}, desde ${dados.startedAt}` };")
+    );
+    limparMarcadores();
+    const dir = dados.resolveCurationDataDir();
+    const alheio = processoAlheio();
+    const vivo = path.join(dir, "catalog-busy-indexacao-9-hora.json");
+    fs.writeFileSync(vivo, JSON.stringify({ tipo: "indexacao", pid: alheio.pid, origem: "script", processo: "outro", startedAt: "2026-10-18T03:49:22.861Z" }));
+    try {
+      const mod = await import(pathToFileURL(m).href);
+      const motivo = mod.motivoDeRecusaPorScript(mod.scriptDeIndexacaoEmCurso());
+      assert.equal(typeof motivo, "string", "a mutação tem de devolver motivo, senão a asserção abaixo passa em vazio");
+      assert.throws(() => assert.match(motivo, /04:49:22/), "o caso (ao) tem de apanhar a hora em UTC");
+    } finally {
+      alheio.kill();
+      fs.rmSync(vivo, { force: true });
+      fs.rmSync(m, { force: true });
+    }
+  })
+);
 
 await caso("mutação: a sessão Shopify inválida do reset deixa a reserva presa (o caso do reset tem de ficar vermelho)", () => {
-  assert.throws(() => verificarLibertacaoNosCaminhosDeErro(trocaUnica(ler(ROTA_RESET), "reserva.libertar();\n    const message =", "const message =")));
+  const mutado = trocaUnica(ler(ROTA_RESET), "reserva.libertar();\n    const message =", "const message =");
+  assert.throws(() => verificarLibertacaoNosCaminhosDeErro(mutado));
 });
 
 await caso("(u) uma escrita de marca que falha não deixa ficheiro parcial (que bloquearia 10 min)", () => {
@@ -1697,9 +1721,202 @@ await caso("(w) o ciclo para com motivo na confirmação, e a confirmação não
 });
 
 await caso("mutação: o ciclo segue sem parar quando há motivo (o caso (w) tem de ficar vermelho)", () => {
-  assert.throws(() =>
-    verificarCicloParaComConfirmacao(trocaUnica(ler(ROTA_CICLO_PUB), "            return;\n          } else {", "          } else {"))
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), "            return;\n          } else {", "          } else {");
+  assert.throws(() => verificarCicloParaComConfirmacao(mutado));
+});
+
+// --- Rodada 8 de convergência (PR 5, revisão): fork sem pid, hora da atividade da app, pasta, registos, rótulos ---
+
+await caso("(ap) fork que não arranca (error sem pid, sem exit): a marca da app sai, e a publicação deixa de a ver", async () => {
+  limparMarcadores();
+  let forks = 0;
+  indexacao.definirForkParaTestes(() => {
+    forks += 1;
+    const c = new FakeChild();
+    c.pid = undefined;
+    setImmediate(() => {
+      c.emit("error", Object.assign(new Error("spawn EMFILE"), { code: "EMFILE" }));
+      c.emit("close", -24, null);
+    });
+    return c;
+  });
+  try {
+    await indexacao.startCatalogIndexingWorker(SHOP, {}, { causa: "ciclo" });
+    assert.equal(forks, 1);
+    assert.equal(marcadoresDeIndexacao().length, 1, "antes do erro, a marca existe");
+    await esperarAte(() => marcadoresDeIndexacao().length === 0, 2000);
+    assert.equal(atividade.atividadeAppEmCurso(), null, "sem marca, a publicação e o reset não ficam recusados até reiniciar");
+  } finally {
+    indexacao.definirForkParaTestes(null);
+    limparMarcadores();
+  }
+});
+
+await caso("mutação: sem a retirada da marca no erro sem pid, a marca fica (o caso (ap) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/importer/catalog/indexingStream.server.js", "erro-sem-marca", (t) =>
+    trocaUnica(t, "    if (child.pid === undefined) retirarMarcador();\n", "")
   );
+  limparMarcadores();
+  let forks = 0;
+  let disparou = false;
+  const mod = await import(pathToFileURL(m).href);
+  mod.definirForkParaTestes(() => {
+    forks += 1;
+    const c = new FakeChild();
+    c.pid = undefined;
+    setImmediate(() => {
+      c.emit("error", Object.assign(new Error("spawn EMFILE"), { code: "EMFILE" }));
+      c.emit("close", -24, null);
+      disparou = true;
+    });
+    return c;
+  });
+  try {
+    await mod.startCatalogIndexingWorker(SHOP, {}, { causa: "ciclo" });
+    await esperarAte(() => disparou, 2000);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(forks, 1);
+    assert.throws(() => assert.equal(marcadoresDeIndexacao().length, 0), "o caso (ap) tem de apanhar a marca que fica");
+  } finally {
+    mod.definirForkParaTestes(null);
+    limparMarcadores();
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("(aq) atividade da app em curso diz a hora de Lisboa, não o ISO em UTC", () =>
+  comUptimeLongo(() => {
+    limparMarcadores();
+    const dir = dados.resolveCurationDataDir();
+    const alheio = processoAlheio();
+    const marca = path.join(dir, "catalog-busy-indexacao-9-app-hora.json");
+    fs.writeFileSync(marca, JSON.stringify({ tipo: "indexacao", pid: alheio.pid, origem: "app", processo: "outro", startedAt: "2026-10-18T03:49:22.861Z" }));
+    try {
+      const atv = atividade.atividadeAppEmCurso();
+      assert.equal(atv?.tipo, "indexacao");
+      assert.doesNotMatch(atv.motivo, /2026-10-18T03:49:22\.861Z/, "não pode sair o ISO em UTC");
+      assert.match(atv.motivo, /04:49:22/, "a hora tem de sair em Lisboa");
+    } finally {
+      alheio.kill();
+      fs.rmSync(marca, { force: true });
+    }
+  })
+);
+
+await caso("mutação: a atividade da app sai em UTC (o caso (aq) tem de ficar vermelho)", () =>
+  comUptimeLongo(async () => {
+    const m = mutanteDo("lib/curation/atividadeApp.js", "app-hora-utc", (t) =>
+      trocaUnica(t, "desde ${horaDeLisboa(dados.startedAt)})`,", "desde ${dados.startedAt})`,")
+    );
+    limparMarcadores();
+    const dir = dados.resolveCurationDataDir();
+    const alheio = processoAlheio();
+    const marca = path.join(dir, "catalog-busy-indexacao-9-app-hora.json");
+    fs.writeFileSync(marca, JSON.stringify({ tipo: "indexacao", pid: alheio.pid, origem: "app", processo: "outro", startedAt: "2026-10-18T03:49:22.861Z" }));
+    try {
+      const mod = await import(pathToFileURL(m).href);
+      const atv = mod.atividadeAppEmCurso();
+      assert.equal(typeof atv?.motivo, "string", "a mutação tem de devolver motivo, senão a asserção abaixo passa em vazio");
+      assert.throws(() => assert.match(atv.motivo, /04:49:22/), "o caso (aq) tem de apanhar a hora em UTC");
+    } finally {
+      alheio.kill();
+      fs.rmSync(marca, { force: true });
+      fs.rmSync(m, { force: true });
+    }
+  })
+);
+
+/** Corre a recusa de um script com a pasta de marcadores dada, em processo à parte. Devolve o resultado do processo. */
+function recusaDoScript(modulo, dir) {
+  const codigo = `import(${JSON.stringify(pathToFileURL(modulo).href)}).then((m) => m.recusarSeAtividadeApp("teste"));`;
+  return spawnSync(process.execPath, ["-e", codigo], { env: { ...process.env, CURATION_DATA_DIR: dir }, encoding: "utf8" });
+}
+
+await caso("(ar) recusa de script com pasta que não se lê: diz que a pasta não se lê, e não manda esperar a indexação", () => {
+  const ficheiro = path.join(raiz, "pasta-recusa-script.txt");
+  fs.writeFileSync(ficheiro, "x");
+  try {
+    const r = recusaDoScript(path.join(RAIZ, "lib/curation/atividadeApp.js"), ficheiro);
+    assert.equal(r.status, 1, `a recusa sai com código 1: ${r.stderr}`);
+    assert.match(r.stderr, /a pasta de marcadores de atividade não se lê/, r.stderr);
+    assert.doesNotMatch(r.stderr, /Espera que a indexação/, "esperar não resolve uma pasta que não se lê");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+  }
+});
+
+await caso("mutação: a recusa da pasta usa a mensagem de espera (o caso (ar) tem de ficar vermelho)", () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "pasta-espera", (t) => trocaUnica(t, 'if (atividade.causa === "pasta") {', "if (false) {"));
+  const ficheiro = path.join(raiz, "pasta-recusa-mutante.txt");
+  fs.writeFileSync(ficheiro, "x");
+  try {
+    const r = recusaDoScript(m, ficheiro);
+    assert.throws(() => assert.match(r.stderr, /a pasta de marcadores de atividade não se lê/), "o caso (ar) tem de apanhar a mensagem errada");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
+    fs.rmSync(m, { force: true });
+  }
+});
+
+/** O registo da marca falhada tem de estar no catch, com o código do erro. */
+const LINHA_MARCA_SYNC = 'console.error(`[shopify-sync] marcação da atividade falhou (${err?.code || "erro"}). Nada foi gravado.`);';
+const LINHA_MARCA_RESET = 'console.error(`[shopify-reset] marcação da atividade falhou (${err?.code || "erro"}). Nada foi gravado.`);';
+const LINHA_MARCA_PURGA = 'console.error(`[catalog-purge] Recusado: não foi possível marcar a atividade da app (${err?.code || "erro"}). Nada foi apagado.`);';
+const LINHA_MARCA_INDEXACAO = 'console.error(`[indexingStream] A indexação não arrancou: causa=marcador (${err?.code || "erro"}).`);';
+function verificarRegistoDaMarca(texto, linha, ficheiro) {
+  const i = posicao(texto, linha, ficheiro);
+  assert.match(texto.slice(Math.max(0, i - 40), i), /catch \(err\) \{\s*$/, `${ficheiro}: o registo da marca tem de estar no catch`);
+}
+
+await caso("(as) marca falhada nas rotas e na purga: o erro sai no log com o código, no catch; e a purga diz para ver a tarefa", () => {
+  verificarRegistoDaMarca(ler(ROTA_PUBLICACAO), LINHA_MARCA_SYNC, ROTA_PUBLICACAO);
+  verificarRegistoDaMarca(ler(ROTA_RESET), LINHA_MARCA_RESET, ROTA_RESET);
+  verificarRegistoDaMarca(ler(PURGA), LINHA_MARCA_PURGA, PURGA);
+  posicao(ler("lib/importer/catalog/indexingStream.server.js"), LINHA_MARCA_INDEXACAO, "indexingStream.server.js");
+  posicao(ler(PURGA), "Vê a tarefa indexing_status do workflow maintenance antes de repetir.", PURGA);
+});
+
+await caso("mutação: o registo da marca sai do catch (o caso (as) tem de ficar vermelho)", () => {
+  const mutado = trocaUnica(ler(ROTA_PUBLICACAO), LINHA_MARCA_SYNC, LINHA_MARCA_SYNC.replace("console.error(", "void ("));
+  assert.throws(() => verificarRegistoDaMarca(mutado, LINHA_MARCA_SYNC, ROTA_PUBLICACAO));
+});
+
+await caso("(at) a reserva partilhada diz publicacao_ou_reset no log, no arranque e no painel, como a mensagem", () => {
+  posicao(
+    ler("lib/importer/catalog/indexingStream.server.js"),
+    '"[indexacao] recusada (causa=publicacao_ou_reset): há uma publicação ou um reset Shopify em curso. Espera que termine."',
+    "indexingStream.server.js"
+  );
+  posicao(ler(ROTA_PAINEL), '"[painel] [indexacao] recusada (causa=publicacao_ou_reset): há uma publicação ou um reset Shopify em curso."', ROTA_PAINEL);
+});
+
+await caso("mutação: o rótulo volta a publicacao (o caso (at) tem de ficar vermelho)", () => {
+  const mutado = trocaUnica(
+    ler("lib/importer/catalog/indexingStream.server.js"),
+    "recusada (causa=publicacao_ou_reset): há uma publicação",
+    "recusada (causa=publicacao): há uma publicação"
+  );
+  assert.throws(() =>
+    posicao(mutado, "recusada (causa=publicacao_ou_reset): há uma publicação", "indexingStream.server.js")
+  );
+});
+
+await caso("(au) Relatório de Margem: um ciclo que não correu diz 'não correu', e não 'falhou'", () => {
+  posicao(ler("app/routes/app.reports.jsx"), 'String(marginErosionError).startsWith("não correu — ") ? "não correu" : "falhou"', "app/routes/app.reports.jsx");
+});
+
+await caso("mutação: o Relatório volta a dizer 'falhou' para qualquer paragem (o caso (au) tem de ficar vermelho)", () => {
+  const mutado = trocaUnica(
+    ler("app/routes/app.reports.jsx"),
+    'String(marginErosionError).startsWith("não correu — ") ? "não correu" : "falhou"',
+    '"falhou"'
+  );
+  assert.throws(() => posicao(mutado, 'String(marginErosionError).startsWith("não correu — ") ? "não correu" : "falhou"', "app/routes/app.reports.jsx"));
+});
+
+await caso("mutação: sem a causa por omissão do arranque nulo (o caso (ad) tem de ficar vermelho)", () => {
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), 'let causa = "marcação ou gravação do estado falhou (ver log)";', "let causa;");
+  assert.throws(() => verificarArranqueNulo(mutado));
 });
 
 if (falhas) {

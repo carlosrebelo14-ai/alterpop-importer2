@@ -15,13 +15,15 @@ Verificação pós-deploy:
 1. Correr `ps` na máquina da Fly, por ssh, e confirmar que não há worker órfão: nenhum processo `catalog-index-worker` sem indexação em curso.
 2. Confirmar que a pasta de marcadores (`catalog-busy-*.json`) não tem marcadores com pid vivo fora de uma indexação em curso. Marcadores com pid morto não bloqueiam: a app ignora-os. Podem ser apagados à mão.
 3. Confirmar que `indexing_status` não mostra `running` preso. Se mostrar, não repetir o deploy: tratar com o arquiteto, como em "Risco que sobra".
+4. Confirmar que o Relatório de Margem mede o último ciclo, sem `não correu`, quando a loja não tinha script nem publicação em curso. No `logs_recent`, `Arranques recusados` e `Ciclos que não publicaram` ficam a zero, ou cada recusa tem a causa explicada na secção seguinte.
 
 Recusas novas do PR 5: como ler e como libertar.
 
-- No log: `[indexacao] recusada (causa=<causa>)`. No Relatório de Margem: `não correu — ciclo parado: <causa>` ou `não correu — ciclo saltado: <causa>`.
+- No log do arranque: `[indexacao] recusada (causa=<causa>)`. O painel escreve a mesma marca com o prefixo `[painel]`. O ciclo e a publicação manual escrevem `[trigger-sync] ciclo saltado: <mensagem>` ou `[trigger-sync] ciclo parado antes da publicação: <mensagem>`, e o arranque nulo do ciclo escreve `[trigger-sync] ciclo parado antes da publicação: indexação não arrancou (<causa>)`. No Relatório de Margem: `não correu — ciclo parado: <causa>` ou `não correu — ciclo saltado: <causa>`.
 - `causa=script`, ou `reindexação por script em curso (pid N, desde <hora de Lisboa>)`: há um script vivo. Esperar que termine. Se o pid já não existir, o marcador é de um processo morto e a app já o ignora.
 - `causa=leitura`, `ilegivel` ou `sem_pid`: a mensagem diz o ficheiro. Não expira pelo tempo, exceto o JSON ilegível, aos 10 min, se a pasta deixar medir a idade. Se não houver processo com o pid do marcador, apagar o ficheiro à mão e anotar a causa.
 - `causa=pasta`: a pasta de marcadores não se lê. Corrigir a permissão ou o disco antes de repetir.
+- `causa=publicacao_ou_reset`: há uma publicação manual, uma publicação do ciclo ou um reset em curso. Esperar que termine. A reserva é partilhada, por isso o rótulo não diz qual dos dois.
 
 ## Antes do deploy
 

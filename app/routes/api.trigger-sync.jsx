@@ -213,7 +213,7 @@ export const action = async ({ request }) => {
           let causa = "marcação ou gravação do estado falhou (ver log)";
           if (scriptVivo) causa = causaDeRecusaPorScript(scriptVivo);
           else if (publicacaoOuResetEmCurso()) causa = "publicação ou reset Shopify em curso";
-          console.error(`[ciclo] indexação não arrancou (${causa}): ciclo parado antes da publicação.`);
+          console.error(`[trigger-sync] ciclo parado antes da publicação: indexação não arrancou (${causa}).`);
           await markMarginErosionCycleSkipped(shop, `ciclo parado: ${causa}`);
           return;
         }

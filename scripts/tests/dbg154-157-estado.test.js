@@ -107,12 +107,13 @@ let contadorBarreira = 0;
 /** Prazo de cada filho (PR 5, revisão). Um filho que não fica pronto, ou não sai, em prazo é morto e a escrita falha. */
 const PRAZO_DO_FILHO_MS = 60_000;
 
-async function escreverEmParalelo(moduloCaminho, shop, { prazoMs = PRAZO_DO_FILHO_MS, semPronto = false } = {}) {
+async function escreverEmParalelo(moduloCaminho, shop, { prazoMs = PRAZO_DO_FILHO_MS, semPronto = false, morreDoFilho = null } = {}) {
   const barreira = path.join(raiz, `barreira-${contadorBarreira++}`);
   const script = `
     import fs from "node:fs";
     const m = await import(process.env.MOD);
-    if (process.env.SEM_PRONTO !== "1") process.stdout.write("pronto\\n");
+    if (process.env.SEM_PRONTO !== "1") await new Promise((r) => process.stdout.write("pronto\\n", r));
+    if (process.env.MORRE === process.env.ID) process.kill(process.pid, "SIGKILL");
     while (!fs.existsSync(process.env.BARREIRA)) await new Promise((r) => setTimeout(r, 1));
     for (let i = 0; i < ${N_ESCRITAS}; i += 1) {
       m.setInMemoryStatus(process.env.SHOP, { state: "running", ["k_" + process.env.ID + "_" + i]: i });
@@ -121,7 +122,7 @@ async function escreverEmParalelo(moduloCaminho, shop, { prazoMs = PRAZO_DO_FILH
   const processos = [];
   const filhos = Array.from({ length: N_PROCESSOS }, (_, id) => new Promise((resolve, reject) => {
     const p = spawn(process.execPath, ["--input-type=module", "-e", script], {
-      env: { ...process.env, PROJECT_ROOT: raiz, MOD: moduloCaminho, SHOP: shop, ID: String(id), BARREIRA: barreira, SEM_PRONTO: semPronto ? "1" : "0" },
+      env: { ...process.env, PROJECT_ROOT: raiz, MOD: moduloCaminho, SHOP: shop, ID: String(id), BARREIRA: barreira, SEM_PRONTO: semPronto ? "1" : "0", MORRE: morreDoFilho === null ? "-1" : String(morreDoFilho) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     processos.push(p);
@@ -150,6 +151,13 @@ async function escreverEmParalelo(moduloCaminho, shop, { prazoMs = PRAZO_DO_FILH
   } catch (err) {
     // Um filho que falha deixa os irmãos à espera da barreira. Matam-se todos, para o teste não ficar pendurado.
     for (const p of processos) p.kill();
+    // Um filho morto a meio pode deixar o lock do estado. Espera-se que todos saiam, e o lock que deixaram sai com eles,
+    // para o caso seguinte não herdar um lock de outro processo (PR 5, revisão).
+    await Promise.all(processos.map((p) => new Promise((resolve) => {
+      if (p.exitCode !== null || p.signalCode !== null) resolve();
+      else p.once("exit", resolve);
+    })));
+    fs.rmSync(`${ficheiroDoEstado(shop)}.lock`, { force: true });
     throw err;
   }
   fs.writeFileSync(barreira, "");
@@ -158,15 +166,14 @@ async function escreverEmParalelo(moduloCaminho, shop, { prazoMs = PRAZO_DO_FILH
       p.kill();
       reject(new Error(`filho não saiu em ${prazoMs} ms`));
     }, prazoMs);
-    p.on("exit", (codigo) => {
+    const acabou = (codigo, sinal) => {
       clearTimeout(prazo);
       if (codigo === 0) resolve();
-      else reject(new Error(`filho saiu com ${codigo}`));
-    });
-    if (p.exitCode !== null) {
-      clearTimeout(prazo);
-      resolve();
-    }
+      else reject(new Error(`filho saiu com ${codigo ?? sinal}`));
+    };
+    p.on("exit", acabou);
+    // Um filho que saiu antes deste listener já não emite exit. Quando sai por sinal, exitCode fica null: vê-se também signalCode.
+    if (p.exitCode !== null || p.signalCode !== null) acabou(p.exitCode, p.signalCode);
   })));
   const lido = JSON.parse(fs.readFileSync(ficheiroDoEstado(shop), "utf8"));
   return Object.keys(lido).filter((k) => k.startsWith("k_")).length;
@@ -184,6 +191,12 @@ await caso("quatro processos a escrever o mesmo estado não perdem chaves", asyn
 
 await caso("barreira com prazo: um filho que nunca fica pronto faz a escrita falhar em prazo", async () => {
   await assert.rejects(escreverEmParalelo(LOCK_ESTADO, SHOP, { prazoMs: 1500, semPronto: true }), /não ficou pronto em 1500 ms/);
+});
+await caso("barreira: um filho morto por sinal depois de pronto falha a escrita logo, sem esperar o prazo do filho", async () => {
+  // Com prazo de 20 s, a falha tem de sair em muito menos: a fase 2 vê o sinal de saída, e não espera o prazo.
+  const inicio = Date.now();
+  await assert.rejects(escreverEmParalelo(LOCK_ESTADO, SHOP, { prazoMs: 20000, morreDoFilho: 1 }), /saiu com SIGKILL/);
+  assert.ok(Date.now() - inicio < 10000, `a falha tem de sair antes do prazo do filho (${Date.now() - inicio} ms)`);
 });
 await caso("mutação: sem lock e com uma janela na leitura-escrita perde chaves (o caso acima tem de ficar vermelho)", async () => {
   // Lock trocado por um titular falso, e uma pausa entre ler o ficheiro e escrevê-lo. A pausa só aumenta a

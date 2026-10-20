@@ -122,7 +122,8 @@ export const action = async ({ request }) => {
   let reserva = null;
   try {
     reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
-  } catch {
+  } catch (err) {
+    console.error(`[shopify-reset] marcação da atividade falhou (${err?.code || "erro"}). Nada foi gravado.`);
     return Response.json(
       { ok: false, error: "Não foi possível marcar a atividade da app. Nada foi gravado." },
       { status: 503 }

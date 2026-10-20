@@ -44,8 +44,8 @@ if (process.env.CONFIRM !== CONFIRM_WORD) {
 let retirarMarcador;
 try {
   retirarMarcador = marcarAtividadeApp({ tipo: "indexacao", origem: "script" });
-} catch {
-  console.error("[catalog-purge] Recusado: não foi possível marcar a atividade da app. Nada foi apagado.");
+} catch (err) {
+  console.error(`[catalog-purge] Recusado: não foi possível marcar a atividade da app (${err?.code || "erro"}). Nada foi apagado.`);
   process.exit(1);
 }
 // PR 5 (revisão): num sinal (SIGHUP, SIGINT, SIGTERM) a marca é retirada antes de sair. SIGKILL não passa por aqui: a
@@ -74,14 +74,14 @@ retirarMarcador();
 
 // PR 5 (revisão): só "done" conta como concluída. Recusa, falha e falha de marcador não são sucesso.
 if (concluiu === false) {
-  console.error("[catalog-purge] Não concluiu: a indexação foi recusada, falhou ou não arrancou. Vê indexing_status antes de repetir.");
+  console.error("[catalog-purge] Não concluiu: a indexação foi recusada, falhou ou não arrancou. Vê a tarefa indexing_status do workflow maintenance antes de repetir.");
   process.exit(1);
 }
 
 const status = await readCatalogRebuildStatus(shop);
 if (status?.state === "failed") {
   // O texto do erro fica no estado. No log sai só a causa.
-  console.error(`[catalog-purge] Falhou: causa=${status.lastFailure?.causa || "desconhecida"}. Ver indexing_status.`);
+  console.error(`[catalog-purge] Falhou: causa=${status.lastFailure?.causa || "desconhecida"}. Ver a tarefa indexing_status do workflow maintenance.`);
   process.exit(1);
 }
 console.log(status?.purge?.message || status?.message || "Concluído.");
