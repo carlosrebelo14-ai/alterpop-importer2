@@ -1187,6 +1187,8 @@ function verificarRelatorioDoSalto(texto) {
   const fim = texto.indexOf("} else {", inicio);
   const linha = posicao(texto, RELATORIO_DO_SALTO, ROTA_CICLO_PUB);
   assert.ok(linha > inicio && linha < fim, "o Relatório do salto tem de estar no ramo de recusa da confirmação");
+  // Posição não basta: a linha morta, dentro de `if (false)` ou depois de um return, passa a posição (rodada 10).
+  assert.doesNotMatch(texto.slice(inicio, linha), /if \(false\)|return;/, "a linha do Relatório tem de ser alcançável no ramo");
 }
 
 await caso("(ab) ciclo: o salto da confirmação grava no Relatório a causa curta da decisão", () => {
@@ -1211,6 +1213,7 @@ function noRamoDoPedido(texto, abre, linha) {
   const pos = posicao(texto, linha, ROTA_CICLO_PUB);
   const fim = texto.indexOf("return Response.json", inicio);
   assert.ok(pos > inicio && pos < fim, `a linha tem de estar dentro de ${abre}`);
+  assert.doesNotMatch(texto.slice(inicio, pos), /if \(false\)/, `a linha tem de ser alcançável dentro de ${abre} (rodada 10)`);
 }
 function verificarRelatorioDoPedido(texto) {
   const codigo = semComentarios(texto);
@@ -1569,7 +1572,7 @@ await caso("(an) pasta de marcadores que não se lê: a app devolve a causa e n�
     const atv = atividade.atividadeAppEmCurso({ dir: ficheiro });
     assert.equal(atv?.tipo, "desconhecida", "uma pasta que não se lê é desconhecida, e não lança");
     assert.match(atv.motivo, /ENOTDIR/);
-    assert.match(atividade.motivoDeRecusaDoReset({ indexacaoEmCurso: false, atividade: atv }), /Atividade da app ilegível/);
+    assert.match(atividade.motivoDeRecusaDoReset({ indexacaoEmCurso: false, atividade: atv }), /Pasta de marcadores de atividade não lida/);
     const decisao = atividade.decisaoDaPublicacaoManual({
       indexacaoEmCurso: false,
       atividadeScript: atividade.scriptDeIndexacaoEmCurso({ dir: ficheiro }),
@@ -1851,7 +1854,9 @@ await caso("(ar) recusa de script com pasta que não se lê: diz que a pasta nã
 });
 
 await caso("mutação: a recusa da pasta usa a mensagem de espera (o caso (ar) tem de ficar vermelho)", () => {
-  const m = mutanteDo("lib/curation/atividadeApp.js", "pasta-espera", (t) => trocaUnica(t, 'if (atividade.causa === "pasta") {', "if (false) {"));
+  const m = mutanteDo("lib/curation/atividadeApp.js", "pasta-espera", (t) =>
+    trocaUnica(t, 'if (atividade.causa === "pasta") {\n    // Sem leitura da pasta', 'if (false) {\n    // Sem leitura da pasta')
+  );
   const ficheiro = path.join(raiz, "pasta-recusa-mutante.txt");
   fs.writeFileSync(ficheiro, "x");
   try {
@@ -1999,6 +2004,32 @@ await caso("mutação: a mensagem da pasta promete expiração (o caso (ba) tem 
     const motivo = mod.motivoDeRecusaPorScript({ tipo: "desconhecida", causa: "pasta", pid: null, motivo: "/x (EACCES)" });
     assert.throws(() => assert.match(motivo, /Não expira pelo tempo/), "o caso (ba) tem de apanhar a promessa de expiração");
   } finally {
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await caso("mutação: a linha do Relatório do salto fica num ramo morto (o caso (ab) tem de ficar vermelho)", () => {
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), RELATORIO_DO_SALTO, "if (false) { " + RELATORIO_DO_SALTO + " }");
+  assert.throws(() => verificarRelatorioDoSalto(mutado));
+});
+
+await caso("mutação: a linha do Relatório do pedido fica num ramo morto (o caso (ac) tem de ficar vermelho)", () => {
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), RELATORIO_DO_PEDIDO_SCRIPT, "if (false) { " + RELATORIO_DO_PEDIDO_SCRIPT + " }");
+  assert.throws(() => verificarRelatorioDoPedido(mutado));
+});
+
+await caso("mutação: a pasta que não se lê volta à mensagem genérica (o caso (an) tem de ficar vermelho)", async () => {
+  const m = mutanteDo("lib/curation/atividadeApp.js", "reset-pasta-generica", (t) =>
+    trocaUnica(t, 'if (atividade.causa === "pasta") {\n      return `Pasta de marcadores de atividade não lida', 'if (false) {\n      return `Pasta de marcadores de atividade não lida')
+  );
+  const ficheiro = path.join(raiz, "pasta-reset-mut.txt");
+  fs.writeFileSync(ficheiro, "x");
+  try {
+    const mod = await import(pathToFileURL(m).href);
+    const atv = mod.atividadeAppEmCurso({ dir: ficheiro });
+    assert.throws(() => assert.match(mod.motivoDeRecusaDoReset({ indexacaoEmCurso: false, atividade: atv }), /Pasta de marcadores de atividade não lida/), "o caso (an) tem de apanhar a mensagem genérica");
+  } finally {
+    fs.rmSync(ficheiro, { force: true });
     fs.rmSync(m, { force: true });
   }
 });
