@@ -58,7 +58,7 @@ console.log("scale-memory — plano (Node) e tarefa (bash, com flyctl falso)");
 await check("(a) uma máquina: id só para o flyctl, memória, CPU e prefixo de seis caracteres", async () => {
   const r = plano(JSON.stringify(UMA_512));
   assert.equal(r.codigo, 0);
-  for (const linha of [`SM_MAQUINAS=1`, `SM_ID=${ID}`, `SM_MAQUINA=9080e1`, `SM_MEMORIA_MB=512`, `SM_CPU=shared`, `SM_CPUS=1`]) {
+  for (const linha of [`SM_MAQUINAS=1`, `SM_ID=${ID}`, `SM_MAQUINA=9080e1`, `SM_ESTADO=started`, `SM_MEMORIA_MB=512`, `SM_CPU=shared`, `SM_CPUS=1`]) {
     assert.ok(r.linhas.includes(linha), `falta ${linha}: ${r.linhas.join(" | ")}`);
   }
 });
@@ -97,8 +97,8 @@ echo "$*" >> "$FAKE_LOG"
 case "$*" in
   "machines list"*) cat "$FAKE_ESTADO" ;;
   "machine update"*)
-    if [ -n "$FAKE_FALHA" ]; then exit 1; fi
     if [ -n "$FAKE_APOS" ] && [[ "$*" == *"--vm-memory 1024"* ]]; then cp "$FAKE_APOS" "$FAKE_ESTADO"; fi
+    if [ -n "$FAKE_FALHA" ]; then echo "detalhe-interno $*" >&2; exit 1; fi
     exit 0 ;;
   *) echo "fora do falso: $*" >&2; exit 9 ;;
 esac
@@ -175,10 +175,35 @@ await check("(b) execute em que a Fly não confirma 1024 MB: falha com código 1
   assert.ok(resumo.includes("a Fly não confirmou 1024 MB"), resumo);
 });
 
-await check("(b) execute em que o flyctl machine update falha: código 1, e o detalhe não sai", async () => {
+await check("(b) execute em que o flyctl machine update falha sem aplicar: código 1, lê a Fly outra vez, e o detalhe e o id não saem", async () => {
+  const { r, resumo, log } = correrTarefa(MAINT, "execute", { estado: UMA_512, falha: true });
+  assert.equal(r.status, 1, `saída ${r.status}`);
+  assert.ok(resumo.includes("o flyctl machine update falhou (código 1). Memória lida agora: 512 MB"), resumo);
+  assert.ok(log.includes("machines list"), "a Fly tem de ser lida outra vez depois da falha");
+  assert.ok(!resumo.includes("detalhe-interno") && !(r.stdout + r.stderr).includes("detalhe-interno"), "o detalhe do flyctl saiu");
+  assert.ok(!resumo.includes(ID) && !(r.stdout + r.stderr).includes(ID), "o id completo saiu");
+});
+
+await check("(b) execute em que o flyctl falha depois de aplicar a troca: a leitura diz 1024 MB, e não diz que a memória não mudou", async () => {
   const { r, resumo } = correrTarefa(MAINT, "execute", { estado: UMA_512, apos: UMA_1024, falha: true });
   assert.equal(r.status, 1, `saída ${r.status}`);
-  assert.ok(resumo.includes("o flyctl machine update falhou"), resumo);
+  assert.ok(resumo.includes("Memória lida agora: 1024 MB"), resumo);
+  assert.ok(!resumo.includes("a memória não mudou"), resumo);
+});
+
+await check("(b) execute em que a memória fica 1024 MB mas a máquina não está started: código 1", async () => {
+  const parada = [maquina(ID, 1024, { state: "stopped" })];
+  const { r, resumo } = correrTarefa(MAINT, "execute", { estado: UMA_512, apos: parada });
+  assert.equal(r.status, 1, `saída ${r.status}`);
+  assert.ok(resumo.includes("não está iniciada (estado: stopped)"), resumo);
+});
+
+await check("(b) memória atual ilegível: recusa com código 2 antes de qualquer troca", async () => {
+  const semMemoria = [{ id: ID, state: "started", region: "fra", config: { guest: { cpu_kind: "shared", cpus: 1 } }, events: [] }];
+  const { r, resumo, log } = correrTarefa(MAINT, "execute", { estado: semMemoria });
+  assert.equal(r.status, 2, `saída ${r.status}`);
+  assert.ok(!log.includes("machine update"), log);
+  assert.ok(resumo.includes("não consegui ler a memória atual"), resumo);
 });
 
 // --- (c) mutações --------------------------------------------------------------------------
@@ -218,6 +243,16 @@ await check("mutação: o id completo no resumo do dry-run, o caso de privacidad
   try {
     const { resumo } = correrTarefa(m, "dry-run", { estado: UMA_512 });
     assert.throws(() => assert.ok(!resumo.includes(ID)), "o caso (b) tem de apanhar o id completo");
+  } finally {
+    fs.rmSync(m, { force: true });
+  }
+});
+
+await check("mutação: o id completo na causa de falha do machine update, o caso de privacidade tem de ficar vermelho", async () => {
+  const m = mutanteDoMaintenance("id-na-falha", "falhou (código $UPD_RC).", "falhou na máquina $SM_ID (código $UPD_RC).");
+  try {
+    const { resumo } = correrTarefa(m, "execute", { estado: UMA_512, falha: true });
+    assert.throws(() => assert.ok(!resumo.includes(ID)), "o caso de falha tem de apanhar o id completo");
   } finally {
     fs.rmSync(m, { force: true });
   }

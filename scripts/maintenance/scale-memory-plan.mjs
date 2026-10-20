@@ -35,6 +35,7 @@ export function plano(texto) {
   const m = dados[0] && typeof dados[0] === "object" ? dados[0] : {};
   const id = typeof m.id === "string" && ID.test(m.id) ? m.id : "";
   linhas.push(`SM_ID=${id || "?"}`, `SM_MAQUINA=${id ? id.slice(0, 6) : "?"}`);
+  linhas.push(`SM_ESTADO=${token(m.state)}`);
   linhas.push(`SM_MEMORIA_MB=${token(m.config?.guest?.memory_mb ?? m.config?.memory_mb)}`);
   linhas.push(`SM_CPU=${token(m.config?.guest?.cpu_kind)}`, `SM_CPUS=${token(m.config?.guest?.cpus)}`);
   return { linhas, codigo: 0 };

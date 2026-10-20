@@ -401,10 +401,12 @@ case "$TASK" in
       CAUSE="Esperava exatamente 1 máquina e encontrei $(campo_sm SM_MAQUINAS). Não escolho uma à sorte: não mudei nada."; RC=3
     elif ! [[ "$(campo_sm SM_ID)" =~ ^[A-Za-z0-9]{1,40}$ ]]; then
       CAUSE="o id da máquina não se lê: não mudei nada."; RC=2
+    elif ! [[ "$(campo_sm SM_MEMORIA_MB)" =~ ^[0-9]+$ ]]; then
+      CAUSE="não consegui ler a memória atual da máquina: não mudei nada."; RC=2
     fi
     if [ "$RC" -eq 0 ]; then
       SM_ID="$(campo_sm SM_ID)"; SM_MEM="$(campo_sm SM_MEMORIA_MB)"
-      SM_BULLETS="- Máquinas da app: **1**. Máquina \`$(campo_sm SM_MAQUINA)\`: memória **$SM_MEM** MB, CPU **$(campo_sm SM_CPU)** × **$(campo_sm SM_CPUS)**."
+      SM_BULLETS="- Máquinas da app: **1**. Máquina \`$(campo_sm SM_MAQUINA)\`: estado **$(campo_sm SM_ESTADO)**, memória **$SM_MEM** MB, CPU **$(campo_sm SM_CPU)** × **$(campo_sm SM_CPUS)**."
       SM_KEY="1 máquina, memória $SM_MEM MB"
       if [ "$SM_MEM" = "1024" ]; then
         SM_BULLETS="$SM_BULLETS"$'\n'"- Já estava em 1024 MB: nada a fazer."
@@ -413,18 +415,20 @@ case "$TASK" in
         SM_BULLETS="$SM_BULLETS"$'\n'"- Com o execute, a memória passava a **1024** MB, com reinício da máquina."
         SM_KEY="$SM_MEM → 1024 MB (com execute)"
       else
-        "$FLYCTL" machine update "$SM_ID" --vm-memory 1024 --yes -a "$APP" >>"$OUT" 2>&1; RC=$?
-        if [ "$RC" -ne 0 ]; then
-          CAUSE="o flyctl machine update falhou: a memória não mudou (o detalhe fica fora do log)."
+        # Lê a Fly outra vez mesmo quando o flyctl falha: a troca pode ter sido aplicada antes do erro.
+        "$FLYCTL" machine update "$SM_ID" --vm-memory 1024 --yes -a "$APP" >>"$OUT" 2>&1; UPD_RC=$?
+        DEPOIS="$("$FLYCTL" machines list -a "$APP" --json 2>>"$OUT" | node "$ROOT/scripts/maintenance/scale-memory-plan.mjs" 2>>"$OUT")"
+        MEM_DEPOIS="$(echo "$DEPOIS" | grep -E '^SM_MEMORIA_MB=' | head -1 | cut -d= -f2-)"
+        EST_DEPOIS="$(echo "$DEPOIS" | grep -E '^SM_ESTADO=' | head -1 | cut -d= -f2-)"
+        if [ "$UPD_RC" -ne 0 ]; then
+          RC=1; CAUSE="o flyctl machine update falhou (código $UPD_RC). Memória lida agora: ${MEM_DEPOIS:-?} MB. O detalhe fica fora do log."
+        elif [ "$MEM_DEPOIS" != "1024" ]; then
+          RC=1; CAUSE="a Fly não confirmou 1024 MB depois da troca (memória lida: ${MEM_DEPOIS:-?})."
+        elif [ "$EST_DEPOIS" != "started" ]; then
+          RC=1; CAUSE="a Fly confirma 1024 MB, mas a máquina não está iniciada (estado: ${EST_DEPOIS:-?}). Ver machine_status."
         else
-          DEPOIS="$("$FLYCTL" machines list -a "$APP" --json 2>>"$OUT" | node "$ROOT/scripts/maintenance/scale-memory-plan.mjs" 2>>"$OUT")"
-          MEM_DEPOIS="$(echo "$DEPOIS" | grep -E '^SM_MEMORIA_MB=' | head -1 | cut -d= -f2-)"
-          if [ "$MEM_DEPOIS" = "1024" ]; then
-            SM_BULLETS="$SM_BULLETS"$'\n'"- Memória confirmada pela Fly: **1024** MB."
-            SM_KEY="$SM_MEM → 1024 MB"
-          else
-            RC=1; CAUSE="a Fly não confirmou 1024 MB depois da troca (memória lida: ${MEM_DEPOIS:-?})."
-          fi
+          SM_BULLETS="$SM_BULLETS"$'\n'"- Memória confirmada pela Fly: **1024** MB, máquina **$EST_DEPOIS**."
+          SM_KEY="$SM_MEM → 1024 MB"
         fi
       fi
     fi
