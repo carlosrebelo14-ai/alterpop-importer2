@@ -827,6 +827,8 @@ function verificarDryRun(r) {
   assert.equal(r.resultado.produtosNaLoja, 3);
   assert.equal(r.resultado.entradasParaPending, 2);
   assert.equal(r.resultado.sincroErroPreservado, 1);
+  // Decisão 42: o estado final depois do reset. Os PUBLISHED passam a PENDING, e o SYNC_ERROR fica como está.
+  assert.deepEqual(r.resultado.estadoFinal, { PENDING: 2, SYNC_ERROR: 1 }, "nenhum item volta a APPROVED pelo reset");
   assert.equal(loja.apagar.length, 0, "dry-run não apaga");
   assert.equal(r.fila.find((i) => i.sku === "S1").status, "PUBLISHED", "dry-run não escreve a fila");
   assert.equal(r.estado.state, "idle", "dry-run não escreve o estado do reset");
@@ -1144,6 +1146,11 @@ await caso("mutação M25 (DBG-180): um pedido pendurado conta como falha de pro
 await caso("mutação M26 (DBG-178): a retoma só carrega estados ativos, e não o reset falhado", async () => {
   const m = await moduloMutado(SHOPIFY_JOB, "M26", '    const retoma = ESTADOS_ATIVOS.has(anterior.state) || anterior.state === "failed";', "    const retoma = ESTADOS_ATIVOS.has(anterior.state);");
   await mutacaoTemDeFalhar("M26", async () => verificarRetomaDeFalhado(await cenarioRetomaDeFalhado(m)));
+});
+
+await caso("mutação M33 (Decisão 42): o dry-run deixa de devolver o estado final da fila", async () => {
+  const m = await moduloMutado(SHOPIFY_RESET, "M33", "    sincroErroPreservado: plano.sincroErro,\n    estadoFinal,\n  };", "    sincroErroPreservado: plano.sincroErro,\n  };");
+  await mutacaoTemDeFalhar("M33", async () => verificarDryRun(await cenarioDryRun(m)));
 });
 
 if (falhas) {

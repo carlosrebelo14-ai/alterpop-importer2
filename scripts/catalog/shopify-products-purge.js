@@ -51,6 +51,11 @@ async function main() {
     console.log(`produtos na loja: ${plano.produtosNaLoja}`);
     console.log(`itens da fila que passariam a PENDING: ${plano.entradasParaPending}`);
     console.log(`SYNC_ERROR preservado (não se mexe): ${plano.sincroErroPreservado}`);
+    // Decisão 42: estado final da fila depois do reset. Nenhum item volta a APPROVED pelo reset.
+    console.log(`estado final da fila depois do reset (Decisão 42):`);
+    for (const [estado, n] of Object.entries(plano.estadoFinal).sort()) {
+      console.log(`  ${estado}: ${n}`);
+    }
     console.log(`\nDRY-RUN — nada apagado nem gravado. Corre com --execute.`);
     return;
   }
