@@ -2,6 +2,8 @@ import { AuthScopes } from "@shopify/shopify-api";
 import { authenticateAdmin } from "../utils/authenticate.server";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { refreshProductSalesSnapshot } from "../../lib/importer/shopify/salesRadar.server.js";
+import { reservarPublicacaoEntreProcessos } from "../../lib/importer/shopify/publicacaoEmCurso.js";
+import { marcarAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 function sessionHasReadOrders(session) {
   if (!session?.scope) return false;
@@ -33,7 +35,16 @@ export const action = async ({ request }) => {
     );
   }
 
+  // DBG-47 (Decisão 28): o radar escreve em massa no SQLite, por isso usa a mesma reserva da publicação. Ocupada, recusa com 409.
+  let reserva = null;
   try {
+    reserva = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+    if (!reserva) {
+      return Response.json(
+        { ok: false, code: "PUBLICACAO_EM_CURSO", error: "Há uma publicação ou um reset Shopify em curso. Tenta mais tarde." },
+        { status: 409 }
+      );
+    }
     const client = createShopifyClientFromSession(session);
     const result = await refreshProductSalesSnapshot(session.shop, client);
     return Response.json({ ok: true, ...result });
@@ -54,5 +65,7 @@ export const action = async ({ request }) => {
       },
       { status: needsScope ? 403 : 500 }
     );
+  } finally {
+    await reserva?.libertar();
   }
 };

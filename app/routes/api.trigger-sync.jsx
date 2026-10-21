@@ -283,6 +283,9 @@ export const action = async ({ request }) => {
             : "reserva ocupada por uma publicação manual ou por um reset em curso";
           console.log(`[trigger-sync] publicação de aprovados saltada: ${causa}.`);
           await markMarginErosionCycleSkipped(shop, `publicação de aprovados saltada: ${causa}`);
+          // DBG-47 (Decisão 28): sem reserva, o ciclo para aqui. Nenhum passo de leitura ou escrita corre em paralelo
+          // com a publicação ou com o reset. Antes, o stock, a erosão, as franquias, as novidades, o drift, as coleções e as personagens corriam.
+          return;
         } else {
           let decisao = null;
           try {
