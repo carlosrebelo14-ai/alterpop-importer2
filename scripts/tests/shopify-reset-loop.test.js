@@ -38,6 +38,8 @@ process.env.PROJECT_ROOT = projectRoot;
 process.env.SHOPIFY_SHOP_URL = "loja-teste.myshopify.com";
 process.env.SHOPIFY_ACCESS_TOKEN = "token-de-teste";
 process.env.SHOPIFY_GRAPHQL_MIN_MS = "0";
+// DBG-180: tempo limite curto para o reset, para o caso de um pedido pendurado correr em milissegundos.
+process.env.SHOPIFY_RESET_TEMPO_LIMITE_MS = "80";
 process.on("exit", () => fs.rmSync(projectRoot, { recursive: true, force: true }));
 
 const modulo = (rel) => import(pathToFileURL(path.join(REPO, rel)).href);
@@ -69,6 +71,7 @@ const loja = {
   contagemForcada: null,
   contagemSemCampo: false,
   erroEJaSaiu: new Set(),
+  pendurar: new Set(),
 };
 
 function reiniciarLoja(produtos) {
@@ -84,6 +87,7 @@ function reiniciarLoja(produtos) {
   loja.contagemForcada = null;
   loja.contagemSemCampo = false;
   loja.erroEJaSaiu = new Set();
+  loja.pendurar = new Set();
 }
 
 function resposta(status, corpo) {
@@ -100,11 +104,26 @@ function nodeDoProduto(p) {
   return { id: p.id, title: p.title, tags: [], variants: { nodes: p.sku ? [{ sku: p.sku }] : [] } };
 }
 
+/**
+ * Um pedido que não responde: só sai por cancelamento. A rede de segurança de 2 s faz a mutação falhar com erro comum
+ * (e não pendurar a suíte) se o cliente não tiver tempo limite.
+ */
+function pendurado(init) {
+  return new Promise((_resolve, rejeita) => {
+    const seguranca = setTimeout(() => rejeita(new Error("pedido pendurado sem tempo limite")), 2000);
+    init.signal?.addEventListener("abort", () => {
+      clearTimeout(seguranca);
+      rejeita(init.signal.reason);
+    });
+  });
+}
+
 globalThis.fetch = async (_url, init) => {
   const { query, variables } = JSON.parse(init.body);
   if (query.includes("productDelete(input")) {
     const id = variables.input.id;
     loja.apagar.push(id);
+    if (loja.pendurar.has(id)) return pendurado(init);
     if (loja.aoApagarPrimeiro && loja.apagar.length === 1) loja.aoApagarPrimeiro();
     if (loja.auth.has(id)) {
       return resposta(401, JSON.stringify({ errors: "[API] Invalid API key or access token" }));
@@ -533,6 +552,84 @@ async function cenarioLibertacao(batimentoMinutos, argumentos) {
   return { saida, estado: await job.readShopifyResetStatus(SHOP) };
 }
 
+/** DBG-180 no cliente: um pedido que não responde sai com ShopifyTimeoutError, sem esperar pela resposta. */
+async function cenarioClienteTempoLimite(clienteModulo) {
+  const original = globalThis.fetch;
+  globalThis.fetch = (_url, init) =>
+    new Promise((resolve, rejeita) => {
+      const t = setTimeout(() => resolve(resposta(200, JSON.stringify({ data: { ok: true } }))), 300);
+      init.signal?.addEventListener("abort", () => {
+        clearTimeout(t);
+        rejeita(init.signal.reason);
+      });
+    });
+  try {
+    const cliente = new clienteModulo.ShopifyClient({ store: SHOP, accessToken: "token-de-teste", tempoLimiteMs: 50 });
+    const inicio = Date.now();
+    try {
+      await cliente.graphqlRaw("query Ping { shop { name } }", {});
+      return { erro: null, decorrido: Date.now() - inicio };
+    } catch (err) {
+      return { erro: err, decorrido: Date.now() - inicio };
+    }
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+function verificarClienteTempoLimite({ erro, decorrido }) {
+  assert.equal(erro?.code, "SHOPIFY_TIMEOUT", "o pedido sai com tempo limite, e não com resposta");
+  assert.match(erro.message, /não respondeu em 50 ms/);
+  assert.ok(decorrido < 250, `o tempo limite corta a espera (${decorrido} ms)`);
+}
+
+/** DBG-180 no reset: o apagamento que não responde para o reset como failed, sem contar como falha de produto. A
+ * tentativa seguinte retoma-se (DBG-178) com o apagado da primeira. */
+async function cenarioTempoLimiteNoApagamento(m) {
+  reiniciarLoja([[1, "S1"], [2, "S2"]]);
+  loja.pendurar.add(gid(2));
+  limparEstado();
+  escreverFila([item("S1", "PUBLISHED", 1), item("S2", "PUBLISHED", 2)]);
+  const primeira = await correr(m, {});
+  loja.pendurar.clear();
+  const segunda = await correr(m, {});
+  return { primeira, segunda };
+}
+function verificarTempoLimiteNoApagamento({ primeira, segunda }) {
+  assert.equal(primeira.estado.state, "failed", primeira.estado.error);
+  assert.match(primeira.estado.error, /Shopify não respondeu em 80 ms/);
+  assert.equal(primeira.estado.deleted, 1, "o apagado antes do tempo limite conta-se");
+  assert.equal(primeira.estado.failed, 0, "um pedido pendurado não é falha de produto");
+  assert.equal(primeira.fila.find((i) => i.sku === "S2").status, "PUBLISHED", "o produto pendurado fica como estava");
+  assert.equal(segunda.erro, null, segunda.erro?.message);
+  assert.equal(segunda.estado.state, "completed", segunda.estado.error);
+  assert.equal(segunda.estado.deleted, 2, "DBG-178: o apagado da tentativa falhada carrega-se na retoma");
+  assert.equal(segunda.estado.retomadoDe, primeira.estado.jobId);
+  assert.equal(segunda.fila.find((i) => i.sku === "S2").status, "PENDING");
+}
+
+/** DBG-178: a retoma de um reset falhado carrega o apagado e o revertido da tentativa anterior. */
+async function cenarioRetomaDeFalhado(m) {
+  limparEstado();
+  const antigo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  escreverEstado({
+    jobId: "falhado",
+    state: "failed",
+    deleted: 2,
+    revertedLocal: 2,
+    error: "três falhas seguidas",
+    updatedAt: antigo,
+    startedAt: antigo,
+    finishedAt: antigo,
+    inicioDoPrimeiroArranque: antigo,
+  });
+  return m.initShopifyResetJob(SHOP);
+}
+function verificarRetomaDeFalhado(retomado) {
+  assert.equal(retomado.deleted, 2, "o apagado da tentativa falhada carrega-se");
+  assert.equal(retomado.revertedLocal, 2, "o revertido também");
+  assert.equal(retomado.retomadoDe, "falhado");
+}
+
 /** Estático (M16): o motor liga o batimento antes do trabalho e para-o no fim, em qualquer saída. */
 function batimentoLigadoNoMotor(texto) {
   assert.match(texto, /const pararBatimento = iniciarBatimento\(shop\);/, "o reset liga o batimento");
@@ -844,6 +941,9 @@ await caso("CLI de libertação: com o trinco de arranque ocupado, espera, recus
   assert.equal(r.estado.state, "deleting", "o estado fica como estava");
 });
 await caso("apagamento falhado com a loja vazia: o item fica PUBLISHED com o vínculo, e o reset não fica concluído", async () => verificarErroComLojaVazia(await cenarioErroComLojaVazia(reset)));
+await caso("DBG-180 no cliente: pedido com tempo limite sai com ShopifyTimeoutError, sem esperar pela resposta", async () => verificarClienteTempoLimite(await cenarioClienteTempoLimite(await modulo("lib/importer/shopifyClient.js"))));
+await caso("DBG-180 no reset: apagamento pendurado para como failed, e a tentativa seguinte retoma-se com o apagado anterior", async () => verificarTempoLimiteNoApagamento(await cenarioTempoLimiteNoApagamento(reset)));
+await caso("DBG-178: a retoma de um reset falhado carrega o apagado e o revertido da tentativa anterior", async () => verificarRetomaDeFalhado(await cenarioRetomaDeFalhado(job)));
 await caso("purga: --execute numa loja que não é a de SHOPIFY_SHOP_URL recusa-se antes de tocar em nada", () => {
   const r = spawnSync(process.execPath, [path.join(REPO, "scripts", "catalog", "shopify-products-purge.js"), "--execute", "--shop", "outra-loja.myshopify.com"], {
     encoding: "utf8",
@@ -1031,6 +1131,19 @@ await caso("mutação M23 (purga): sem a recusa de loja diferente, --execute che
   } finally {
     fs.rmSync(copia, { force: true });
   }
+});
+
+await caso("mutação M24 (DBG-180): sem sinal de tempo limite, o pedido espera pela resposta", async () => {
+  const m = await moduloMutado("lib/importer/shopifyClient.js", "M24", "          signal: this.tempoLimiteMs ? AbortSignal.timeout(this.tempoLimiteMs) : undefined,", "          signal: undefined,");
+  await mutacaoTemDeFalhar("M24", async () => verificarClienteTempoLimite(await cenarioClienteTempoLimite(m)));
+});
+await caso("mutação M25 (DBG-180): um pedido pendurado conta como falha de produto, e o reset não para como failed", async () => {
+  const m = await moduloMutado(SHOPIFY_RESET, "M25", '          if (err?.code === "SHOPIFY_TIMEOUT") throw err;', "          // M25 mutado");
+  await mutacaoTemDeFalhar("M25", async () => verificarTempoLimiteNoApagamento(await cenarioTempoLimiteNoApagamento(m)));
+});
+await caso("mutação M26 (DBG-178): a retoma só carrega estados ativos, e não o reset falhado", async () => {
+  const m = await moduloMutado(SHOPIFY_JOB, "M26", '    const retoma = ESTADOS_ATIVOS.has(anterior.state) || anterior.state === "failed";', "    const retoma = ESTADOS_ATIVOS.has(anterior.state);");
+  await mutacaoTemDeFalhar("M26", async () => verificarRetomaDeFalhado(await cenarioRetomaDeFalhado(m)));
 });
 
 if (falhas) {
