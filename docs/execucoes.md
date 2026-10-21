@@ -14,6 +14,15 @@ Sem entrada, sem `--execute`.
 
 ---
 
+## Execuções com `--execute`
+
+- **2026-10-20, `scale_memory` contra produção (run `39479976113`, workflow `maintenance`).**
+  - Comando: `task=scale_memory`, `mode=execute`, ref `main` em `d86c161`. Dentro do runner: `flyctl machine update <id da máquina 85e132…> --vm-memory 1024 --yes -a alterpop-importer-app`, seguido de `machines list` para confirmar.
+  - Dry-run antes (run `39479386412`): 1 máquina, `85e132…`, `started`, 512 MB, `shared` × 1. Com o execute, passava a 1024 MB, com reinício.
+  - OK do arquiteto: PR #128 aprovado em `24147bb`, e pedido explícito de execute depois do dry-run verde, na mensagem de 20/10. Aprovação do environment `production`: Carlos.
+  - Resultado: sucesso. 512 para 1024 MB, máquina `started`, confirmado pela Fly. Sem `--execute` posterior nesta tarefa.
+  - Decisão 41. A troca reinicia a máquina. O estado preso só passou a `completed` com a indexação do ciclo que arrancou às 19:16:57Z, depois da troca (leitura `indexing_status` de run `39483861712`, fim às 19:19:21Z).
+
 ## Notas sem `--execute`
 
 - **2026-10-16, merge do #111 antes da decisão sobre os pendentes.** O merge do #111 em `main` (`bc76f06`) foi feito antes de o arquiteto decidir os pendentes de `37bab0e`. O deploy não correu nessa altura. O deploy de `main` só correu depois do #113 (`f32b065`), com aprovação do Carlos no environment `production`. Sem impacto em produção antes desse deploy. Sem `--execute` nesta nota.
@@ -25,3 +34,4 @@ Sem entrada, sem `--execute`.
 - **2026-10-17, ronda 2 em produção (#123), deploy run `39064527768`, `main` em `67beccf`.** Verde, com `catalog_health` no próprio job (16 verdes, 0 vermelhos, 0 avisos, às 20:06:03Z). Verificação pós-deploy, sem `--execute`: `active_vs_queue` 57/57 PUBLISHED (run `39065542908`), `indexing_status` completed, classe `nenhum`, 26087 linhas, início 20:00:59Z, fim 20:03:22Z (run `39065465073`), `logs_recent` limpo (run `39065582161`). `db_flag_check` não reportado nesta ronda. Primeira prova real do DBG-156. No job `117489258220`, a espera do `scripts/deploy.sh` apanhou a indexação: tentativa 1 às 20:01:47Z, tentativa 2 às 20:02:49Z, `espera ok` às 20:04:07Z, cerca de 2 min de espera. O `flyctl deploy` acabou às 20:05:41Z. A indexação começou durante os guardas da suíte, antes da espera.
 - **2026-10-17, merge do #124 (PR 4, DBG-155), sem deploy.** Merge commit `4e5d8ed`, travado em `b434a01`, com CI verde no head (run `39066856083`). O commit `b434a01` é o teste da marca no arranque com flush falhado, pedido na revisão. Próximo: PR 5 (DBG-140 e DBG-141), com a guarda contra script de reindexação.
 - **2026-10-20, ronda 3 do PR 5 em produção (#125, merge `49c056a`, deploy run `39444758942`).** Deploy verde. Verificação pós-deploy, sem `--execute`: `active_vs_queue` 57/57 PUBLISHED (run `39447351238`); `logs_recent` limpo (run `39447660984`). Caixa negra: `indexing_status` (run `39447507798`): estado `failed`, causa `worker_morto`, de 14:46:56Z a 14:49:27Z, antes do deploy (15:02Z). `checkpointScanned` 24550, `totalRows` 26227, `totalRejected` 4305. Hipótese principal: OOM killer da Fly, ligado ao DBG-14 (memória). Pode explicar também o DBG-152 de 17/10. Confirmação pela tarefa `machine_status` (PR desta ronda) e pela contagem de OOM do `logs_recent`. A ronda 4 fica em espera até o Carlos decidir.
+- **2026-10-20, deploy `39484366450` (`main` em `d86c161`, PR #128, Decisão 41).** Aprovado pelo Carlos no environment `production` às 21:06:36Z. Guardas verdes (`test:franchise`, `test:sync-safety`, `test:health-gate`). Espera por indexação: `[deploy] espera ok — sem indexação a decorrer`. `flyctl deploy` acabou às 21:14Z: máquina `85e132…` atualizada e `started`. `catalog_health` no próprio job: 16 verdes, 0 vermelhas, 0 avisos. Verificação pós-deploy, sem `--execute`: `machine_status` (run `39502538172`): 1 máquina, `started`, 1024 MB, sem saída desde o deploy. `active_vs_queue` (run `39502647580`): 57/57 PUBLISHED. `indexing_status` (run `39502758187`): completed das 21:31:58Z às 21:34:20Z, 26259 linhas, erro nenhum, `totalRejected` 4293. A Decisão 40 fica cumprida, e o estado preso fica limpo.

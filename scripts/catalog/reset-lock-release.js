@@ -13,8 +13,9 @@
  * Duas travas de segurança, ambas obrigatórias para --execute:
  *   - state tem de estar em running/listing/deleting (nada a libertar caso
  *     contrário)
- *   - idade tem de exceder --min-age-minutes (default 10) — protege contra
- *     libertar um trinco que ainda pode ser um reset real em curso
+ *   - o reset não pode estar vivo (D39: batimento há menos de 10 min, ou estado ilegível), e a idade do batimento
+ *     tem de exceder --min-age-minutes (default 10). Um reset vivo renova o batimento a cada minuto, por isso o CLI
+ *     não o liberta. Um processo que morre deixa o batimento parado e expira sozinho.
  *
  * DRY-RUN por defeito (só lê e mostra o que faria). `--execute` escreve.
  *
@@ -30,6 +31,8 @@ import {
   readShopifyResetStatus,
   writeShopifyResetStatus,
   isShopifyResetRunning,
+  resetEstaVivo,
+  comTrincoDeArranque,
 } from "../../lib/importer/shopify/shopifyResetJob.server.js";
 import { getDefaultConfig } from "../../lib/importer/config.js";
 
@@ -42,6 +45,11 @@ const SHOP =
 const MIN_AGE_MINUTES = Number(
   (args.indexOf("--min-age-minutes") >= 0 && args[args.indexOf("--min-age-minutes") + 1]) || 10
 );
+// Um valor não numérico (NaN) fazia `idade < NaN` ser falso, e a trava de idade deixava de recusar.
+if (!Number.isFinite(MIN_AGE_MINUTES) || MIN_AGE_MINUTES < 0) {
+  console.error("--min-age-minutes tem de ser um número igual ou maior que 0. Nada foi lido nem escrito.");
+  process.exit(2);
+}
 
 const RUNNING_STATES = new Set(["running", "listing", "deleting"]);
 
@@ -64,18 +72,27 @@ async function archiveCurrentFile(shop) {
 }
 
 async function main() {
+  return comTrincoDeArranque(SHOP, libertar);
+}
+
+/**
+ * Lê, decide e escreve tudo dentro do trinco de arranque. Sem o trinco, um arranque no mesmo instante podia ser
+ * sobrescrito por failed, com um reset vivo a correr por baixo.
+ */
+async function libertar() {
   console.log(`=== reset-lock-release (${SHOP})${EXECUTE ? "" : " · DRY-RUN"} ===`);
 
   const status = await readShopifyResetStatus(SHOP);
-  const ageMinutes = status.startedAt
-    ? (Date.now() - new Date(status.startedAt).getTime()) / 60000
-    : null;
+  // A idade conta desde o último batimento (D39), e não desde o arranque: um reset vivo tem batimento recente.
+  const referencia = status.updatedAt || status.startedAt;
+  const ageMinutes = referencia ? (Date.now() - new Date(referencia).getTime()) / 60000 : null;
 
   console.log(`jobId: ${status.jobId ?? "(nenhum)"}`);
   console.log(`state: ${status.state}`);
   console.log(`startedAt: ${status.startedAt ?? "(nunca)"}`);
+  console.log(`batimento (updatedAt): ${status.updatedAt ?? "(nunca)"}`);
   console.log(
-    `idade: ${ageMinutes == null ? "n/d" : `${ageMinutes.toFixed(1)} min (${(ageMinutes / 1440).toFixed(1)} dias)`}`
+    `idade do batimento: ${ageMinutes == null ? "n/d" : `${ageMinutes.toFixed(1)} min (${(ageMinutes / 1440).toFixed(1)} dias)`}`
   );
   console.log(`processed/total: ${status.processed}/${status.total} · deleted: ${status.deleted}`);
   console.log(`currentTitle: ${status.currentTitle ?? "(nenhum)"}`);
@@ -85,9 +102,17 @@ async function main() {
     return;
   }
 
+  if (resetEstaVivo(status)) {
+    console.log(
+      `\n⚠️  Reset vivo (batimento há ${ageMinutes == null ? "n/d" : ageMinutes.toFixed(1) + " min"}, ` +
+        `ou estado ilegível). Recusa libertar — um processo ainda o pode estar a escrever.`
+    );
+    process.exit(1);
+  }
+
   if (ageMinutes == null || ageMinutes < MIN_AGE_MINUTES) {
     console.log(
-      `\n⚠️  Idade (${ageMinutes == null ? "desconhecida" : ageMinutes.toFixed(1) + " min"}) abaixo do ` +
+      `\n⚠️  Idade do batimento (${ageMinutes == null ? "desconhecida" : ageMinutes.toFixed(1) + " min"}) abaixo do ` +
         `limiar de segurança (--min-age-minutes=${MIN_AGE_MINUTES}). Recusa libertar — pode ser um reset real em curso.`
     );
     process.exit(1);

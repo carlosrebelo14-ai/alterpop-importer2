@@ -331,7 +331,7 @@ A Tarefa 11 (`franchise-title-ref-contradiction.js`) não cobre esta classe: o c
 25. D36. A guarda fica dentro de `runShopifyCatalogReset`.
 26. D37. Loja vazia corre a varredura só se a segunda leitura confirmar zero produtos.
 27. D38. Três falhas seguidas abortam.
-28. D39. Batimento com expiração automática ao fim de 10 minutos sem sinal.
+28. D39. Batimento com expiração automática ao fim de 10 minutos sem sinal. Adenda do PR 7, ronda 4 (a aprovar pelo arquiteto): o sinal é renovado pelo processo vivo a cada minuto (`iniciarBatimento`), e não só pelas escritas do reset. Um processo morto expira ao fim de 10 minutos. Um processo vivo com uma chamada à Shopify pendurada fica vivo até reiniciar (DBG-180). Na retoma, o D2 usa o instante do primeiro arranque, e uma publicação não conta como decisão humana.
 29. D40. Gravação por produto.
 30. D42. O ciclo agendado salta a publicação enquanto houver reset em curso, e regista o salto.
 

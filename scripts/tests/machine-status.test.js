@@ -181,6 +181,8 @@ await check("(b) dry-run: resumo com contagens, estados, OOM e linhas de OOM por
   assert.ok(resumo.includes("Linhas de OOM no machine status, máquina `1854e9`: **2**."), resumo);
   assert.ok(!resumo.includes(ID_COMPLETO), "o id completo saiu no resumo");
   assert.ok(!(r.stdout + r.stderr).includes(ID_COMPLETO), "o id completo saiu no log");
+  assert.ok(resumo.includes("Sem saída registada."), "a máquina sem eventos de saída tem de dizer isso, não código vazio");
+  assert.ok(!resumo.includes("código ****"), "não pode sair código vazio");
 });
 
 await check("(b) o flyctl é chamado só com comandos de leitura (machines list e machine status)", async () => {
