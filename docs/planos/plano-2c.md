@@ -54,5 +54,5 @@ O Carlos pode ajustar mais tarde.
 ## Restrições
 
 - O reset em produção continua vetado (Decisão 35) até o fim do 2c e a verificação do DBG-193 em produção.
-- `scripts/catalog/run-approved-sync.js` continua vetado em produção até a verificação em produção e o fecho do DBG-197 (Decisão 38, e decisão do arquiteto de 21/10 sobre o DBG-197).
+- `scripts/catalog/run-approved-sync.js` continua vetado em produção até a verificação em produção e o fecho do DBG-197 (Decisão 43).
 - Achados não bloqueantes que ficam como DBG: DBG-194, 195, 196, 198 e 199.

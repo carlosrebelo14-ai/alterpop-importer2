@@ -508,8 +508,10 @@ Corrigido neste ciclo, em quatro pontos.
 Não bloqueante, registado como DBG.
 
 - DBG-200, Baixa, `scripts/catalog/line-publish-verify.js:103`. O script de verificação publica sem a location das definições, e o stock vai para a variável ou para a primária. Só corre à mão, com produtos sintéticos. Pré-existente.
-- DBG-201, Média, efeito do deploy. Os publicados passam a escrever só na location das definições. Os valores que ficaram na location anterior não são reconciliados. Se essa location cumpria encomendas online, o disponível fica com valores congelados até alguém os ajustar. Verificar as quantidades por location antes do deploy.
-- DBG-202, Baixa, `docs/planos/plano-2c.md`. A citação "decisão do arquiteto de 21/10 sobre o DBG-197" não tem registo no repositório. A Decisão 38, alínea e), só condiciona o veto a exclusão real entre processos. Falta registar onde fica a decisão de 21/10.
+- DBG-201, Baixa (severidade passa de Média a Baixa, 21/10). Verificado na Shopify de produção a 21/10: há uma só location, ativa e primária. Não há quantidades noutra location para reconciliar. O risco que sobra é `settings.locationId` apontar para um id inválido, o que dá falhas de escrita no stock e não dano. Na verificação pós-deploy do 2c, a linha `[trigger-sync] stock de publicados` tem de mostrar 0 falhas.
+- DBG-202, Baixa, `docs/planos/plano-2c.md`. A decisão de 21/10 não tinha registo no repositório. Registada como Decisão 43, no PR do DBG-47, com a regra de privacidade da location no ponto d.
+
+Lente de delta do arquiteto sobre o PR #133: aprovado com condição de check verde. Merge em `ab1c052`, com merge commit travado em `8f55583`. Sem deploy.
 
 Efeito em produção, a confirmar antes do deploy. O stock dos publicados e a importação de inventário passam a usar a location das definições, depois a variável de ambiente, e só então a primária. Antes, o stock dos publicados caía na variável ou na primária, e a importação caía na primária quando as definições estavam vazias. Se a location das definições diferir da que estava em uso, o inventário muda de location no ciclo seguinte.
 
