@@ -41,7 +41,7 @@ O Carlos pode ajustar mais tarde.
 ## Reset (Decisão 42)
 
 - Sem republicação em lotes. O reset termina na verificação final: zero produtos da app na loja e zero `PUBLISHED` na fila.
-- Os itens publicados voltam a `PENDING` com origem `reset`. O reset nunca os põe em `APPROVED`. O Carlos aprova pelo painel, um a um.
+- Os itens publicados voltam a `PENDING` com origem `reset`. O reset nunca os põe em `APPROVED`. O Carlos escolhe e aprova pelo painel o que quiser.
 - A seleção dos produtos é do Carlos. Nenhum passo prepara listas.
 
 ## Gates por PR
@@ -54,5 +54,5 @@ O Carlos pode ajustar mais tarde.
 ## Restrições
 
 - O reset em produção continua vetado (Decisão 35) até o fim do 2c e a verificação do DBG-193 em produção.
-- `scripts/catalog/run-approved-sync.js` continua vetado em produção até a verificação em produção e o fecho do DBG-197 (Decisão 42, ponto 2).
+- `scripts/catalog/run-approved-sync.js` continua vetado em produção até a verificação em produção e o fecho do DBG-197 (Decisão 38, e decisão do arquiteto de 21/10 sobre o DBG-197).
 - Achados não bloqueantes que ficam como DBG: DBG-194, 195, 196, 198 e 199.

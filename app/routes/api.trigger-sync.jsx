@@ -331,6 +331,8 @@ export const action = async ({ request }) => {
           const stockClient = createShopifyClientFromSession(session);
           const stockResult = await syncPublishedStockLevels(stockClient, shop, {
             stockBuffer: settings.stockBuffer,
+            // DBG-05: a location das definições. Sem isto, o stock ia para a location primária ou para a variável de ambiente.
+            locationId: settings.locationId,
           });
           console.log(
             `[trigger-sync] stock de publicados: ${stockResult.checked} verificados, ${stockResult.updated} atualizados, ${stockResult.skipped} sem alteração, ${stockResult.failed} falhas.`

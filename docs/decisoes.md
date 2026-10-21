@@ -467,10 +467,12 @@ e) O PR 6 (DBG-142) sai do 2b-3. O `scripts/catalog/run-approved-sync.js` fica v
 **Decisão:**
 
 1. Depois do reset não há republicação em lotes. O reset termina na verificação final: zero produtos da app na loja e zero PUBLISHED na fila. O runbook não tem passo de republicação.
-2. Os itens que estavam publicados voltam a PENDING, com origem `reset` e motivo "apagado no admin". O reset nunca os põe em APPROVED. O Carlos aprova de novo pelo painel, um a um. Nenhum volta a APPROVED sozinho.
+2. Os itens que estavam publicados voltam a PENDING, com origem `reset` e motivo "apagado no admin". O reset nunca os põe em APPROVED. O Carlos escolhe e aprova pelo painel o que quiser. Nenhum volta a APPROVED sozinho.
 3. Uma decisão humana tomada durante o reset mantém o seu estado (D2). O reset não a reescreve.
 4. A seleção dos produtos é do Carlos. Nenhum passo prepara listas nem seleções.
 5. O dry-run do reset mostra o estado final da fila (`estadoFinal`, contado sobre a mesma cópia que a execução reverteria). Essa saída é a verificação antes de qualquer `--execute`.
 6. O DBG-193 (passos do ciclo que escrevem na Shopify depois da publicação) é gate do reset: o reset só corre em produção com o DBG-193 verificado em produção.
+
+**Nota:** o ciclo publica tudo o que estiver `APPROVED`. Aprovar vários itens de uma vez publica-os todos no ciclo seguinte.
 
 **Estado final esperado:** a preencher com a saída do dry-run em produção, aprovada pelo arquiteto antes do `--execute`. A saída tem a forma `PENDING: n`, `SYNC_ERROR: m`, e `APPROVED` e `REJECTED` só por decisão humana já existente. Sem valor de produção não há número a registar.
