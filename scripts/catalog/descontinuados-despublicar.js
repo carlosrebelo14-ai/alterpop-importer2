@@ -21,12 +21,16 @@ import { despublicarDescontinuadosNaShopify } from "../../lib/importer/shopify/d
 
 const args = process.argv.slice(2);
 const execute = args.includes("--execute");
+// Um valor nunca é uma flag: `--ok --execute` não conta como referência.
 const valor = (nome) => {
   const i = args.indexOf(nome);
-  return i >= 0 ? args[i + 1] : undefined;
+  const v = i >= 0 ? args[i + 1] : undefined;
+  return v && !v.startsWith("--") ? v : undefined;
 };
 const SHOP = valor("--shop") || process.env.SHOPIFY_SHOP_URL;
 const OK = valor("--ok");
+// Os SKU que o arquiteto aprovou no dry-run. Sem esta lista, --execute despublicaria o que a corrida listar.
+const SKUS_APROVADOS = valor("--skus");
 
 if (!SHOP) {
   console.error("Falta --shop <loja>.");
@@ -43,6 +47,10 @@ if (execute) {
     console.error(`Recusado: --execute só corre na loja configurada (${lojaConfigurada ?? "não definida"}), e o alvo é ${SHOP}. Nada foi escrito.`);
     process.exit(3);
   }
+  if (!SKUS_APROVADOS) {
+    console.error("--execute precisa de --skus <lista do dry-run aprovado, separada por vírgulas>. Nada foi escrito.");
+    process.exit(2);
+  }
   recusarSeAtividadeApp("descontinuados-despublicar");
 }
 
@@ -55,7 +63,21 @@ if (lista.abortado) {
   process.exit(4);
 }
 
-const itens = lista.itens.filter((i) => i.productId);
+const aprovados = new Set(
+  (SKUS_APROVADOS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+);
+const foraDaAprovacao = lista.itens.filter((i) => !aprovados.has(i.sku));
+if (execute && foraDaAprovacao.length) {
+  console.error(
+    `Recusado: a lista mudou desde o dry-run aprovado. Fora da aprovação: ${foraDaAprovacao.map((i) => i.sku).join(", ")}. Nada foi escrito.`
+  );
+  process.exit(2);
+}
+
+const itens = lista.itens.filter((i) => i.productId && aprovados.has(i.sku));
 const semProduto = lista.itens.length - itens.length;
 console.log(`Ausentes do feed agora: ${lista.ausentesAgora}. Descontinuados listados: ${lista.itens.length}. Com produto na Shopify: ${itens.length}.`);
 if (semProduto) console.log(`Sem produto na Shopify (não serão despublicados): ${semProduto}.`);
@@ -65,11 +87,12 @@ for (const i of itens) {
 }
 
 if (!execute) {
-  console.log("\nDRY-RUN — nada escrito. Para despublicar: --execute --ok <referência ao OK do arquiteto>.");
+  console.log(`\nSKU para aprovar, no --skus: ${lista.itens.map((i) => i.sku).join(",") || "(nenhum)"}`);
+  console.log("DRY-RUN — nada escrito. Para despublicar: --execute --ok <referência ao OK do arquiteto> --skus <lista acima>.");
   process.exit(0);
 }
 
-const comando = `node scripts/catalog/descontinuados-despublicar.js --shop ${SHOP} --execute --ok ${OK}`;
+const comando = `node scripts/catalog/descontinuados-despublicar.js --shop ${SHOP} --execute --ok ${OK} --skus ${[...aprovados].join(",")}`;
 console.log("\nLinha para docs/execucoes.md, commitada antes desta corrida (Decisão 34, ponto 10):");
 console.log(
   `- ${new Date().toISOString().slice(0, 10)}, despublicação de descontinuados (DBG-16). Comando: \`${comando}\`. ` +

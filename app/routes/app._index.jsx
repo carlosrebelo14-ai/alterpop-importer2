@@ -422,7 +422,13 @@ export default function CurationDashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(corpo),
       });
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        setToast({ content: "Resposta inesperada do servidor", error: true });
+        return;
+      }
       if (!res.ok || !data?.ok) {
         setToast({ content: data?.error || "Não foi possível concluir a ação", error: true });
         return;

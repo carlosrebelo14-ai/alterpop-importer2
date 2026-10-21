@@ -580,7 +580,7 @@ O DBG-16 implementa o formato aprovado em 21/10. Deteção: publicado que falta 
 Pontos que o arquiteto precisa de decidir, com a leitura que tomei:
 
 - **Despublicar em DRAFT, e não `publishableUnpublish`.** O formato de 21/10 pede DRAFT, que é `productUpdate`. A Decisão 34, ponto 6, pede `publishableUnpublish`, e o briefing de 17/09 (:24) proíbe `productUpdate` até o DBG-16 ser implementado. Tomei DRAFT, por ser a aprovação mais recente. A emenda explícita a :24 fica para o OK do merge. Se preferires `publishableUnpublish`, a troca é só em `lib/importer/shopify/despublicacao.server.js`.
-- **Estado na fila depois de DRAFT.** O item fica PUBLISHED, com `metadata.despublicadoEm`. A fila não tem estado novo. Um SKU que volte ao feed continua PUBLISHED, com o produto em DRAFT, e não volta a ser publicado sem decisão. Registado como DBG-213.
+- **Estado na fila depois de DRAFT.** O item fica PUBLISHED, com `metadata.despublicadoEm`. A fila não tem estado novo. Um SKU que volte ao feed continua PUBLISHED, e o gatekeeper devolve DRAFT (corrigido na revisão, abaixo), por isso não volta a ACTIVE sem decisão. Se deve voltar sozinho, é decisão do arquiteto: DBG-213.
 - **Gatilho de 2 ciclos só para a despublicação.** O limiar de revisão de `CatalogSkuTracking` continua em 3.
 - **Franquia e formato do produto que saiu.** Lidos na Shopify, nos metafields `alterpop.franchise` e `alterpop.format`. Não vêm do catálogo, porque a linha já saiu dele.
 - **Preço de referência.** O `netPrice` guardado na fila quando o item foi enfileirado. Pode estar desatualizado.
@@ -589,7 +589,17 @@ Pontos que o arquiteto precisa de decidir, com a leitura que tomei:
 
 Não bloqueantes, registados como DBG. DBG-210 e DBG-211, como acima. DBG-212 a DBG-214 como acima.
 
-O teste fica em `scripts/tests/dbg16-descontinuados.test.js`, incluído em `test:sync-safety`, com casos de classificação, substituição, despublicação em lote, rota, script e painel, e mutações M50 a M55.
+O teste fica em `scripts/tests/dbg16-descontinuados.test.js`, incluído em `test:sync-safety`, com casos de classificação, substituição, despublicação em lote, metafield de lista, fila, rota, script e painel, e mutações M50 a M57.
+
+Revisão de Decisão 39, ronda 1, com quatro lentes e verificação de cada achado. Um achado bloqueante, corrigido: o substituto entrava como PENDING sem `statusChangedAt`, e uma regra AUTO_APPROVE podia aprová-lo no reindex. Agora fica fixado por decisão humana, com o teste V4 e a mutação M56. Corrigidos também, sem bloquear: `alterpop.franchise` e `alterpop.format` são listas, e o valor chega como texto JSON, por isso a franquia nunca batia (V1); um publicado despublicado que reaparece no feed voltava a ACTIVE pelo gatekeeper, e agora fica DRAFT (V2, mutação M57); a despublicação só conta como feita se a fila marcar o item (V3); "Usar este" recusa um descontinuado já despublicado ou ignorado; o script só despublica os SKU aprovados em `--skus`, e recusa se a lista tiver mudado desde o dry-run; `--ok` nunca é uma flag; a resposta do painel tem `try` próprio.
+
+Não bloqueantes, registados como DBG:
+
+- DBG-215, Baixa. O reset copia a metadata e repõe o item a APPROVED. `despublicadoEm` e `descontinuadoIgnoradoEm` ficam, e o SKU sai da deteção sem aviso. Corrigir limpando as marcas no reset, por decisão.
+- DBG-216, Baixa. "Ignorar" aceita qualquer publicado, não só os que saíram do feed. Não causa dano: só tira o item da lista.
+- DBG-217, Média. A Decisão 34, ponto 8, diz que o ciclo aborta com mais de 5% dos publicados ausentes. Está implementado só na listagem. O `skuLifecycle` continua a somar `missingCycles` nesse caso. Decidir se o ciclo deve parar também.
+- DBG-218, Baixa. Os testes estáticos R1 a R4 dependem de texto. A regra de comportamento está coberta pelos casos dinâmicos, mas a rota e o painel não são executados.
+- DBG-219, Baixa. A listagem corre antes da reserva da publicação. Uma indexação pode repor um produto no feed entre as duas. O `--skus` aprovado limita o estrago, mas não elimina a janela.
 
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._

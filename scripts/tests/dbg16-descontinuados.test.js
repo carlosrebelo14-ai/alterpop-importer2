@@ -10,8 +10,13 @@
  *   (R1) rota: só usar e ignorar, sem productUpdate. "Usar este" revalida no servidor.
  *   (R2) script: --execute exige --ok, recusa-se numa loja que não é a configurada, e só despublica depois do dry-run.
  *   (R3) painel: a secção está ligada à rota.
+ *   (V1) metafield de lista: o nome sai do texto JSON, e nada passa a nome.
+ *   (V2) um publicado despublicado (DRAFT) não volta a ACTIVE quando o SKU reaparece no feed.
+ *   (V3) a despublicação não conta como feita se a fila já não tiver o item.
+ *   (V4) "Usar este" põe o substituto como PENDING, fixado por decisão humana, e não o põe duas vezes.
  * Mutações: M50 o limiar de 2 ciclos deixa de contar, M51 a guarda de 5% sai, M52 a faixa de preço sai, M53 os SKU
- * ocupados deixam de contar, M54 o script executa sem --ok, M55 a despublicação continua com o trinco perdido.
+ * ocupados deixam de contar, M54 o script executa sem --ok, M55 a despublicação continua com o trinco perdido,
+ * M56 o substituto entra sem statusChangedAt, M57 o gatekeeper volta a dar ACTIVE a um despublicado.
  * Uso: node scripts/tests/dbg16-descontinuados.test.js
  */
 import "./_isolate-curation.js";
@@ -20,7 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { semComentarios } from "./_sem-comentarios.js";
-import { classificarPublicadosAusentes, escolherSubstitutos } from "../../lib/curation/descontinuados.js";
+import { classificarPublicadosAusentes, escolherSubstitutos, valorDeMetafield } from "../../lib/curation/descontinuados.js";
 import { despublicarProdutoDraft, despublicarDescontinuadosNaShopify } from "../../lib/importer/shopify/despublicacao.server.js";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -70,6 +75,46 @@ function copiaMutada(ficheiro, nome, antigo, novo) {
 }
 
 // ---------- casos dinâmicos ----------
+
+await caso("(V1) metafield de lista: o nome sai do texto JSON, e um valor que não é lista passa tal qual", () => {
+  assert.equal(valorDeMetafield('["Rick and Morty"]'), "Rick and Morty");
+  assert.equal(valorDeMetafield('["", "Segundo"]'), "Segundo");
+  assert.equal(valorDeMetafield("Figura"), "Figura");
+  assert.equal(valorDeMetafield("[]"), null);
+  assert.equal(valorDeMetafield("[nao-json"), null);
+  assert.equal(valorDeMetafield(null), null);
+});
+
+await caso("(V2) publicado despublicado fica DRAFT quando o SKU reaparece no feed; sem a marca, continua ACTIVE", async () => {
+  const { resolveStatusFromQueueEntry } = await import(pathToFileURL(path.join(REPO, "lib/importer/curation/visibilityGatekeeper.js")).href);
+  assert.equal(resolveStatusFromQueueEntry({ status: "PUBLISHED", metadata: { despublicadoEm: "2026-10-21T10:00:00Z" } }).status, "DRAFT");
+  assert.equal(resolveStatusFromQueueEntry({ status: "PUBLISHED", metadata: {} }).status, "ACTIVE");
+  assert.equal(resolveStatusFromQueueEntry({ status: "APPROVED", metadata: { despublicadoEm: "x" } }).status, "ACTIVE", "uma aprovação nova não é travada pela marca antiga");
+});
+
+await caso("(V3) a despublicação não conta como feita se a fila já não tiver o item publicado", async () => {
+  const cliente = { graphql: async (q, vars) => ({ productUpdate: { product: { id: vars.input.id, status: "DRAFT" }, userErrors: [] } }) };
+  const r = await despublicarDescontinuadosNaShopify({
+    client: cliente,
+    itens: [{ sku: "Z", productId: "gid://shopify/Product/Z" }],
+    marcar: async () => null,
+  });
+  assert.deepEqual(r.ok, []);
+  assert.equal(r.falhas.length, 1);
+  assert.match(r.falhas[0].motivo, /não foi marcado/);
+});
+
+await caso("(V4) Usar este põe o substituto como PENDING, fixado por decisão humana, e não o duplica", async () => {
+  const fila = await import(pathToFileURL(path.join(REPO, "lib/curation/curationQueue.server.js")).href);
+  const registo = { sku: "SUB-1", title: "Substituto", vendor: null, categoryMain: null, netPrice: 50, grossPrice: 60, availableQuantity: 3 };
+  assert.deepEqual(await fila.adicionarSubstitutoPendente(registo, "DESC-1"), { ok: true });
+  const item = (await fila.loadCurationQueue()).items.find((i) => i.sku === "SUB-1");
+  assert.equal(item.status, "PENDING");
+  assert.equal(typeof item.statusChangedAt, "string", "statusChangedAt fixa o PENDING contra as regras");
+  assert.equal(item.metadata.origem, "humano");
+  assert.equal(item.metadata.substitutoDe, "DESC-1");
+  assert.equal((await fila.adicionarSubstitutoPendente(registo, "DESC-1")).ok, false, "um SKU já na fila não entra outra vez");
+});
 
 const publicado = (sku, extra = {}) => ({ sku, status: "PUBLISHED", metadata: { shopifyProductId: `gid://shopify/Product/${sku}`, ...extra } });
 const rastreio = (entradas) => new Map(entradas);
@@ -226,6 +271,8 @@ await caso("(R2) script: --execute exige --ok, recusa outra loja, e despublica s
   const texto = ler(SCRIPT);
   assert.match(texto, /if \(!OK\) \{/, "--execute exige --ok");
   assert.match(texto, /process\.exit\(3\)/, "outra loja sai com 3");
+  assert.match(texto, /if \(!SKUS_APROVADOS\) \{/, "--execute exige a lista aprovada");
+  assert.match(texto, /foraDaAprovacao\.length/, "a lista mudou desde o dry-run: recusa");
   const dryRun = texto.indexOf("if (!execute) {");
   const escrita = texto.indexOf("despublicarDescontinuadosNaShopify({");
   assert.ok(dryRun > 0 && escrita > dryRun, "a escrita fica depois do dry-run");
@@ -330,6 +377,32 @@ await caso("mutação M55 (DBG-16): a despublicação continua com o trinco perd
         marcar: async () => {},
       });
       assert.equal(r.falhas.length, 1, "com o trinco perdido, para no primeiro produto em falta");
+    });
+  } finally {
+    fs.rmSync(copia, { force: true });
+  }
+});
+
+await caso("mutação M56 (DBG-16): o substituto entra sem statusChangedAt", async () => {
+  const copia = copiaMutada("lib/curation/curationQueue.server.js", "M56", "    statusChangedAt: new Date().toISOString(),\n    metadata: {\n      ...buildMetadata(registo", "    metadata: {\n      ...buildMetadata(registo");
+  try {
+    const fila = await import(pathToFileURL(copia).href);
+    await mutacaoTemDeFalhar("M56", async () => {
+      await fila.adicionarSubstitutoPendente({ sku: "SUB-M56", title: "M", netPrice: 1, availableQuantity: 1 }, "DESC-M56");
+      const item = (await fila.loadCurationQueue()).items.find((i) => i.sku === "SUB-M56");
+      assert.equal(typeof item.statusChangedAt, "string", "sem statusChangedAt o substituto não fica fixado");
+    });
+  } finally {
+    fs.rmSync(copia, { force: true });
+  }
+});
+
+await caso("mutação M57 (DBG-16): o gatekeeper volta a dar ACTIVE a um despublicado", async () => {
+  const copia = copiaMutada("lib/importer/curation/visibilityGatekeeper.js", "M57", 'if (queueStatus === "PUBLISHED" && entry?.metadata?.despublicadoEm) {', "if (false) {");
+  try {
+    const m = await import(pathToFileURL(copia).href);
+    await mutacaoTemDeFalhar("M57", async () => {
+      assert.equal(m.resolveStatusFromQueueEntry({ status: "PUBLISHED", metadata: { despublicadoEm: "x" } }).status, "DRAFT");
     });
   } finally {
     fs.rmSync(copia, { force: true });
