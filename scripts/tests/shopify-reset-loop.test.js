@@ -67,6 +67,8 @@ const loja = {
   paginaSemProducts: null,
   aoApagarPrimeiro: null,
   contagemForcada: null,
+  contagemSemCampo: false,
+  erroEJaSaiu: new Set(),
 };
 
 function reiniciarLoja(produtos) {
@@ -80,6 +82,8 @@ function reiniciarLoja(produtos) {
   loja.paginaSemProducts = null;
   loja.aoApagarPrimeiro = null;
   loja.contagemForcada = null;
+  loja.contagemSemCampo = false;
+  loja.erroEJaSaiu = new Set();
 }
 
 function resposta(status, corpo) {
@@ -106,12 +110,15 @@ globalThis.fetch = async (_url, init) => {
       return resposta(401, JSON.stringify({ errors: "[API] Invalid API key or access token" }));
     }
     if (loja.erro.has(id)) {
+      // «Product not found» com o produto já fora da loja: o erro chega, e a loja fica sem o produto.
+      if (loja.erroEJaSaiu.has(id)) loja.produtos.delete(id);
       return resposta(200, JSON.stringify({ data: { productDelete: { deletedProductId: null, userErrors: [{ field: ["id"], message: "Product not found" }] } } }));
     }
     if (!loja.naoApaga.has(id)) loja.produtos.delete(id);
     return resposta(200, JSON.stringify({ data: { productDelete: { deletedProductId: id, userErrors: [] } } }));
   }
   if (query.includes("productsCount")) {
+    if (loja.contagemSemCampo) return resposta(200, JSON.stringify({ data: {} }));
     const count = loja.contagemForcada ?? loja.produtos.size;
     return resposta(200, JSON.stringify({ data: { productsCount: { count } } }));
   }
@@ -486,7 +493,7 @@ async function cenarioBatimento(m) {
   const antes = m.resetEstaVivo(await m.readShopifyResetStatus(SHOP));
   const parar = m.iniciarBatimento(SHOP, 20);
   await new Promise((resolve) => setTimeout(resolve, 100));
-  parar();
+  await parar();
   const depois = await m.readShopifyResetStatus(SHOP);
   return { antes, depois, vivoDepois: m.resetEstaVivo(depois) };
 }
@@ -529,7 +536,159 @@ async function cenarioLibertacao(batimentoMinutos, argumentos) {
 /** Estático (M16): o motor liga o batimento antes do trabalho e para-o no fim, em qualquer saída. */
 function batimentoLigadoNoMotor(texto) {
   assert.match(texto, /const pararBatimento = iniciarBatimento\(shop\);/, "o reset liga o batimento");
-  assert.match(texto, /\} finally \{\n    pararBatimento\(\);\n  \}/, "e para-o em qualquer saída");
+  assert.match(texto, /\} finally \{\n    (await )?pararBatimento\(\);\n  \}/, "e para-o em qualquer saída");
+}
+
+/**
+ * Cópia mutada de um script ou módulo, no mesmo diretório (imports relativos). A âncora tem de existir uma vez, e isto
+ * corre fora de mutacaoTemDeFalhar: uma âncora errada é erro do teste, não mutação apanhada.
+ */
+function copiaMutada(ficheiro, nome, antigo, novo) {
+  const origem = path.join(REPO, ficheiro);
+  const texto = fs.readFileSync(origem, "utf8");
+  const vezes = texto.split(antigo).length - 1;
+  if (vezes !== 1) throw new Error(`mutação ${nome}: a âncora tem de existir uma vez (existe ${vezes}x)`);
+  const destino = path.join(path.dirname(origem), `.mutante-${nome}-${process.pid}${path.extname(origem)}`);
+  fs.writeFileSync(destino, texto.replace(antigo, () => novo));
+  return destino;
+}
+
+/** A falha grava failed com a janela do D2 do primeiro arranque. A tentativa seguinte herda-a. */
+async function cenarioFalhaDepoisDeDecisao(m) {
+  reiniciarLoja([[1, "S1"]]);
+  limparEstado();
+  const primeiro = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const falha = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  escreverEstado({
+    jobId: "shopify-reset-falhado",
+    state: "failed",
+    deleted: 0,
+    revertedLocal: 0,
+    error: "três falhas seguidas",
+    updatedAt: falha,
+    startedAt: falha,
+    finishedAt: falha,
+    inicioDoPrimeiroArranque: primeiro,
+  });
+  escreverFila([item("S1", "REJECTED", 1, new Date(Date.now() - 30 * 60 * 1000).toISOString())]);
+  return correr(m, {});
+}
+function verificarFalhaDepoisDeDecisao(r) {
+  assert.equal(r.erro, null, r.erro?.message);
+  assert.equal(r.estado.state, "completed", r.estado.error);
+  const s1 = r.fila.find((i) => i.sku === "S1");
+  assert.equal(s1.status, "REJECTED", "decisão humana depois do primeiro arranque, numa tentativa falhada, ganha ao apagamento");
+  assert.equal(s1.metadata.origem, "humano");
+}
+
+/** Um produto que aparece depois da listagem (outro processo publicou) não pode ser revertido pela varredura. */
+async function cenarioPublicadoDuranteOReset(m) {
+  reiniciarLoja([[1, "S1"]]);
+  loja.aoApagarPrimeiro = () => loja.produtos.set(gid(9), { id: gid(9), title: "P9", sku: "S9" });
+  limparEstado();
+  escreverFila([item("S1", "PUBLISHED", 1), item("S9", "PUBLISHED", 9)]);
+  return correr(m, {});
+}
+function verificarPublicadoDuranteOReset(r) {
+  assert.equal(r.estado.state, "failed", r.estado.error);
+  assert.match(r.estado.error, /produto\(s\) na loja/);
+  const s9 = r.fila.find((i) => i.sku === "S9");
+  assert.equal(s9.status, "PUBLISHED", "a loja ainda tem o produto: a fila não se toca");
+  assert.equal(s9.metadata.shopifyProductId, gid(9));
+}
+
+/**
+ * Apagamento falhado com «produto não encontrado» e a loja já vazia. O item fica PUBLISHED com o vínculo (2.8 (7)), e a
+ * verificação final apanha-o. Com a loja vazia é o único caminho que chega à varredura, por isso é ele que prova as
+ * exceções da varredura e o zero PUBLISHED.
+ */
+async function cenarioErroComLojaVazia(m) {
+  reiniciarLoja([[1, "S1"], [2, "S2"]]);
+  loja.erro.add(gid(2));
+  loja.erroEJaSaiu.add(gid(2));
+  limparEstado();
+  escreverFila([item("S1", "PUBLISHED", 1), item("S2", "PUBLISHED", 2)]);
+  return correr(m, {});
+}
+function verificarErroComLojaVazia(r) {
+  assert.equal(r.estado.state, "failed", r.estado.error);
+  const s2 = r.fila.find((i) => i.sku === "S2");
+  assert.equal(s2.status, "PUBLISHED", "um apagamento falhado fica PUBLISHED com o vínculo, mesmo com a loja vazia");
+  assert.equal(s2.metadata.shopifyProductId, gid(2));
+}
+
+/** Contagem sem o campo: não é zero. Com um produto que sobrevive, o reset não pode ficar concluído. */
+async function cenarioContagemSemCampo(m) {
+  reiniciarLoja([[1, "S1"], [2, "S2"]]);
+  loja.naoApaga.add(gid(2));
+  loja.contagemSemCampo = true;
+  limparEstado();
+  escreverFila([item("S1", "PUBLISHED", 1), item("S2", "PUBLISHED", 2)]);
+  return correr(m, {});
+}
+function verificarContagemSemCampo(r) {
+  assert.equal(r.estado.state, "failed", r.estado.error);
+  assert.match(r.estado.error, /não devolveu a contagem/);
+}
+
+/** DBG-181: uma escrita sobre um estado que não se lê recusa-se. O ficheiro cortado fica como está. */
+async function cenarioEscritaSobreIlegivel(m) {
+  limparEstado();
+  fs.mkdirSync(ESTADO_DIR, { recursive: true });
+  const ficheiro = path.join(ESTADO_DIR, `${SHOP.replace(/\//g, "_")}-status.json`);
+  const cortado = '{"jobId":"meio-escrito","state":"dele';
+  fs.writeFileSync(ficheiro, cortado);
+  let erro = null;
+  try {
+    await m.updateShopifyResetProgress(SHOP, { state: "deleting", deleted: 0 });
+  } catch (err) {
+    erro = err;
+  }
+  return { erro, conteudo: fs.readFileSync(ficheiro, "utf8"), cortado };
+}
+function verificarEscritaSobreIlegivel(r) {
+  assert.match(String(r.erro?.message), /ilegível/, "a escrita recusa-se");
+  assert.equal(r.conteudo, r.cortado, "o ficheiro fica como estava, para se decidir à mão");
+}
+
+/** CLI de libertação com o trinco de arranque tomado por outro processo. `copia` troca a CLI por uma cópia mutada. */
+async function cenarioCliContraTrinco(copia = null) {
+  limparEstado();
+  const agora = Date.now();
+  escreverEstado({
+    jobId: "orfao",
+    state: "deleting",
+    deleted: 0,
+    revertedLocal: 0,
+    startedAt: new Date(agora - 40 * 60 * 1000).toISOString(),
+    updatedAt: new Date(agora - 20 * 60 * 1000).toISOString(),
+  });
+  const trinco = await modulo("lib/curation/curationQueueFileLock.server.js");
+  const titular = await trinco.adquirirLockDoFicheiro(job.caminhoDoTrincoDeArranque(SHOP), { prazoMs: 1000 });
+  try {
+    const script = copia ?? path.join(REPO, "scripts", "catalog", "reset-lock-release.js");
+    const saida = spawnSync(process.execPath, [script, "--execute"], { encoding: "utf8", env: process.env, timeout: 60000 });
+    return { saida, estado: await job.readShopifyResetStatus(SHOP) };
+  } finally {
+    await trinco.libertarLockDoFicheiro(titular);
+  }
+}
+
+/** D2 depois de um reset concluído: o arranque seguinte abre uma janela nova e não herda a antiga. */
+function cenarioCompletoNovaJanela() {
+  limparEstado();
+  const antigo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  escreverEstado({
+    jobId: "concluido",
+    state: "completed",
+    deleted: 5,
+    revertedLocal: 5,
+    updatedAt: antigo,
+    startedAt: antigo,
+    finishedAt: antigo,
+    inicioDoPrimeiroArranque: antigo,
+  });
+  return job.initShopifyResetJob(SHOP).then((retomado) => ({ retomado, antigo }));
 }
 
 async function cenarioVerificacao(m) {
@@ -668,6 +827,32 @@ await caso("CLI de libertação: batimento antigo, sem processo vivo, liberta-se
   assert.equal(r.estado.state, "failed");
   assert.equal(r.estado.failureReason, "orphaned");
 });
+await caso("D2 numa tentativa falhada: a decisão humana depois do primeiro arranque ganha ao apagamento da tentativa seguinte", async () => verificarFalhaDepoisDeDecisao(await cenarioFalhaDepoisDeDecisao(reset)));
+await caso("D2 depois de um reset concluído: o arranque seguinte abre uma janela nova", async () => {
+  const { retomado, antigo } = await cenarioCompletoNovaJanela();
+  assert.notEqual(retomado.inicioDoPrimeiroArranque, antigo, "um reset concluído não herda a janela antiga");
+  assert.equal(retomado.retomadoDe, null);
+  assert.equal(retomado.deleted, 0, "um reset concluído não traz contadores");
+});
+await caso("DBG-181: escrita de progresso sobre estado ilegível recusa-se, e o ficheiro fica como estava", async () => verificarEscritaSobreIlegivel(await cenarioEscritaSobreIlegivel(job)));
+await caso("verificação antes da varredura: produto que aparece depois da listagem não tem a fila tocada, e o reset não fica concluído", async () => verificarPublicadoDuranteOReset(await cenarioPublicadoDuranteOReset(reset)));
+await caso("contagem da Shopify sem o campo: não é zero, e o reset não fica concluído", async () => verificarContagemSemCampo(await cenarioContagemSemCampo(reset)));
+await caso("CLI de libertação: com o trinco de arranque ocupado, espera, recusa-se e não escreve", async () => {
+  const r = await cenarioCliContraTrinco();
+  assert.notEqual(r.saida.status, 0, r.saida.stdout + r.saida.stderr);
+  assert.match(r.saida.stdout + r.saida.stderr, /trinco de arranque ocupado/);
+  assert.equal(r.estado.state, "deleting", "o estado fica como estava");
+});
+await caso("apagamento falhado com a loja vazia: o item fica PUBLISHED com o vínculo, e o reset não fica concluído", async () => verificarErroComLojaVazia(await cenarioErroComLojaVazia(reset)));
+await caso("purga: --execute numa loja que não é a de SHOPIFY_SHOP_URL recusa-se antes de tocar em nada", () => {
+  const r = spawnSync(process.execPath, [path.join(REPO, "scripts", "catalog", "shopify-products-purge.js"), "--execute", "--shop", "outra-loja.myshopify.com"], {
+    encoding: "utf8",
+    env: process.env,
+    timeout: 30000,
+  });
+  assert.equal(r.status, 3, r.stdout + r.stderr);
+  assert.match(r.stderr, /Recusado: --execute só corre na loja configurada/);
+});
 await caso("verificação final: produto que sobrevive ao apagamento → reset não fica concluído", async () => verificarVerificacao(await cenarioVerificacao(reset)));
 await caso("reserva da publicação dentro do motor: reserva alheia → recusa, nada apagado", async () => verificarReserva(await cenarioReserva(reset)));
 await caso("dry-run: conta produtos e entradas para PENDING, sem escrever", async () => verificarDryRun(await cenarioDryRun(reset)));
@@ -705,9 +890,9 @@ await caso("purga CLI: dry-run por defeito, recusa com atividade e modo degradad
 
 // ── Mutações: cada correção tem a sua troca, e a suíte tem de a apanhar ──
 // A cópia do módulo é criada fora de mutacaoTemDeFalhar: uma âncora que não existe é erro do teste, não mutação apanhada.
-await caso("mutação M1 (2.8): sem falhas.ids.add, o item sem SKU volta a PENDING", async () => {
+await caso("mutação M1 (2.8): sem falhas.ids.add, o item do apagamento falhado volta a PENDING com a loja vazia", async () => {
   const m = await moduloMutado(SHOPIFY_RESET, "M1", "      falhas.ids.add(product.id);", "      // M1 mutado");
-  await mutacaoTemDeFalhar("M1", async () => verificarT2b(await cenarioT2b(m)));
+  await mutacaoTemDeFalhar("M1", async () => verificarErroComLojaVazia(await cenarioErroComLojaVazia(m)));
 });
 await caso("mutação M2 (2.7): sem recentErrors.push, o erro do produto falhado não chega ao estado", async () => {
   const m = await moduloMutado(
@@ -759,7 +944,7 @@ await caso("mutação M8 (retoma): sem carregar o apagado do job, o reset retoma
 });
 await caso("mutação M9 (verificação final): sem o critério zero na loja e zero PUBLISHED, o reset fica concluído", async () => {
   const m = await moduloMutado(SHOPIFY_RESET, "M9", "  if (restantes !== 0 || publicados !== 0) {", "  if (false) {");
-  await mutacaoTemDeFalhar("M9", async () => verificarVerificacao(await cenarioVerificacao(m)));
+  await mutacaoTemDeFalhar("M9", async () => verificarErroComLojaVazia(await cenarioErroComLojaVazia(m)));
 });
 await caso("mutação M10 (reserva): sem a recusa com reserva alheia, o motor apaga por cima da publicação", async () => {
   const m = await moduloMutado(
@@ -784,7 +969,7 @@ await caso("mutação M12 (D2 na retoma): o arranque da retoma, e não o primeir
   await mutacaoTemDeFalhar("M12", async () => verificarRetomaComDecisao(await cenarioRetomaComDecisao(m)));
 });
 await caso("mutação M13 (D2 na retoma): a retoma não herda o primeiro arranque", async () => {
-  const m = await moduloMutado(SHOPIFY_JOB, "M13", "    const inicioOriginal = retoma ? anterior.inicioDoPrimeiroArranque || anterior.startedAt || inicio : inicio;", "    const inicioOriginal = inicio;");
+  const m = await moduloMutado(SHOPIFY_JOB, "M13", "    const inicioOriginal = herdaJanela ? anterior.inicioDoPrimeiroArranque || anterior.startedAt || inicio : inicio;", "    const inicioOriginal = inicio;");
   await mutacaoTemDeFalhar("M13", async () => verificarRetomaDoArranque(await cenarioRetomaDoArranque(m)));
 });
 await caso("mutação M14 (D2): publicação feita na pausa volta a ser tratada como decisão humana", async () => {
@@ -792,7 +977,7 @@ await caso("mutação M14 (D2): publicação feita na pausa volta a ser tratada 
   await mutacaoTemDeFalhar("M14", async () => verificarRetomaComPublicacaoNaPausa(await cenarioRetomaComPublicacaoNaPausa(m)));
 });
 await caso("mutação M15 (D39): sem o batimento, o reset parado expira", async () => {
-  const m = await moduloMutado(SHOPIFY_JOB, "M15", "    writeShopifyResetStatus(shop, {}).catch(() => {});", "    void shop;");
+  const m = await moduloMutado(SHOPIFY_JOB, "M15", "    pendente = writeShopifyResetStatus(shop, {}).catch(() => {});", "    void shop;");
   await mutacaoTemDeFalhar("M15", async () => {
     const r = await cenarioBatimento(m);
     assert.equal(r.vivoDepois, true);
@@ -805,8 +990,47 @@ await caso("mutação M16 (D39): o motor não liga o batimento (estático: o res
   await mutacaoTemDeFalhar("M16", async () => batimentoLigadoNoMotor(texto.replace(antigo, "  const pararBatimento = () => {};")));
 });
 await caso("mutação M17 (trinco): sem trinco por instante de arranque, dois arranques passam", async () => {
-  const m = await moduloMutado(SHOPIFY_JOB, "M17", "  const trinco = await adquirirLockDoFicheiro(trincoDoArranque(shop), {", "  const trinco = await adquirirLockDoFicheiro(trincoDoArranque(shop) + agora, {");
+  const m = await moduloMutado(SHOPIFY_JOB, "M17", "  return comTrincoDeArranque(shop, async () => {", "  return (async () => {");
   await mutacaoTemDeFalhar("M17", async () => verificarArranqueSimultaneo(await cenarioArranqueSimultaneo(m)));
+});
+await caso("mutação M18 (D2 no arranque): a janela só se herda de uma retoma de estado ativo, e não de um reset falhado", async () => {
+  const m = await moduloMutado(SHOPIFY_JOB, "M18", "    const inicioOriginal = herdaJanela ? anterior.inicioDoPrimeiroArranque || anterior.startedAt || inicio : inicio;", "    const inicioOriginal = retoma ? anterior.inicioDoPrimeiroArranque || anterior.startedAt || inicio : inicio;");
+  await mutacaoTemDeFalhar("M18", async () => verificarFalhaDepoisDeDecisao(await cenarioFalhaDepoisDeDecisao(m)));
+});
+await caso("mutação M19 (DBG-181): a escrita sobre estado ilegível passa, e apaga a janela do D2", async () => {
+  const m = await moduloMutado(SHOPIFY_JOB, "M19", "    if (prev.ilegivel) {\n      throw new Error(\"Estado do reset ilegível: a escrita recusa-se para não apagar a janela do D2.\");\n    }", "    // M19 mutado");
+  await mutacaoTemDeFalhar("M19", async () => verificarEscritaSobreIlegivel(await cenarioEscritaSobreIlegivel(m)));
+});
+await caso("mutação M20 (sweep): sem verificar a loja antes da varredura, a fila de um produto vivo é revertida", async () => {
+  const m = await moduloMutado(SHOPIFY_RESET, "M20", "    await verificarLojaVazia(client);\n", "    // M20 mutado\n");
+  await mutacaoTemDeFalhar("M20", async () => verificarPublicadoDuranteOReset(await cenarioPublicadoDuranteOReset(m)));
+});
+await caso("mutação M21 (contagem): sem o erro de contagem em falta, a loja aparece vazia", async () => {
+  const m = await moduloMutado(SHOPIFY_RESET, "M21", "    throw new Error(\"A Shopify não devolveu a contagem de produtos. Reset parado.\");", "    // M21 mutado");
+  await mutacaoTemDeFalhar("M21", async () => verificarContagemSemCampo(await cenarioContagemSemCampo(m)));
+});
+await caso("mutação M22 (CLI de libertação): sem o trinco de arranque, a CLI escreve por cima de um arranque", async () => {
+  const copia = copiaMutada("scripts/catalog/reset-lock-release.js", "M22", "  return comTrincoDeArranque(SHOP, libertar);", "  return libertar();");
+  try {
+    await mutacaoTemDeFalhar("M22", async () => {
+      const r = await cenarioCliContraTrinco(copia);
+      assert.notEqual(r.saida.status, 0, "com o trinco ocupado, a CLI não pode escrever");
+      assert.equal(r.estado.state, "deleting", "o estado fica como estava");
+    });
+  } finally {
+    fs.rmSync(copia, { force: true });
+  }
+});
+await caso("mutação M23 (purga): sem a recusa de loja diferente, --execute chega ao motor", async () => {
+  const copia = copiaMutada("scripts/catalog/shopify-products-purge.js", "M23", "  if (SHOP !== lojaConfigurada) {", "  if (false) {");
+  try {
+    await mutacaoTemDeFalhar("M23", async () => {
+      const r = spawnSync(process.execPath, [copia, "--execute", "--shop", "outra-loja.myshopify.com"], { encoding: "utf8", env: process.env, timeout: 30000 });
+      assert.equal(r.status, 3, r.stdout + r.stderr);
+    });
+  } finally {
+    fs.rmSync(copia, { force: true });
+  }
 });
 
 if (falhas) {

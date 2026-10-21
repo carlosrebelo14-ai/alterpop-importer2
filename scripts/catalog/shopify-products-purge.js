@@ -55,6 +55,17 @@ async function main() {
     return;
   }
 
+  // A fila é uma só, da loja configurada. Apagar e reverter numa loja diferente (--shop errado, loja vazia) punha PENDING
+  // os PUBLISHED da loja real. Recusa-se antes de tocar em nada. A loja configurada resolve-se como na app
+  // (loadOfflineSessionForShop).
+  const lojaConfigurada = process.env.SHOPIFY_SHOP_URL || process.env.SHOPIFY_STORE || process.env.SHOPIFY_SHOP;
+  if (SHOP !== lojaConfigurada) {
+    console.error(
+      `Recusado: --execute só corre na loja configurada (${lojaConfigurada ?? "não definida"}), e o alvo é ${SHOP}. Nada foi apagado.`
+    );
+    process.exit(3);
+  }
+
   // Modo degradado (Decisão 34): o motor também o verifica antes de cada apagamento. Aqui recusa-se logo.
   const degradado = readDbDegraded();
   if (degradado) {

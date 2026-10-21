@@ -32,6 +32,7 @@ import {
   writeShopifyResetStatus,
   isShopifyResetRunning,
   resetEstaVivo,
+  comTrincoDeArranque,
 } from "../../lib/importer/shopify/shopifyResetJob.server.js";
 import { getDefaultConfig } from "../../lib/importer/config.js";
 
@@ -71,6 +72,14 @@ async function archiveCurrentFile(shop) {
 }
 
 async function main() {
+  return comTrincoDeArranque(SHOP, libertar);
+}
+
+/**
+ * Lê, decide e escreve tudo dentro do trinco de arranque. Sem o trinco, um arranque no mesmo instante podia ser
+ * sobrescrito por failed, com um reset vivo a correr por baixo.
+ */
+async function libertar() {
   console.log(`=== reset-lock-release (${SHOP})${EXECUTE ? "" : " · DRY-RUN"} ===`);
 
   const status = await readShopifyResetStatus(SHOP);
