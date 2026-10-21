@@ -16,7 +16,7 @@ import {
 import { readDbDegraded } from "../../lib/health/dbDegraded.js";
 import { isCatalogIndexingRunning } from "../../lib/importer/catalog/indexingStream.server.js";
 import { atividadeAppEmCurso, marcarAtividadeApp, motivoDeRecusaDoReset } from "../../lib/curation/atividadeApp.js";
-import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
+import { reservarPublicacaoEntreProcessos } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 
 const CONFIRM_WORD = "APAGAR";
 
@@ -121,7 +121,7 @@ export const action = async ({ request }) => {
   // PR 5 (revisão): a reserva e a marca da app nascem no mesmo passo síncrono.
   let reserva = null;
   try {
-    reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+    reserva = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
   } catch (err) {
     console.error(`[shopify-reset] marcação da atividade falhou (${err?.code || "erro"}). Nada foi gravado.`);
     return Response.json(

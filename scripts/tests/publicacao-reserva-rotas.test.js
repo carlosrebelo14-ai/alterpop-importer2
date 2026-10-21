@@ -17,7 +17,9 @@ import { semComentarios } from "./_sem-comentarios.js";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ler = (rel) => semComentarios(fs.readFileSync(path.join(REPO, rel), "utf8"));
-const RESERVA = "reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: \"publicacao\" }) });";
+// DBG-142: a reserva toma a memória e depois o trinco de ficheiro. O await da própria linha é a aquisição do trinco.
+// A regra que vale é a de não haver await depois da reserva e antes do arranque.
+const RESERVA = "reserva = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: \"publicacao\" }) });";
 
 let falhas = 0;
 function check(nome, fn) {
@@ -35,10 +37,10 @@ console.log("DBG-105 — reserva de publicação nas rotas e no motor");
 check("(R1) rota manual: reserva depois do gate de estado e antes de initShopifySyncJob, sem await pelo meio", () => {
   const manual = ler("app/routes/api.shopify-sync.jsx");
   const reserva = manual.indexOf(RESERVA);
-  assert.ok(reserva > 0, "a rota manual tem de reservar com a marca da app: reserva = tentarReservarPublicacao({ marcar: ... })");
+  assert.ok(reserva > 0, "a rota manual tem de reservar com a marca da app: reserva = await reservarPublicacaoEntreProcessos({ marcar: ... })");
   const init = manual.indexOf("await initShopifySyncJob(session.shop");
   assert.ok(init > reserva, "a reserva fica antes do initShopifySyncJob");
-  assert.doesNotMatch(manual.slice(reserva, init), /await/, "sem await entre a reserva e o arranque");
+  assert.doesNotMatch(manual.slice(reserva + RESERVA.length, init), /await/, "sem await entre a reserva e o arranque");
   assert.ok(
     manual.includes("startApprovedShopifySyncInBackground(session, { skus: approvedSkus, reserva });"),
     "a reserva segue para o motor em background"
@@ -51,13 +53,13 @@ check("(F) force=1 não salta a reserva: a reserva está fora do bloco do gate d
   assert.ok(gate, "o gate de estado continua a ser if (!force && ...), com bloco de retorno");
   const reserva = manual.indexOf(RESERVA);
   assert.ok(reserva >= gate.index + gate[0].length, "a reserva fica fora do gate, por isso force não a salta");
-  assert.doesNotMatch(manual, /force\s*\?[^;]*tentarReservarPublicacao/, "nenhuma reserva condicionada por force");
+  assert.doesNotMatch(manual, /force\s*\?[^;]*reservarPublicacaoEntreProcessos/, "nenhuma reserva condicionada por force");
 });
 
 check("(R2) ciclo: reserva logo antes da chamada a runApprovedShopifySync, sem await pelo meio", () => {
   const ciclo = ler("app/routes/api.trigger-sync.jsx");
   const reserva = ciclo.indexOf(RESERVA);
-  assert.ok(reserva > 0, "o ciclo tem de reservar com a marca da app: reserva = tentarReservarPublicacao({ marcar: ... })");
+  assert.ok(reserva > 0, "o ciclo tem de reservar com a marca da app: reserva = await reservarPublicacaoEntreProcessos({ marcar: ... })");
   const chamada = ciclo.indexOf("await runApprovedShopifySync(session, { skipInit: true, reserva });");
   assert.ok(chamada > reserva, "a reserva fica antes da chamada, e a chamada leva a reserva");
   // PR 5 (revisão): o ramo de salto pode esperar pela marcação da erosão. A regra vale para o caminho de publicação:
@@ -77,7 +79,7 @@ check("(R2) ciclo: reserva logo antes da chamada a runApprovedShopifySync, sem a
 check("(E) motor: usa a reserva da rota, ou reserva ele próprio, e liberta-a sempre", () => {
   const motor = ler("lib/importer/shopify/shopifyApprovedSync.server.js");
   assert.ok(
-    motor.includes("const reserva = opts.reserva ?? tentarReservarPublicacao();"),
+    motor.includes("const reserva = opts.reserva ?? (await reservarPublicacaoEntreProcessos());"),
     "o motor usa opts.reserva, ou reserva quando não há"
   );
   assert.ok(motor.includes("reserva.libertar();"), "a reserva é libertada no finally");

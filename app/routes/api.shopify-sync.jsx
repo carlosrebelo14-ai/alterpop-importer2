@@ -7,7 +7,7 @@ import {
   failShopifySyncJob,
 } from "../../lib/importer/shopify/shopifySyncJob.server.js";
 import { startApprovedShopifySyncInBackground } from "../../lib/importer/shopify/shopifyApprovedSync.server.js";
-import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
+import { reservarPublicacaoEntreProcessos } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import { marcarAtividadeApp } from "../../lib/curation/atividadeApp.js";
 import { listApprovedSkusForShopifySync, loadCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { resolveSyncSkus } from "../../lib/importer/shopify/resolveSyncSkus.js";
@@ -222,7 +222,7 @@ export const action = async ({ request }) => {
   // PR 5 (revisão): a reserva e a marca da app nascem no mesmo passo síncrono. Um script que arranque depois já a vê.
   let reserva = null;
   try {
-    reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+    reserva = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
   } catch (err) {
     console.error(`[shopify-sync] marcação da atividade falhou (${err?.code || "erro"}). Nada foi gravado.`);
     return Response.json(
