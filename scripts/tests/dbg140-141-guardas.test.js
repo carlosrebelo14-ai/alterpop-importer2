@@ -152,9 +152,9 @@ const ROTA_PUBLICACAO = "app/routes/api.shopify-sync.jsx";
 function verificarRotaPublicacaoManual(texto) {
   const decisao = posicao(texto, "const motivoIndexacao = motivoDeRecusaDaPublicacaoManual({", ROTA_PUBLICACAO);
   const recusa = posicao(texto, "if (motivoIndexacao) {", ROTA_PUBLICACAO);
-  const reserva = posicao(texto, "reserva = tentarReservarPublicacao({", ROTA_PUBLICACAO);
+  const reserva = posicao(texto, "reserva = await reservarPublicacaoEntreProcessos({", ROTA_PUBLICACAO);
   assert.ok(decisao < recusa && recusa < reserva, "a decisão de indexação tem de ser tomada e aplicada antes da reserva");
-  posicao(texto, 'tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) })', ROTA_PUBLICACAO);
+  posicao(texto, 'reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) })', ROTA_PUBLICACAO);
   assert.match(
     texto.slice(recusa, reserva),
     /return Response\.json\(\{ ok: false, error: motivoIndexacao \}, \{ status: 409 \}\);/,
@@ -164,7 +164,7 @@ function verificarRotaPublicacaoManual(texto) {
 
 /** A decisão é repetida depois da reserva, com return 409 e libertação da reserva. */
 function verificarRotaPublicacaoManualDepoisDaReserva(texto) {
-  const reserva = posicao(texto, "reserva = tentarReservarPublicacao({", ROTA_PUBLICACAO);
+  const reserva = posicao(texto, "reserva = await reservarPublicacaoEntreProcessos({", ROTA_PUBLICACAO);
   const decisao = posicao(texto, "const motivoDepoisDaReserva = motivoDeRecusaDaPublicacaoManual({", ROTA_PUBLICACAO);
   const recusa = posicao(texto, "if (motivoDepoisDaReserva) {", ROTA_PUBLICACAO);
   assert.ok(reserva < decisao && decisao < recusa, "a confirmação tem de vir depois da reserva");
@@ -218,7 +218,7 @@ function verificarCicloPublicacao(texto) {
   const sync = posicao(texto, "if (await isShopifySyncRunning(shop)) {", ROTA_CICLO);
   assert.ok(pos < sync, "o POST tem de recusar com reset ou publicação antes do IIFE");
   assert.match(texto.slice(pos, sync), /reason: "publish_or_reset_running" \},\s*\{ status: 409/, "a recusa tem de ser 409 com causa");
-  const marca = posicao(texto, 'reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', ROTA_CICLO);
+  const marca = posicao(texto, 'reserva = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', ROTA_CICLO);
   const decisao = posicao(texto, "decisao = decisaoDaPublicacaoManual({", ROTA_CICLO);
   assert.ok(marca < decisao, "a confirmação da indexação tem de vir depois da reserva com marca");
 }
@@ -265,10 +265,10 @@ function verificarPainel(texto) {
 
 const ROTA_RESET = "app/routes/api.shopify-reset.jsx";
 function verificarRotaReset(texto) {
-  const reserva = posicao(texto, "reserva = tentarReservarPublicacao({", ROTA_RESET);
+  const reserva = posicao(texto, "reserva = await reservarPublicacaoEntreProcessos({", ROTA_RESET);
   const arranque = posicao(texto, "startShopifyCatalogResetInBackground(session, { reserva });", ROTA_RESET);
   assert.ok(reserva < arranque, "o reset tem de tomar a reserva antes de arrancar o job");
-  posicao(texto, 'tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) })', ROTA_RESET);
+  posicao(texto, 'reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) })', ROTA_RESET);
   const confirmacao = posicao(texto, "motivoDepoisDaReserva = motivoDeRecusaDoReset({", ROTA_RESET);
   const aguarda = posicao(texto, "await loadOfflineSessionForShop(session.shop);", ROTA_RESET);
   assert.ok(reserva < confirmacao && confirmacao < aguarda, "o reset confirma a indexação depois de tomar a reserva");
@@ -277,7 +277,7 @@ function verificarRotaReset(texto) {
 
 /** Cada caminho de erro entre a reserva e o arranque do job tem de libertar a reserva antes de sair. */
 function verificarLibertacaoNosCaminhosDeErro(texto) {
-  const inicio = posicao(texto, "reserva = tentarReservarPublicacao({", ROTA_RESET);
+  const inicio = posicao(texto, "reserva = await reservarPublicacaoEntreProcessos({", ROTA_RESET);
   const arranque = posicao(texto, "startShopifyCatalogResetInBackground(session, { reserva });", ROTA_RESET);
   const caminhos = [
     "reserva.libertar();\n      return Response.json({ ok: false, error: motivoDepoisDaReserva }",
@@ -466,7 +466,7 @@ await caso("(e) reset em background: a reserva sai no fim do job", () => {
 
 await caso("mutação: o reset deixa de tomar a reserva (o caso (e) da rota tem de ficar vermelho)", () => {
   const texto = ler(ROTA_RESET);
-  const mutado = trocaUnica(texto, "reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: \"publicacao\" }) });", "reserva = { libertar() {} };");
+  const mutado = trocaUnica(texto, "reserva = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: \"publicacao\" }) });", "reserva = { libertar() {} };");
   assert.throws(() => verificarRotaReset(mutado));
 });
 
@@ -898,12 +898,12 @@ await caso("mutação: o ciclo confirma a indexação sem repetir a decisão dep
 });
 
 await caso("mutação: o ciclo reserva sem marca da app (o caso (q) tem de ficar vermelho)", () => {
-  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), 'reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', "reserva = tentarReservarPublicacao();");
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), 'reserva = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', "reserva = tentarReservarPublicacao();");
   assert.throws(() => verificarCicloPublicacao(mutado));
 });
 
 await caso("mutação: a publicação manual reserva sem marca da app (o caso (d) da rota tem de ficar vermelho)", () => {
-  const mutado = trocaUnica(ler(ROTA_PUBLICACAO), 'reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', "reserva = tentarReservarPublicacao();");
+  const mutado = trocaUnica(ler(ROTA_PUBLICACAO), 'reserva = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });', "reserva = tentarReservarPublicacao();");
   assert.throws(() => verificarRotaPublicacaoManual(mutado));
 });
 
