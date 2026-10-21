@@ -457,3 +457,20 @@ e) O PR 6 (DBG-142) sai do 2b-3. O `scripts/catalog/run-approved-sync.js` fica v
 
 **Risco aberto:** as mortes de hoje param todas perto da linha 24540 do CSV. Se a máquina de 1024 MB morrer na mesma linha, a memória não é a causa única. Nesse caso o arquiteto decide antes de qualquer novo deploy.
 **Não verificado localmente:** a flag `--vm-memory` de `flyctl machine update` vem de fontes da comunidade Fly. Não há `flyctl` neste ambiente, por isso a primeira execução é a verificação. Se a flag não existir, o flyctl recusa antes de mudar a máquina, e a tarefa falha com código 1.
+
+## Decisão 42 — reset sem republicação em lotes; o Carlos escolhe e publica pelo painel
+
+**Data:** 21/10/2026
+**Estado:** decidida pelo Carlos a 21/10. Complementa a extensão de 21/10 que dá ao reset o trinco de publicação (PR #131).
+**Origem:** o plano previa republicar em lotes os itens aprovados depois do reset. O Carlos decidiu que não há republicação em lotes.
+
+**Decisão:**
+
+1. Depois do reset não há republicação em lotes. O reset termina na verificação final: zero produtos da app na loja e zero PUBLISHED na fila. O runbook não tem passo de republicação.
+2. Os itens que estavam publicados voltam a PENDING, com origem `reset` e motivo "apagado no admin". O reset nunca os põe em APPROVED. O Carlos aprova de novo pelo painel, um a um. Nenhum volta a APPROVED sozinho.
+3. Uma decisão humana tomada durante o reset mantém o seu estado (D2). O reset não a reescreve.
+4. A seleção dos produtos é do Carlos. Nenhum passo prepara listas nem seleções.
+5. O dry-run do reset mostra o estado final da fila (`estadoFinal`, contado sobre a mesma cópia que a execução reverteria). Essa saída é a verificação antes de qualquer `--execute`.
+6. O DBG-193 (passos do ciclo que escrevem na Shopify depois da publicação) é gate do reset: o reset só corre em produção com o DBG-193 verificado em produção.
+
+**Estado final esperado:** a preencher com a saída do dry-run em produção, aprovada pelo arquiteto antes do `--execute`. A saída tem a forma `PENDING: n`, `SYNC_ERROR: m`, e `APPROVED` e `REJECTED` só por decisão humana já existente. Sem valor de produção não há número a registar.

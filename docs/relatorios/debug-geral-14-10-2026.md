@@ -492,6 +492,7 @@ Não bloqueantes, para DBG:
 - DBG-196, Baixa, rotas em `reserva.libertar()`. A chamada sem `await` deixa o trinco existir durante um instante depois da reserva em memória sair, e um pedido nesse instante recebe 409 falso. Não admite duas publicações.
 - DBG-197, Média, pré-existente em `main`. O arranque da indexação na app não vê a publicação de um script (CLI). A indexação pode arrancar enquanto `run-approved-sync` publica.
 - DBG-198, Baixa, testes. `M29` não aplica mutação ao código. A verificação estática de rotas aceita a chamada sem `await`. Nenhum caso mede que a recusa é imediata. Os casos não têm `finally` à volta da reserva. O trinco de teste depende do uptime da máquina. Não há casos dinâmicos para as rotas. A guarda de `skipped` em `verify-post-ai-removal.js` não tem teste. As mutações são escritas dentro da árvore do código.
+- DBG-199, Baixa, `curationQueueFileLock.server.js` (`comTomadaDoObsoleto`). A tomada de um obsoleto com mais de 10 s é removida pelo `stat` feito antes do `rmdir`. Se, entre os dois, o dono antigo sai e outro processo cria uma tomada nova, o `rmdir` apaga a tomada nova, e dois processos podem entrar na remoção do obsoleto. Exige uma tomada parada mais de 10 s, por isso é raro. Correção possível: renomear a tomada obsoleta para um nome único antes de a apagar, ou gravar um id dentro dela e confirmá-lo antes do `rmdir`.
 
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._
