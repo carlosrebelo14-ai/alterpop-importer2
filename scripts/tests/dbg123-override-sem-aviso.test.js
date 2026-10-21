@@ -78,6 +78,11 @@ await caso("(H3) outra causa com override gravado: diz que o override ficou grav
   assert.ok(!motivo.includes("Repetir"), "a causa não é de fila, e não manda repetir a linha");
 });
 
+await caso("(H5) timeout da fila sem override gravado: a mensagem do erro, sem afirmar uma escrita que não houve", () => {
+  const err = Object.assign(new Error("[fila] espera esgotada. Nada foi escrito."), { code: "CURATION_QUEUE_LOCK_TIMEOUT" });
+  assert.equal(motivoDaLinhaRecusada({ err, gravou: false }), "[fila] espera esgotada. Nada foi escrito.");
+});
+
 await caso("(H4) erro sem mensagem com override gravado: continua a dizer o que ficou gravado", () => {
   const motivo = motivoDaLinhaRecusada({ err: {}, gravou: true });
   assert.ok(motivo.includes("o override foi gravado, a aprovação ou a rejeição não"), motivo);
@@ -86,7 +91,11 @@ await caso("(H4) erro sem mensagem com override gravado: continua a dizer o que 
 
 await caso("(R1) a rota passa o motivo pelo helper, com o estado do override", () => {
   const codigo = semComentarios(fs.readFileSync(path.join(REPO, ROTA), "utf8"));
-  assert.match(codigo, /motivoDaLinhaRecusada\(\{ err, gravou \}\)/, "a linha recusada usa o motivo com o estado do override");
+  assert.match(
+    codigo,
+    /rejected\.push\(\{ line: lineNo, sku, reason: motivoDaLinhaRecusada\(\{ err, gravou \}\) \}\);/,
+    "o motivo devolvido pelo helper chega à linha recusada"
+  );
   assert.doesNotMatch(codigo, /filaOcupada && gravou/, "a condição antiga, só para o timeout, saiu da rota");
 });
 

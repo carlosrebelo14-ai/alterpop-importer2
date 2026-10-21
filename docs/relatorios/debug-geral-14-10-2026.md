@@ -547,8 +547,11 @@ Corrigido. O motivo da linha passa pelo helper `motivoDaLinhaRecusada`, em `lib/
 Fora deste PR, registado como DBG.
 
 - DBG-207, Baixa. A linha recusada deixa o override gravado. Reverter o override numa falha de aprovação é outra mudança de comportamento, e fica como decisão do arquiteto.
+- DBG-208, Baixa, `app/routes/api.products.import-edits.jsx:206-221`. Nenhuma suíte fixa a ordem entre a gravação do override e a aprovação ou a rejeição. Com a ordem trocada, a linha pode dizer só o erro do override quando a aprovação já ficou feita. Não é introduzida por esta alteração, e o código atual não tem dano. Por fazer.
 
 O teste fica em `scripts/tests/dbg123-override-sem-aviso.test.js`, incluído em `test:sync-safety`, com mutações M43 e M44. O teste S2 de `curation-fila-prazo-rota.test.js` passa a verificar o helper, em vez da condição antiga.
+
+Revisão de Decisão 39, ronda 1, com quatro lentes e verificação de cada achado: cinco achados confirmados, todos de teste ou de nome, nenhum bloqueante. Corrigidos neste PR: o R1 passa a verificar que o motivo do helper chega ao `rejected.push`; o caso H5 cobre o timeout sem override gravado; o S2 passa a verificar a frase da outra causa e tem o nome do caso atualizado. Fica como DBG-208 a ordem entre override e aprovação, que nenhuma suíte fixa.
 
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._

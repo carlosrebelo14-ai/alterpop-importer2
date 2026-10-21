@@ -293,8 +293,12 @@ function casoImportEditsDizOverrideGravado() {
   assert.match(codigo, /setManualOverride\(sku, overrides[^\n]*\)\);\s*\n\s*gravou = true;/, "gravou = true vem logo depois do await do override");
   // DBG-123: o motivo passa pelo helper, que trata qualquer causa com o override já gravado, e não só o timeout.
   assert.match(codigo, /motivoDaLinhaRecusada\(\{ err, gravou \}\)/, "a linha recusada usa o motivo com o estado do override");
-  const helper = fs.readFileSync(path.join(REPO, "lib/curation/motivoLinhaEdicao.js"), "utf8");
-  assert.ok(helper.includes("o override foi gravado, a aprovação ou a rejeição não"), "a mensagem diz o que ficou gravado");
+  const helper = semComentarios(fs.readFileSync(path.join(REPO, "lib/curation/motivoLinhaEdicao.js"), "utf8"));
+  assert.match(
+    helper,
+    /return `o override foi gravado, a aprovação ou a rejeição não \(\$\{mensagem\}\)\.`;/,
+    "a outra causa diz o que ficou gravado e traz a causa"
+  );
 }
 
 // DBG-115: a rota da purga responde 503 em modo degradado, como approve e reject.
@@ -328,7 +332,7 @@ async function main() {
   await caso("S1 rotas de escrita do painel usam comPrazoDeRota e não têm chamadas nuas", casoRotasEmbrulhamEscritas);
   await caso("R1 recuperação com timeout de lock não grava DB_DEGRADED e não reescreve a fila", casoRecuperacaoNaoDegradaComTimeout);
   await caso("R2 bulk e undo traduzem o timeout para 503 fila ocupada", casoRotasTraduzemTimeoutPara503);
-  await caso("S2 import-edits: timeout depois do override diz que o override foi gravado (DBG-110)", casoImportEditsDizOverrideGravado);
+  await caso("S2 import-edits: override gravado diz-se na linha recusada, para o timeout e para outras causas (DBG-110, DBG-123)", casoImportEditsDizOverrideGravado);
   await caso("S3 rota da purga: DB_DEGRADED responde 503 (DBG-115)", casoElitePurgeRotaMapeiaDbDegraded);
   await caso("S4 rota da purga: dry-run lê a fila sem efeitos (DBG-125)", casoElitePurgeRotaLeFilaSemEfeitos);
 
