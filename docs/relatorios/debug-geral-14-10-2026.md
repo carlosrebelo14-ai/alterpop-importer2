@@ -477,5 +477,21 @@ Corrigidos também, por dano à fila ou à loja, com a mudança deste PR: a varr
 
 Não bloqueantes: DBG-189 a DBG-192, e DBG-180 agravado pelo batimento.
 
+### Revisão inicial do 2c-2, DBG-142 (21/10/2026)
+
+Lente sobre o diff do trinco de publicação entre processos, com refutação dos candidatos a bloqueante. Dois bloqueantes, ambos no módulo de trinco, corrigidos neste ciclo:
+
+- Remoção de um trinco obsoleto sem comparar o dono no momento do `unlink`. Dois processos podiam apagar o trinco um do outro. Reproduzido: 55 de 120 iterações com dois titulares no módulo original, 0 de 120 no corrigido. A remoção passa a correr sob uma tomada `<lock>.tomada` (mkdir atómico), com releitura e revalidação do obsoleto antes do `unlink`.
+- A renovação do trinco engole erros, e a publicação não confirmava a posse antes de escrever na Shopify. A reserva passa a expor `aindaTem()`, e o motor confirma-a antes de cada item. Se a posse se perdeu, a publicação para com erro.
+
+Não bloqueantes, para DBG:
+
+- DBG-193, Média, `app/routes/api.trigger-sync.jsx:332`. Os passos do ciclo depois da publicação (stock, franquias, novidades, drift, coleções) escrevem na Shopify sem reserva nem marcador. Um reset pode correr em paralelo com eles.
+- DBG-194, Baixa, `shopifyApprovedSync.server.js:160`. Uma publicação presa mantém o trinco para sempre, e os scripts ficam recusados até reiniciar a máquina. É a decisão DBG-149, com efeito novo nos scripts.
+- DBG-195, Baixa, `curationQueueFileLock.server.js:157`. Uma falha no `close()` depois de escrever o trinco deixa o ficheiro com um pid vivo e sem renovação. As tentativas seguintes são recusadas até o trinco expirar.
+- DBG-196, Baixa, rotas em `reserva.libertar()`. A chamada sem `await` deixa o trinco existir durante um instante depois da reserva em memória sair, e um pedido nesse instante recebe 409 falso. Não admite duas publicações.
+- DBG-197, Média, pré-existente em `main`. O arranque da indexação na app não vê a publicação de um script (CLI). A indexação pode arrancar enquanto `run-approved-sync` publica.
+- DBG-198, Baixa, testes. `M29` não aplica mutação ao código. A verificação estática de rotas aceita a chamada sem `await`. Nenhum caso mede que a recusa é imediata. Os casos não têm `finally` à volta da reserva. O trinco de teste depende do uptime da máquina. Não há casos dinâmicos para as rotas. A guarda de `skipped` em `verify-post-ai-removal.js` não tem teste. As mutações são escritas dentro da árvore do código.
+
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._

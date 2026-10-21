@@ -193,6 +193,104 @@ await caso("mutação M29 (DBG-142): uma rota volta à reserva só em memória",
   });
 });
 
+/** Trinco obsoleto (titular morto) num caminho próprio do teste. */
+function escreverTrincoObsoleto(caminho) {
+  fs.writeFileSync(
+    caminho,
+    JSON.stringify({ pid: 2147483000, em: "2020-01-01T00:00:00.000Z", token: "titular-morto" })
+  );
+}
+
+await caso("DBG-142 (lente de delta): com a tomada do obsoleto ocupada, o trinco obsoleto não se remove", async () => {
+  const caminho = path.join(process.env.CURATION_DATA_DIR, "obsoleto-tomada.lock");
+  fs.rmSync(caminho, { force: true });
+  fs.rmSync(`${caminho}.tomada`, { recursive: true, force: true });
+  escreverTrincoObsoleto(caminho);
+  fs.mkdirSync(`${caminho}.tomada`);
+  try {
+    await assert.rejects(trinco.adquirirLockDoFicheiro(caminho, { prazoMs: 0 }), trinco.CurationQueueLockError);
+    assert.ok(fs.existsSync(caminho), "com outro processo a tomar o obsoleto, este não o apaga");
+  } finally {
+    fs.rmSync(`${caminho}.tomada`, { recursive: true, force: true });
+  }
+  const titular = await trinco.adquirirLockDoFicheiro(caminho, { prazoMs: 0 });
+  assert.ok(titular, "sem tomada, o obsoleto remove-se e o trinco toma-se");
+  await trinco.libertarLockDoFicheiro(titular);
+});
+
+await caso("mutação M30 (DBG-142): sem a tomada do obsoleto, o trinco obsoleto é removido por cima de outro processo", async () => {
+  const copia = copiaMutada("lib/curation/curationQueueFileLock.server.js", "M30", "  const resultado = await comTomadaDoObsoleto(lockPath, async () => {", "  const resultado = await ((_p, tarefa) => tarefa())(lockPath, async () => {");
+  const caminho = path.join(process.env.CURATION_DATA_DIR, "obsoleto-mutacao.lock");
+  try {
+    const m = await import(pathToFileURL(copia).href);
+    fs.rmSync(caminho, { force: true });
+    fs.rmSync(`${caminho}.tomada`, { recursive: true, force: true });
+    escreverTrincoObsoleto(caminho);
+    fs.mkdirSync(`${caminho}.tomada`);
+    try {
+      await mutacaoTemDeFalhar("M30", async () => {
+        const titular = await m.adquirirLockDoFicheiro(caminho, { prazoMs: 0 }).catch(() => null);
+        if (titular) await m.libertarLockDoFicheiro(titular);
+        assert.equal(titular, null, "com outro processo a tomar o obsoleto, este não entra");
+      });
+    } finally {
+      fs.rmSync(`${caminho}.tomada`, { recursive: true, force: true });
+      fs.rmSync(caminho, { force: true });
+    }
+  } finally {
+    fs.rmSync(copia, { force: true });
+  }
+});
+
+await caso("DBG-142 (lente de delta): a reserva deixa de ser confirmada quando outro processo toma o trinco", async () => {
+  const caminho = pub.caminhoDoTrincoDePublicacao();
+  fs.rmSync(caminho, { force: true });
+  const reserva = await pub.reservarPublicacaoEntreProcessos();
+  assert.ok(reserva, "livre, a reserva toma-se");
+  assert.equal(await reserva.aindaTem(), true, "com o trinco deste processo, a posse confirma-se");
+  fs.writeFileSync(caminho, JSON.stringify({ pid: process.pid, em: new Date().toISOString(), token: "outro-titular" }));
+  assert.equal(await reserva.aindaTem(), false, "perdido o trinco, a publicação não o confirma");
+  await reserva.libertar();
+  assert.ok(fs.existsSync(caminho), "a libertação não apaga o trinco de outro titular");
+  fs.rmSync(caminho, { force: true });
+});
+
+await caso("mutação M31 (DBG-142): a posse dá sempre por confirmada, e a publicação não para quando perde o trinco", async () => {
+  const copia = copiaMutada(PUBLICACAO, "M31", "    aindaTem: () => titularAindaTemLock(trinco),", "    aindaTem: async () => true,");
+  try {
+    const m = await import(pathToFileURL(copia).href);
+    const caminho = pub.caminhoDoTrincoDePublicacao();
+    fs.rmSync(caminho, { force: true });
+    const reserva = await m.reservarPublicacaoEntreProcessos();
+    fs.writeFileSync(caminho, JSON.stringify({ pid: process.pid, em: new Date().toISOString(), token: "outro-titular" }));
+    try {
+      await mutacaoTemDeFalhar("M31", async () => {
+        assert.equal(await reserva.aindaTem(), false, "perdido o trinco, a publicação não o confirma");
+      });
+    } finally {
+      await reserva.libertar();
+      fs.rmSync(caminho, { force: true });
+    }
+  } finally {
+    fs.rmSync(copia, { force: true });
+  }
+});
+
+await caso("DBG-142 (lente de delta): o motor confirma a posse antes de cada item, e para com erro", () => {
+  const texto = fs.readFileSync(path.join(REPO, "lib/importer/shopify/shopifyApprovedSync.server.js"), "utf8");
+  assert.match(texto, /if \(opts\.reserva\?\.aindaTem && !\(await opts\.reserva\.aindaTem\(\)\)\) \{\n\s+throw new Error\("Trinco de publicação perdido/);
+});
+
+await caso("mutação M32 (DBG-142): o motor não confirma a posse antes de cada item", async () => {
+  const texto = fs.readFileSync(path.join(REPO, "lib/importer/shopify/shopifyApprovedSync.server.js"), "utf8");
+  const antigo = "        if (opts.reserva?.aindaTem && !(await opts.reserva.aindaTem())) {";
+  assert.equal(texto.split(antigo).length - 1, 1, "M32: a âncora tem de existir uma vez");
+  const mutado = texto.replace(antigo, "        if (false) {");
+  await mutacaoTemDeFalhar("M32", async () => {
+    assert.match(mutado, /if \(opts\.reserva\?\.aindaTem && !\(await opts\.reserva\.aindaTem\(\)\)\) \{/);
+  });
+});
+
 if (falhas) {
   console.error(`\npublicacao-trinco-entre-processos: ${falhas} verificação(ões) falharam`);
   process.exit(1);
