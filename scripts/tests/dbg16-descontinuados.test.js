@@ -3,7 +3,7 @@
 /**
  * DBG-16. Publicado que sai do feed é despublicado (DRAFT) e aparece no painel com substitutos. Nada é publicado
  * sem o Carlos.
- *   (P1) classificação: 2 ciclos seguidos sem aparecer, guarda de 5% de ausentes, ignorados e já despublicados fora.
+ *   (P1) classificação: 3 ciclos seguidos sem aparecer (Decisão 44), guarda de 5% de ausentes, ignorados e já despublicados fora.
  *   (P2) substitutos: mesma franquia e formato, preço a mais ou menos 30%, com stock, sem entrada na fila, até 3.
  *   (S1) despublicação: productUpdate com status DRAFT, e erro quando a Shopify não confirma.
  *   (S2) despublicação em lote: para com o trinco perdido, não aborta por um produto que falha, e marca só os que saem.
@@ -14,7 +14,7 @@
  *   (V2) um publicado despublicado (DRAFT) não volta a ACTIVE quando o SKU reaparece no feed.
  *   (V3) a despublicação não conta como feita se a fila já não tiver o item.
  *   (V4) "Usar este" põe o substituto como PENDING, fixado por decisão humana, e não o põe duas vezes.
- * Mutações: M50 o limiar de 2 ciclos deixa de contar, M51 a guarda de 5% sai, M52 a faixa de preço sai, M53 os SKU
+ * Mutações: M50 o limiar de 3 ciclos deixa de contar, M51 a guarda de 5% sai, M52 a faixa de preço sai, M53 os SKU
  * ocupados deixam de contar, M54 o script executa sem --ok, M55 a despublicação continua com o trinco perdido,
  * M56 o substituto entra sem statusChangedAt, M57 o gatekeeper volta a dar ACTIVE a um despublicado.
  * Uso: node scripts/tests/dbg16-descontinuados.test.js
@@ -122,14 +122,14 @@ const todos = (n) => Array.from({ length: n }, (_, i) => `P${i}`);
 /** Publicados que continuam no feed: ficam de fora da conta e mantêm a fração de ausentes abaixo de 5%. */
 const presentesExtra = (n) => Array.from({ length: n }, (_, i) => publicado(`K${i}`));
 
-await caso("(P1) dois ciclos seguidos sem aparecer entram, um ciclo não", () => {
+await caso("(P1) três ciclos seguidos sem aparecer entram, dois ciclos não", () => {
   const extras = presentesExtra(98);
   const items = [publicado("A"), publicado("B"), ...extras];
   const r = classificarPublicadosAusentes({
     items,
     rastreio: rastreio([
-      ["A", { missingCycles: 2, lastSeenAt: "2026-10-18T10:00:00Z" }],
-      ["B", { missingCycles: 1, lastSeenAt: "2026-10-19T10:00:00Z" }],
+      ["A", { missingCycles: 3, lastSeenAt: "2026-10-18T10:00:00Z" }],
+      ["B", { missingCycles: 2, lastSeenAt: "2026-10-19T10:00:00Z" }],
       ...extras.map((i) => [i.sku, { missingCycles: 0, lastSeenAt: null }]),
     ]),
     presentes: new Set(extras.map((i) => i.sku)),
@@ -284,6 +284,12 @@ await caso("(R3) painel: a secção chama a rota, com Usar este e Ignorar", () =
   assert.ok(texto.includes("Usar este") && texto.includes("Ignorar"), "os dois botões existem");
 });
 
+await caso("(R5) Decisão 44: o input do productUpdate na despublicação é só { id, status: \"DRAFT\" }", () => {
+  const texto = ler(DESPUBLICACAO);
+  assert.match(texto, /client\.graphql\(PRODUCT_DRAFT, \{ input: \{ id: productId, status: "DRAFT" \} \}\)/, "o input tem só id e status");
+  assert.match(texto, /mutation DespublicarDescontinuado\(\$input: ProductInput!\)/, "a mutação é a de DRAFT");
+});
+
 await caso("(R4) o modo remoto da fila conhece as três escritas novas", () => {
   const texto = ler("lib/curation/curationQueue.server.js");
   assert.match(texto, /ESCRITAS_REMOTAS = \{[\s\S]*?marcarDescontinuadoDespublicado,[\s\S]*?marcarDescontinuadoIgnorado,[\s\S]*?adicionarSubstitutoPendente,/);
@@ -291,7 +297,7 @@ await caso("(R4) o modo remoto da fila conhece as três escritas novas", () => {
 
 // ---------- mutações ----------
 
-await caso("mutação M50 (DBG-16): o limiar de dois ciclos deixa de contar", async () => {
+await caso("mutação M50 (DBG-16): o limiar de três ciclos deixa de contar", async () => {
   const copia = copiaMutada(PURO, "M50", ".filter((item) => (rastreio.get(item.sku)?.missingCycles ?? 0) >= ciclos)", "");
   try {
     const m = await import(pathToFileURL(copia).href);
@@ -407,6 +413,12 @@ await caso("mutação M57 (DBG-16): o gatekeeper volta a dar ACTIVE a um despubl
   } finally {
     fs.rmSync(copia, { force: true });
   }
+});
+
+await caso("mutação M58 (DBG-16, Decisão 44): acrescentar um campo ao input do productUpdate fica vermelho", async () => {
+  const texto = ler(DESPUBLICACAO);
+  const mutado = trocaUma(texto, "M58", '{ input: { id: productId, status: "DRAFT" } }', '{ input: { id: productId, status: "DRAFT", title: productId } }');
+  assert.throws(() => assert.match(mutado, /client\.graphql\(PRODUCT_DRAFT, \{ input: \{ id: productId, status: "DRAFT" \} \}\)/, "o input tem só id e status"));
 });
 
 if (falhas) {

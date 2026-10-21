@@ -487,3 +487,13 @@ e) O PR 6 (DBG-142) sai do 2b-3. O `scripts/catalog/run-approved-sync.js` fica v
 2. **b)** O veto ao `scripts/catalog/run-approved-sync.js` levanta-se só com o DBG-142 verificado em produção e o DBG-197 fechado.
 3. **c)** O DBG-193 entra no 2c, antes do DBG-16. É gate do reset: o reset só corre em produção com o DBG-193 verificado em produção.
 4. **d)** Privacidade da location. Não se escreve o nome, a morada nem o id da location da Shopify em nenhum ficheiro, commit, PR, relatório ou log. O repositório é público, e a location é a casa do Carlos. Antes de cada merge, procura-se no branch e no histórico do PR qualquer menção ao nome ou à morada. Se houver, apaga-se e confirma-se ao arquiteto.
+
+## Decisão 44 — emendas à Decisão 34, pontos 6 e 7, e confirmação do ponto 9
+
+**Data:** 21/10/2026
+**Estado:** decidida pelo arquiteto. Registada no PR do DBG-16.
+**Origem:** arquiteto, 21/10. O formato aprovado de DBG-16 não tinha visto a Decisão 34, ponto 6.
+
+1. **Ponto 6 (emendado).** A despublicação de um descontinuado é `productUpdate` com status DRAFT. O input deste caminho é só `{ id, status: "DRAFT" }`, sem nenhum outro campo. Substitui neste caminho o `publishableUnpublish` do ponto 6 original. A regra contra `productUpdate` (briefing de 17/09, :24) mantém-se em todos os outros caminhos. Fixado por teste estático e pela mutação M58, que acrescenta um campo ao input e tem de ficar vermelha.
+2. **Ponto 7 (emendado).** O gatilho para despublicar é 3 ciclos seguidos sem aparecer no feed, como o código já tinha. É mais prudente contra falhas pontuais do feed.
+3. **Ponto 9 (mantido).** O dry-run de DBG-16 em produção passa pelo arquiteto antes de qualquer `--execute`. O `--ok` do script é a referência a esse OK.

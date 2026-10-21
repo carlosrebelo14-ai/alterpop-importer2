@@ -2169,7 +2169,7 @@ export default function CurationDashboard() {
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">Descontinuados</Text>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  Publicados que saíram do feed há 2 ciclos seguidos. A despublicação na Shopify só corre com o OK do arquiteto.
+                  Publicados que saíram do feed há 3 ciclos seguidos. A despublicação na Shopify só corre com o OK do arquiteto.
                 </Text>
                 {descontinuadosErro && <Banner tone="critical">{descontinuadosErro}</Banner>}
                 {descontinuados?.abortado && <Banner tone="warning">{descontinuados.motivo}</Banner>}
