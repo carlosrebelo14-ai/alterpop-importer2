@@ -1269,8 +1269,10 @@ function verificarSaltoLiberta(texto) {
   const fim = texto.indexOf("} else {", inicio);
   assert.ok(fim > inicio, "o ramo de recusa tem de ter else");
   const ramo = texto.slice(inicio, fim);
-  assert.ok(ramo.includes("reserva.libertar();"), "o salto tem de libertar a reserva");
   assert.match(ramo, /return;/, "o salto tem de parar o ciclo");
+  // DBG-193: o salto não liberta a reserva a meio. Quem a liberta é o finally do IIFE, que também cobre o return.
+  assert.doesNotMatch(ramo, /libertar\(\)/, "o salto deixa a libertação ao finally do ciclo");
+  assert.match(texto, /finally \{[\s\S]*?try \{[\s\S]*?await reservaDoCiclo\?\.libertar\(\);/, "o finally do ciclo liberta a reserva, também no salto");
 }
 
 await caso("(ae) ciclo: o salto por confirmação liberta a reserva e para o ciclo", () => {
@@ -1279,7 +1281,7 @@ await caso("(ae) ciclo: o salto por confirmação liberta a reserva e para o cic
 
 await caso("mutação: o salto deixa a reserva presa (o caso (ae) tem de ficar vermelho)", () => {
   // A troca roda fora do assert.throws: uma âncora em falta lança aqui, e o caso fica vermelho em vez de passar em vazio.
-  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), "reserva.libertar();\n            console.log(`[trigger-sync] ciclo parado antes da publicação", "console.log(`[trigger-sync] ciclo parado antes da publicação");
+  const mutado = trocaUnica(ler(ROTA_CICLO_PUB), "await reservaDoCiclo?.libertar();", "void reservaDoCiclo;");
   assert.throws(() => verificarSaltoLiberta(mutado));
 });
 

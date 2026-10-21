@@ -202,6 +202,15 @@ export const action = async ({ request }) => {
   // 18b) correm sequencialmente com await — não bloqueiam a resposta HTTP (já foi
   // devolvida antes disto), só garantem que não disputam a API da Shopify ao mesmo tempo.
   void (async () => {
+    // DBG-193: a reserva do ciclo sobe para aqui, para o fim do IIFE a libertar em todos os caminhos.
+    let reservaDoCiclo = null;
+    // DBG-193: antes de cada passo que escreve na Shopify, confirma-se que o ciclo ainda tem o trinco de publicação.
+    const trincoDoCicloAindaTem = async (passo) => {
+      if (reservaDoCiclo && (await reservaDoCiclo.aindaTem())) return true;
+      console.error(`[trigger-sync] ciclo parado antes de ${passo}: trinco de publicação perdido.`);
+      await markMarginErosionCycleSkipped(shop, `ciclo parado: trinco de publicação perdido antes de ${passo}`);
+      return false;
+    };
     try {
       console.log(`[trigger-sync] ciclo iniciado @ ${startedAt}`);
       if (!settingsError) {
@@ -268,6 +277,7 @@ export const action = async ({ request }) => {
         if (!resetEmCurso) {
           try {
             reserva = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+            reservaDoCiclo = reserva;
           } catch (err) {
             marcaFalhou = true;
             console.error("[trigger-sync] ciclo parado antes da publicação: não foi possível marcar a atividade da app.", err?.message || err);
@@ -304,19 +314,29 @@ export const action = async ({ request }) => {
             // PR 5 (revisão): sem confirmação de que não há indexação, o ciclo para aqui. Não publica nem corre o stock,
             // as franquias, a erosão nem as coleções, porque as coleções publicam sem reserva. O Relatório recebe a causa
             // curta. A frase da recusa fica no log.
-            reserva.libertar();
             console.log(`[trigger-sync] ciclo parado antes da publicação: ${decisao.mensagem}`);
             await markMarginErosionCycleSkipped(shop, `ciclo parado: ${decisao.causa}`);
             return;
           } else {
             console.log("[trigger-sync] a publicar aprovados…");
             try {
-              await runApprovedShopifySync(session, { skipInit: true, reserva });
+              // DBG-193: a reserva fica com o ciclo até ao último passo de escrita. Quem a liberta é o finally do IIFE.
+              await runApprovedShopifySync(session, { skipInit: true, reserva, manterReserva: true });
               console.log("[trigger-sync] publicação de aprovados concluída.");
             } catch (err) {
               console.error("[trigger-sync] publicação de aprovados falhou:", err?.message || err);
             }
           }
+        }
+      }
+
+      // DBG-193: sem publicação neste ciclo (definições ilegíveis), os passos que escrevem na Shopify tomam o trinco aqui.
+      // Ocupado, o ciclo salta com registo, como na publicação.
+      if (!reservaDoCiclo) {
+        reservaDoCiclo = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+        if (!reservaDoCiclo) {
+          await markMarginErosionCycleSkipped(shop, "passos de escrita saltados: publicação ou reset Shopify em curso");
+          return;
         }
       }
 
@@ -330,6 +350,7 @@ export const action = async ({ request }) => {
       // reaprovar manualmente. Corre sempre a seguir ao publish normal, nunca em
       // paralelo — evita as duas rotinas disputarem o mesmo variantCache/rate limit.
       if (!settingsError) {
+        if (!(await trincoDoCicloAindaTem("o stock dos publicados"))) return;
         try {
           const stockClient = createShopifyClientFromSession(session);
           const stockResult = await syncPublishedStockLevels(stockClient, shop, {
@@ -372,6 +393,7 @@ export const action = async ({ request }) => {
         // verde atual sobre dados velhos. Fica "não correu", à vista nos Relatórios.
         await markMarginErosionCycleSkipped(shop, "definições ilegíveis — catálogo não reindexado");
       } else {
+        if (!(await trincoDoCicloAindaTem("a erosão de margem"))) return;
         try {
           const erosionClient = createShopifyClientFromSession(session);
           const erosion = await reconcileMarginErosionCycle(erosionClient, shop);
@@ -386,6 +408,7 @@ export const action = async ({ request }) => {
       // Catálogo de franquias com stock, para a grelha de /pages/franquias no tema.
       // Corre depois do sync de stock de publicados (item 18b), para refletir o
       // stock mais recente. Nunca bloqueia nem falha o ciclo.
+      if (!(await trincoDoCicloAindaTem("o catálogo de franquias"))) return;
       try {
         const franchiseClient = createShopifyClientFromSession(session);
         const franchiseResult = await syncFranchiseCatalog(franchiseClient, shop);
@@ -405,6 +428,7 @@ export const action = async ({ request }) => {
       // first_published_at nos ACTIVE publicados sem data e expira is_new_arrival
       // depois de NEW_ARRIVAL_DAYS. Só metafieldsSet. Grava sempre o estado V15, também
       // em falha — nunca bloqueia o ciclo, mas nunca falha em silêncio.
+      if (!(await trincoDoCicloAindaTem("as novidades"))) return;
       try {
         const naClient = createShopifyClientFromSession(session);
         const naState = await reconcileNewArrivalsCycle(naClient, shop);
@@ -423,6 +447,7 @@ export const action = async ({ request }) => {
       // V13. Só metafieldsSet, só alterpop.*, nunca título/preço/descrição. Travão
       // MAX_AUTO_RECONCILE: acima disso não escreve nada, fica vermelho para um humano
       // ver antes de qualquer escrita em massa. Nunca bloqueia o ciclo.
+      if (!(await trincoDoCicloAindaTem("o drift"))) return;
       try {
         const driftClient = createShopifyClientFromSession(session);
         const driftResult = await reconcileLiveDriftCycle(driftClient, shop);
@@ -439,6 +464,7 @@ export const action = async ({ request }) => {
       // vive em universeCollections.server.js). Nunca despublica — uma "closed" já
       // publicada fica só registada. Travão MAX_AUTO_PUBLISH: acima disso não publica
       // nenhuma, fica vermelho para um humano ver. Nunca bloqueia o ciclo.
+      if (!(await trincoDoCicloAindaTem("as coleções"))) return;
       try {
         const collPubClient = createShopifyClientFromSession(session);
         const collPubResult = await reconcileCollectionPublicationCycle(collPubClient, shop);
@@ -453,6 +479,7 @@ export const action = async ({ request }) => {
       // Mesmo travão do live-drift acima (MAX_CHARACTER_CHANGES_PER_CYCLE = 10): até 10
       // Characters alterados no ciclo aplica sozinho, acima disso não escreve nada e fica
       // vermelho. Nunca bloqueia o ciclo.
+      if (!(await trincoDoCicloAindaTem("as personagens"))) return;
       try {
         const characterClient = createShopifyClientFromSession(session);
         const characterResult = await reconcileCharacterPagesCycle(characterClient, shop);
@@ -464,6 +491,13 @@ export const action = async ({ request }) => {
       }
     } catch (err) {
       console.error("[trigger-sync] ciclo falhou:", err?.message || err);
+    } finally {
+      // DBG-193: o trinco sai no fim do ciclo, em todos os caminhos (salto, erro ou fim normal).
+      try {
+        await reservaDoCiclo?.libertar();
+      } catch (err) {
+        console.error("[trigger-sync] não foi possível libertar o trinco de publicação:", err?.message || err);
+      }
     }
   })();
 
