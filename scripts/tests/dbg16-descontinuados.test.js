@@ -421,6 +421,101 @@ await caso("mutação M58 (DBG-16, Decisão 44): acrescentar um campo ao input d
   assert.throws(() => assert.match(mutado, /client\.graphql\(PRODUCT_DRAFT, \{ input: \{ id: productId, status: "DRAFT" \} \}\)/, "o input tem só id e status"));
 });
 
+// ---------- marcas de descontinuado saem em cada decisão (revisão do arquiteto) ----------
+
+const FILA_MODULO = "lib/curation/curationQueue.server.js";
+const RESET_MODULO = "lib/importer/shopify/shopifyReset.server.js";
+const MARCAS = { despublicadoEm: "2026-10-21T10:00:00Z", descontinuadoIgnoradoEm: "2026-10-21T11:00:00Z" };
+const temMarcas = (metadata) => "despublicadoEm" in metadata || "descontinuadoIgnoradoEm" in metadata;
+
+async function escreverFilaDeTeste(fila, itens) {
+  await fila.comLockDaFila(async () => {
+    const queue = await fila.loadCurationQueue();
+    queue.items.push(...itens);
+    await fila.saveCurationQueue(queue);
+  });
+  fila.invalidateCurationMemoryCache();
+}
+
+async function itemDaFila(fila, sku) {
+  fila.invalidateCurationMemoryCache();
+  return (await fila.loadCurationQueue()).items.find((i) => i.sku === sku);
+}
+
+await caso("(D1) aprovar, publicar e reverter pelo reset tiram as marcas de descontinuado", async () => {
+  const fila = await import(pathToFileURL(path.join(REPO, FILA_MODULO)).href);
+  const reset = await import(pathToFileURL(path.join(REPO, RESET_MODULO)).href);
+  await escreverFilaDeTeste(fila, [
+    { sku: "D1-APR", status: "PENDING", shopifyStatus: "DRAFT", title_en: "x", metadata: { ...MARCAS } },
+    { sku: "D1-PUB", status: "APPROVED", shopifyStatus: "ACTIVE", title_en: "x", metadata: { ...MARCAS } },
+    { sku: "D1-RST", status: "PUBLISHED", shopifyStatus: "ACTIVE", title_en: "x", metadata: { shopifyProductId: "gid://shopify/Product/D1RST", ...MARCAS } },
+  ]);
+  await fila.approveProduct("D1-APR");
+  const aprovado = await itemDaFila(fila, "D1-APR");
+  assert.equal(aprovado.status, "APPROVED");
+  assert.equal(temMarcas(aprovado.metadata), false, "aprovar tira as marcas");
+  await fila.markQueueItemPublished("D1-PUB", "gid://shopify/Product/D1PUB");
+  const publicado = await itemDaFila(fila, "D1-PUB");
+  assert.equal(publicado.status, "PUBLISHED");
+  assert.equal(temMarcas(publicado.metadata), false, "publicar tira as marcas");
+  await reset.revertLocalAfterShopifyReset(["D1-RST"], ["gid://shopify/Product/D1RST"]);
+  const revertido = await itemDaFila(fila, "D1-RST");
+  assert.equal(revertido.status, "PENDING");
+  assert.equal(temMarcas(revertido.metadata), false, "o reset tira as marcas");
+});
+
+await caso("(R6) o reset em massa limpa as marcas antes de repor o item", () => {
+  assert.match(ler(RESET_MODULO), /item\.status = targetStatus;\n\s*item\.metadata = semMarcasDeDescontinuado\(item\.metadata\);/);
+});
+
+await caso("mutação M59 (DBG-16): aprovar deixa as marcas no item", async () => {
+  const copia = copiaMutada(FILA_MODULO, "M59", '  item.status = "APPROVED";\n  item.metadata = semMarcasDeDescontinuado(item.metadata);', '  item.status = "APPROVED";');
+  try {
+    const original = await import(pathToFileURL(path.join(REPO, FILA_MODULO)).href);
+    const mutante = await import(pathToFileURL(copia).href);
+    await escreverFilaDeTeste(original, [{ sku: "M59-APR", status: "PENDING", shopifyStatus: "DRAFT", title_en: "x", metadata: { ...MARCAS } }]);
+    await mutacaoTemDeFalhar("M59", async () => {
+      await mutante.approveProduct("M59-APR");
+      assert.equal(temMarcas((await itemDaFila(original, "M59-APR")).metadata), false, "aprovar tira as marcas");
+    });
+  } finally {
+    fs.rmSync(copia, { force: true });
+  }
+});
+
+await caso("mutação M60 (DBG-16): o apagado no admin deixa as marcas no item", async () => {
+  const copia = copiaMutada(FILA_MODULO, "M60", "  const rest = semMarcasDeDescontinuado(restoDaMetadata);", "  const rest = restoDaMetadata;");
+  try {
+    const mutante = await import(pathToFileURL(copia).href);
+    await mutacaoTemDeFalhar("M60", async () => {
+      const item = mutante.applyDeletedInAdmin({ sku: "M60", status: "PUBLISHED", metadata: { shopifyProductId: "x", ...MARCAS } }, new Date().toISOString());
+      assert.equal(temMarcas(item.metadata), false, "o apagado no admin tira as marcas");
+    });
+  } finally {
+    fs.rmSync(copia, { force: true });
+  }
+});
+
+await caso("mutação M61 (DBG-16): o reset em massa deixa as marcas no item", () => {
+  const mutado = trocaUma(ler(RESET_MODULO), "M61", "    item.status = targetStatus;\n    item.metadata = semMarcasDeDescontinuado(item.metadata);", "    item.status = targetStatus;");
+  assert.throws(() => assert.match(mutado, /item\.status = targetStatus;\n\s*item\.metadata = semMarcasDeDescontinuado\(item\.metadata\);/, "o reset em massa limpa as marcas"));
+});
+
+await caso("mutação M62 (DBG-16): publicar deixa as marcas no item", async () => {
+  const copia = copiaMutada(FILA_MODULO, "M62", '  item.status = "PUBLISHED";\n  item.metadata = semMarcasDeDescontinuado(item.metadata);', '  item.status = "PUBLISHED";');
+  try {
+    const original = await import(pathToFileURL(path.join(REPO, FILA_MODULO)).href);
+    const mutante = await import(pathToFileURL(copia).href);
+    await escreverFilaDeTeste(original, [{ sku: "M62-PUB", status: "APPROVED", shopifyStatus: "ACTIVE", title_en: "x", metadata: { ...MARCAS } }]);
+    await mutacaoTemDeFalhar("M62", async () => {
+      await mutante.markQueueItemPublished("M62-PUB", "gid://shopify/Product/M62");
+      assert.equal(temMarcas((await itemDaFila(original, "M62-PUB")).metadata), false, "publicar tira as marcas");
+    });
+  } finally {
+    fs.rmSync(copia, { force: true });
+  }
+});
+
 if (falhas) {
   console.error(`${falhas} falha(s)`);
   process.exit(1);
