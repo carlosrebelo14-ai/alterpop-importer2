@@ -291,8 +291,10 @@ function casoImportEditsDizOverrideGravado() {
   const codigo = semComentarios(fs.readFileSync(path.join(REPO, "app/routes/api.products.import-edits.jsx"), "utf8"));
   // DBG-126: gravou = true vem logo depois do await do override, e não num finally nem noutro sítio.
   assert.match(codigo, /setManualOverride\(sku, overrides[^\n]*\)\);\s*\n\s*gravou = true;/, "gravou = true vem logo depois do await do override");
-  assert.match(codigo, /filaOcupada && gravou/, "o motivo do timeout distingue o override já gravado");
-  assert.ok(codigo.includes("o override foi gravado, a aprovação ou a rejeição não"), "a mensagem diz o que ficou gravado");
+  // DBG-123: o motivo passa pelo helper, que trata qualquer causa com o override já gravado, e não só o timeout.
+  assert.match(codigo, /motivoDaLinhaRecusada\(\{ err, gravou \}\)/, "a linha recusada usa o motivo com o estado do override");
+  const helper = fs.readFileSync(path.join(REPO, "lib/curation/motivoLinhaEdicao.js"), "utf8");
+  assert.ok(helper.includes("o override foi gravado, a aprovação ou a rejeição não"), "a mensagem diz o que ficou gravado");
 }
 
 // DBG-115: a rota da purga responde 503 em modo degradado, como approve e reject.

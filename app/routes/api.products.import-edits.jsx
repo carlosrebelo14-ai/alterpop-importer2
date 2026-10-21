@@ -10,6 +10,7 @@ import {
   loadCurationQueue,
 } from "../../lib/curation/curationQueue.server.js";
 import { loadShopSettings } from "../../lib/importer/settings.server.js";
+import { motivoDaLinhaRecusada } from "../../lib/curation/motivoLinhaEdicao.js";
 import { resolveMarginPct, evaluatePrice } from "../../lib/importer/pricing/pricing.server.js";
 
 const VALID_STATUSES = new Set(["APPROVED", "REJECTED"]);
@@ -221,13 +222,8 @@ export const action = async ({ request }) => {
 
       applied.push({ line: lineNo, sku });
     } catch (err) {
-      // DBG-110. Com a fila ocupada, o override pode já estar gravado e a aprovação ou a rejeição não. A linha diz isso, para não parecer que nada foi escrito.
-      const filaOcupada = err?.code === "CURATION_QUEUE_LOCK_TIMEOUT";
-      const motivo =
-        filaOcupada && gravou
-          ? "fila ocupada: o override foi gravado, a aprovação ou a rejeição não. Repetir esta linha."
-          : err?.message || "Erro desconhecido ao aplicar";
-      rejected.push({ line: lineNo, sku, reason: motivo });
+      // DBG-110 e DBG-123. Com o override já gravado, a linha diz que a aprovação ou a rejeição não ficou feita, qualquer que seja a causa.
+      rejected.push({ line: lineNo, sku, reason: motivoDaLinhaRecusada({ err, gravou }) });
     }
   }
 

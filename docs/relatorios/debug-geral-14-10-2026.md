@@ -327,7 +327,7 @@ Origem: `delta` é correção desta rodada. `PR` é código deste PR anterior à
 | DBG-120 | Baixa | PR | `scripts/maintenance/elite-purge-dry-run.mjs`, função `executar` | Qualquer erro da purga vira `catalogo_falhou`, mesmo que não seja da BD. A manutenção diz "não consegui ler o catálogo na base de dados". Exemplo reproduzido: `config/curation.json` em falta. Não corrigido. |
 | DBG-121 | Baixa | delta | `lib/curation/curationQueue.server.js:381` | A leitura do backup candidato (`readFile`) fica fora do `catch`. Uma entrada de mesmo tamanho que a fila, e ilegível, faz uma fila recuperável cair em `DB_DEGRADED`. Reproduzido com uma entrada que é um diretório. Caso raro. Não corrigido. |
 | DBG-122 | Baixa | PR | `lib/curation/curationQueue.server.js:378` | A dedupe do backup verifica e só depois grava, sem criação atómica. Duas recuperações concorrentes que não se veem gravam dois backups iguais. Numa sonda, 7 de 9 tentativas, com duas instâncias a arrancar juntas sobre uma fila de 15 MB. Antes desta rodada, 6 de 6. Não corrigido. |
-| DBG-123 | Média | main | `app/routes/api.products.import-edits.jsx:227` | Quando a aprovação falha por outro motivo (por exemplo `APPROVE_PUBLISHED`), o override já ficou gravado, e a linha só diz a recusa. O aviso do DBG-110 cobre só o timeout. A rota já existia em `origin/main`, por isso não bloqueia. Vai para o 2c, junto do DBG-47, por decisão do arquiteto. Não corrigido. |
+| DBG-123 | Média | main | `app/routes/api.products.import-edits.jsx:227` | Quando a aprovação falha por outro motivo (por exemplo `APPROVE_PUBLISHED`), o override já ficou gravado, e a linha só diz a recusa. O aviso do DBG-110 cobre só o timeout. A rota já existia em `origin/main`, por isso não bloqueia. Vai para o 2c, junto do DBG-47, por decisão do arquiteto. Corrigido no 2c-5: a linha diz que o override ficou gravado, qualquer que seja a causa. Ver DBG-207. |
 | DBG-124 | Média | delta | `lib/importer/curation/eliteCuration.server.js:100` | O `statusChangedAt` tinha precedência sobre a origem `reset`. Um item de reset contava como decisão humana no dry-run, e `retidos_decisao_humana` ficava errado. Corrigido: a origem `reset` vem primeiro. Teste T16 e mutação. |
 | DBG-125 | Média | PR | `app/routes/api.curation.elite-purge.jsx:35` | A rota de dry-run lia a fila com o loader por omissão. Numa fila corrompida, o loader gravava um backup e a flag `DB_DEGRADED`, numa rota que diz que não escreve nada. A rota é deste PR e não existe em `origin/main`, por isso bloqueia. Corrigido: a rota lê com `lerFilaSemEfeitos`. Teste S4, prova P5 e mutação. |
 | DBG-126 | Média | delta | `scripts/tests/curation-fila-prazo-rota.test.js` (S2) | O S2 do DBG-110 só verificava texto, e passava com uma mutação em `try/finally`. Corrigido: a verificação exige `gravou = true` logo depois do `await` do override. Mutação `gravou = false`, vermelha. |
@@ -537,6 +537,18 @@ Fora deste PR, registado como DBG.
 As janelas do ciclo, entre o fim da reserva da publicação e os passos de escrita, são do DBG-193, que já está na ordem do 2c.
 
 O teste fica em `scripts/tests/dbg47-rotas-leituras.test.js`, incluído em `test:sync-safety`, com mutações M40 a M42.
+
+### Revisão inicial do 2c-5, DBG-123 (21/10/2026)
+
+A rota de import de edições grava o override antes de aprovar ou rejeitar. Quando a aprovação falha por outra causa, por exemplo `APPROVE_PUBLISHED`, a linha dizia só a recusa, e o override ficava gravado sem aviso. O DBG-110 cobria só o timeout da fila.
+
+Corrigido. O motivo da linha passa pelo helper `motivoDaLinhaRecusada`, em `lib/curation/motivoLinhaEdicao.js`. Com o override gravado, diz que a aprovação ou a rejeição não ficou feita, qualquer que seja a causa, e traz a causa. O timeout mantém a mensagem antiga, e sem override gravado a linha fica igual.
+
+Fora deste PR, registado como DBG.
+
+- DBG-207, Baixa. A linha recusada deixa o override gravado. Reverter o override numa falha de aprovação é outra mudança de comportamento, e fica como decisão do arquiteto.
+
+O teste fica em `scripts/tests/dbg123-override-sem-aviso.test.js`, incluído em `test:sync-safety`, com mutações M43 e M44. O teste S2 de `curation-fila-prazo-rota.test.js` passa a verificar o helper, em vez da condição antiga.
 
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._
