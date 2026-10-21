@@ -79,3 +79,15 @@ Passos:
 - `scripts/catalog/full-catalog-reindex.js`: até o PR 5 estar em produção e verificado (Decisão 36).
 - Reset: ver Decisão 35. Só corre com o DBG-193 verificado em produção. O reset termina na verificação final (zero produtos na loja, zero PUBLISHED na fila). Não há republicação em lotes: o Carlos escolhe e aprova pelo painel o que quiser (Decisão 42).
 - `scripts/catalog/run-approved-sync.js`: o veto mantém-se até à verificação em produção e ao fecho do DBG-197. Até lá, nenhum script de publicação corre em produção (Decisão 43).
+
+
+## DBG-16: despublicar descontinuados
+
+Dry-run primeiro, sempre: `node scripts/catalog/descontinuados-despublicar.js --shop <loja>`. Lista os publicados que saíram do feed, com franquia, formato e data de saída. Não escreve nada.
+
+Para despublicar, o arquiteto dá o OK e o developer faz, nesta ordem:
+
+1. Acrescenta a linha que o script imprime a `docs/execucoes.md`, e commita e faz push antes da corrida.
+2. Corre `node scripts/catalog/descontinuados-despublicar.js --shop <loja> --execute --ok "<referência ao OK>"`.
+
+O script recusa-se sem `--ok`, numa loja que não é a configurada (exit 3), e com atividade da app em curso. Os produtos ficam em DRAFT, nunca são apagados.

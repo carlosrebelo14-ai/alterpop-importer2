@@ -19,6 +19,7 @@ import {
   TextField,
   Tooltip,
   Tabs,
+  Thumbnail,
 } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { reasonLabel } from "../utils/curationReasonLabels.js";
@@ -389,6 +390,53 @@ export default function CurationDashboard() {
   const [lifecycleReport, setLifecycleReport] = useState(null);
   const [lifecycleBannerDismissed, setLifecycleBannerDismissed] = useState(false);
   const [toast, setToast] = useState(null);
+
+  // DBG-16: publicados que saíram do feed, com substitutos. Carregados ao abrir e recarregados depois de cada ação.
+  const [descontinuados, setDescontinuados] = useState(null);
+  const [descontinuadosErro, setDescontinuadosErro] = useState(null);
+
+  const carregarDescontinuados = useCallback(async () => {
+    try {
+      const res = await fetch("/api/curation/descontinuados", { credentials: "same-origin" });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        setDescontinuadosErro(data?.error || "Não foi possível carregar os descontinuados");
+        return;
+      }
+      setDescontinuados(data);
+      setDescontinuadosErro(null);
+    } catch (err) {
+      setDescontinuadosErro(err?.message || String(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    carregarDescontinuados();
+  }, [carregarDescontinuados]);
+
+  const acaoDescontinuado = useCallback(
+    async (corpo) => {
+      const res = await fetch("/api/curation/descontinuados", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpo),
+      });
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        setToast({ content: "Resposta inesperada do servidor", error: true });
+        return;
+      }
+      if (!res.ok || !data?.ok) {
+        setToast({ content: data?.error || "Não foi possível concluir a ação", error: true });
+        return;
+      }
+      await carregarDescontinuados();
+    },
+    [carregarDescontinuados]
+  );
   const [selectedSkus, setSelectedSkus] = useState([]);
   const [bulkMargin, setBulkMargin] = useState("");
 
@@ -2113,6 +2161,56 @@ export default function CurationDashboard() {
             </BlockStack>
           </Modal.Section>
         </Modal>
+
+        {/* DBG-16: secção dos descontinuados. "Usar este" põe o substituto na fila como pendente. Nada é publicado daqui. */}
+        <Layout>
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">Descontinuados</Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Publicados que saíram do feed há 3 ciclos seguidos. A despublicação na Shopify só corre com o OK do arquiteto.
+                </Text>
+                {descontinuadosErro && <Banner tone="critical">{descontinuadosErro}</Banner>}
+                {descontinuados?.abortado && <Banner tone="warning">{descontinuados.motivo}</Banner>}
+                {descontinuados && !descontinuados.abortado && descontinuados.itens.length === 0 && (
+                  <Text as="p" variant="bodySm" tone="subdued">Nenhum descontinuado.</Text>
+                )}
+                {(descontinuados?.itens || []).map((d) => (
+                  <BlockStack key={d.sku} gap="200">
+                    <InlineStack gap="300" blockAlign="center" wrap>
+                      {d.imagem && <Thumbnail source={d.imagem} alt={d.titulo} size="small" />}
+                      <BlockStack gap="100">
+                        <Text as="span" variant="bodyMd" fontWeight="semibold">{d.titulo}</Text>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {d.sku} · {d.franquia || "sem franquia"} · {d.formato || "sem formato"} · saiu em{" "}
+                          {d.saiuEm ? new Date(d.saiuEm).toLocaleDateString("pt-PT") : "data desconhecida"}
+                        </Text>
+                      </BlockStack>
+                    </InlineStack>
+                    {d.substitutos.length > 0 ? (
+                      d.substitutos.map((s) => (
+                        <InlineStack key={s.sku} gap="200" blockAlign="center" wrap>
+                          <Text as="span" variant="bodySm">{s.sku} · {s.titulo} · {s.netPrice} €</Text>
+                          <Button size="slim" onClick={() => acaoDescontinuado({ action: "usar", sku: d.sku, substitutoSku: s.sku })}>
+                            Usar este
+                          </Button>
+                        </InlineStack>
+                      ))
+                    ) : (
+                      <Text as="span" variant="bodySm" tone="subdued">Sem substitutos: {d.motivoSemSubstitutos}</Text>
+                    )}
+                    <InlineStack>
+                      <Button size="slim" onClick={() => acaoDescontinuado({ action: "ignorar", sku: d.sku })}>
+                        Ignorar
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                ))}
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        </Layout>
 
         <Layout>
 
