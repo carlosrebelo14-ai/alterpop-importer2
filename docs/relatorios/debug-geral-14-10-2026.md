@@ -553,5 +553,21 @@ O teste fica em `scripts/tests/dbg123-override-sem-aviso.test.js`, incluído em 
 
 Revisão de Decisão 39, ronda 1, com quatro lentes e verificação de cada achado: cinco achados confirmados, todos de teste ou de nome, nenhum bloqueante. Corrigidos neste PR: o R1 passa a verificar que o motivo do helper chega ao `rejected.push`; o caso H5 cobre o timeout sem override gravado; o S2 passa a verificar a frase da outra causa e tem o nome do caso atualizado. Fica como DBG-208 a ordem entre override e aprovação, que nenhuma suíte fixa.
 
+### Revisão inicial do 2c-6, DBG-193 (21/10/2026)
+
+O ciclo segurava o trinco de publicação só até à publicação. Os passos de stock, erosão, franquias, novidades, drift, coleções e personagens corriam sem ele, e uma publicação manual ou um reset podiam arrancar a meio. Este PR faz o ciclo segurar o trinco até ao último passo que escreve na Shopify.
+
+Como funciona. O motor aceita `manterReserva`, e nesse caso não libertar a reserva. O ciclo sobe a reserva para o IIFE, confirma o trinco antes de cada passo de escrita, e libera-o num `finally` do IIFE, que cobre o fim normal, o salto e o erro. Sem publicação neste ciclo, por definições ilegíveis, o ciclo toma o trinco antes dos passos de escrita, e salta com registo se estiver ocupado.
+
+Achado da própria revisão, corrigido antes do PR. Com definições ilegíveis, a reserva não era tomada, e a primeira confirmação da erosão teria parado o ciclo. A tomada passou a acontecer também nesse caso, para que os passos continuem a correr com o trinco.
+
+Decisões pedidas ao arquiteto. O gate do reset (DBG-193 verificado em produção) é operacional, e está no runbook e na Decisão 43, c). Não há flag no código. Se o quiseres no código, diz.
+
+Fora deste PR, registado como DBG.
+
+- DBG-209, Baixa, `app/routes/api.shopify.sales-refresh.jsx`. A atividade do radar fica marcada como `publicacao`. O tipo devia ser próprio, `radar`, para os logs não confundirem.
+
+O teste fica em `scripts/tests/dbg193-ciclo-trinco.test.js`, incluído em `test:sync-safety`, com um caso dinâmico sobre o motor (E1) e mutações M45 a M49. Os casos (C1) a (C4) são estáticos sobre o ciclo.
+
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._

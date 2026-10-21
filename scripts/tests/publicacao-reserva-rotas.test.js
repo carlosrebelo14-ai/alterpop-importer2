@@ -60,7 +60,8 @@ check("(R2) ciclo: reserva logo antes da chamada a runApprovedShopifySync, sem a
   const ciclo = ler("app/routes/api.trigger-sync.jsx");
   const reserva = ciclo.indexOf(RESERVA);
   assert.ok(reserva > 0, "o ciclo tem de reservar com a marca da app: reserva = await reservarPublicacaoEntreProcessos({ marcar: ... })");
-  const chamada = ciclo.indexOf("await runApprovedShopifySync(session, { skipInit: true, reserva });");
+  // DBG-193: a publicação do ciclo deixa a reserva com o ciclo (manterReserva), que a liberta no fim.
+  const chamada = ciclo.indexOf("await runApprovedShopifySync(session, { skipInit: true, reserva, manterReserva: true });");
   assert.ok(chamada > reserva, "a reserva fica antes da chamada, e a chamada leva a reserva");
   // PR 5 (revisão): o ramo de salto pode esperar pela marcação da erosão. A regra vale para o caminho de publicação:
   // nenhum await entre a reserva e a decisão, nem entre o else da decisão e a chamada.

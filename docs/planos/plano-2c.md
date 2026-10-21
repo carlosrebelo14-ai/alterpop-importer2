@@ -13,7 +13,7 @@
 | DBG-05 | P1 | Helper único de resolução de `locationId`, usado pelo publisher e pelo sync de stock. | Por fazer |
 | DBG-47 | 2c | Decisão 28 nas rotas: nenhuma sessão de leitura em paralelo com a publicação. | Feito no 2c-4: o ciclo para sem reserva, e a escrita de preços e o radar tomam a reserva. Registado: DBG-203 a DBG-206. |
 | DBG-123 | Média | Quando a aprovação falha por outro motivo, o override não fica gravado sem aviso. | Feito no 2c-5: a linha diz que o override ficou gravado, para qualquer causa. A gravação continua antes da aprovação (DBG-207). |
-| DBG-193 | Média | Os passos do ciclo que escrevem na Shopify depois da publicação passam a correr com o mesmo trinco. | Por fazer |
+| DBG-193 | Média | Os passos do ciclo que escrevem na Shopify depois da publicação passam a correr com o mesmo trinco. | Feito no 2c-6, a aguardar OK do arquiteto. O ciclo segura o trinco até ao último passo de escrita, com confirmação antes de cada passo. Gate do reset: DBG-193 verificado em produção. |
 | DBG-16 | P2 | Produto descontinuado no feed sai da loja e entra numa lista no painel para escolha de substituto. | Por fazer |
 
 ## Ordem
