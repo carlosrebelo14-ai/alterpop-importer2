@@ -78,4 +78,4 @@ Passos:
 - ~~Tarefa `db_push` em modo `execute`~~: levantado em 17/10, DBG-156 em produção (Decisão 37, deploy run `39055860291`).
 - `scripts/catalog/full-catalog-reindex.js`: até o PR 5 estar em produção e verificado (Decisão 36).
 - Reset: ver Decisão 35. Só corre com o DBG-193 verificado em produção. O reset termina na verificação final (zero produtos na loja, zero PUBLISHED na fila). Não há republicação em lotes: o Carlos escolhe e aprova pelo painel o que quiser (Decisão 42).
-- `scripts/catalog/run-approved-sync.js`: o veto mantém-se até à verificação em produção e ao fecho do DBG-197. Até lá, nenhum script de publicação corre em produção (Decisão 38, e decisão do arquiteto de 21/10 sobre o DBG-197).
+- `scripts/catalog/run-approved-sync.js`: o veto mantém-se até à verificação em produção e ao fecho do DBG-197. Até lá, nenhum script de publicação corre em produção (Decisão 43).

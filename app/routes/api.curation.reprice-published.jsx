@@ -10,6 +10,8 @@ import {
 } from "../../lib/importer/shopify/publishedReprice.server.js";
 import { invalidateCurationQueueCache } from "../../lib/importer/curation/index.js";
 import { clearLivePriceCache } from "../../lib/importer/shopify/livePricePanel.server.js";
+import { reservarPublicacaoEntreProcessos } from "../../lib/importer/shopify/publicacaoEmCurso.js";
+import { marcarAtividadeApp } from "../../lib/curation/atividadeApp.js";
 
 /**
  * "Aplicar aos publicados" — mudar a margem nunca mexe na loja; esta ação separada atualiza
@@ -64,15 +66,28 @@ export const action = async ({ request }) => {
       return Response.json({ ok: true, confirmThreshold: CONFIRM_THRESHOLD, ...preview });
     }
     if (body.action === "execute") {
-      const result = await executeReprice({
-        shop,
-        client,
-        mode,
-        skus,
-        rule,
-        includeManual,
-        confirmCount: Number.isInteger(body.confirmCount) ? body.confirmCount : null,
-      });
+      // DBG-47 (Decisão 28): a escrita em massa de preços usa a mesma reserva da publicação. Ocupada, recusa com 409.
+      const reserva = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+      if (!reserva) {
+        return Response.json(
+          { ok: false, code: "PUBLICACAO_EM_CURSO", error: "Há uma publicação ou um reset Shopify em curso. Espera que termine antes de atualizar preços." },
+          { status: 409 }
+        );
+      }
+      let result;
+      try {
+        result = await executeReprice({
+          shop,
+          client,
+          mode,
+          skus,
+          rule,
+          includeManual,
+          confirmCount: Number.isInteger(body.confirmCount) ? body.confirmCount : null,
+        });
+      } finally {
+        await reserva.libertar();
+      }
       invalidateCurationQueueCache();
       clearLivePriceCache();
       return Response.json({ ok: true, ...result });

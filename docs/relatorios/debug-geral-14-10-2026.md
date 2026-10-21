@@ -508,12 +508,35 @@ Corrigido neste ciclo, em quatro pontos.
 Não bloqueante, registado como DBG.
 
 - DBG-200, Baixa, `scripts/catalog/line-publish-verify.js:103`. O script de verificação publica sem a location das definições, e o stock vai para a variável ou para a primária. Só corre à mão, com produtos sintéticos. Pré-existente.
-- DBG-201, Média, efeito do deploy. Os publicados passam a escrever só na location das definições. Os valores que ficaram na location anterior não são reconciliados. Se essa location cumpria encomendas online, o disponível fica com valores congelados até alguém os ajustar. Verificar as quantidades por location antes do deploy.
-- DBG-202, Baixa, `docs/planos/plano-2c.md`. A citação "decisão do arquiteto de 21/10 sobre o DBG-197" não tem registo no repositório. A Decisão 38, alínea e), só condiciona o veto a exclusão real entre processos. Falta registar onde fica a decisão de 21/10.
+- DBG-201, Baixa (severidade passa de Média a Baixa, 21/10). Verificado na Shopify de produção a 21/10: há uma só location, ativa e primária. Não há quantidades noutra location para reconciliar. O risco que sobra é `settings.locationId` apontar para um id inválido, o que dá falhas de escrita no stock e não dano. Na verificação pós-deploy do 2c, a linha `[trigger-sync] stock de publicados` tem de mostrar 0 falhas.
+- DBG-202, Baixa, `docs/planos/plano-2c.md`. A decisão de 21/10 não tinha registo no repositório. Registada como Decisão 43, no PR do DBG-47, com a regra de privacidade da location no ponto d.
+
+Lente de delta do arquiteto sobre o PR #133: aprovado com condição de check verde. Merge em `ab1c052`, com merge commit travado em `8f55583`. Sem deploy.
 
 Efeito em produção, a confirmar antes do deploy. O stock dos publicados e a importação de inventário passam a usar a location das definições, depois a variável de ambiente, e só então a primária. Antes, o stock dos publicados caía na variável ou na primária, e a importação caía na primária quando as definições estavam vazias. Se a location das definições diferir da que estava em uso, o inventário muda de location no ciclo seguinte.
 
 O teste fica em `scripts/tests/dbg05-location.test.js`, incluído em `test:sync-safety`, com mutações M34 a M39.
+
+### Revisão inicial do 2c-4, DBG-47 (21/10/2026)
+
+Lente sobre o mapa de leituras e escritas em massa, feito por três agentes em paralelo, com o defeito confirmado no código antes de corrigir. Ronda 1 da Decisão 39.
+
+Corrigido neste PR, em três pontos.
+
+- O ciclo registava o salto da publicação quando a reserva estava ocupada, mas não parava. O stock, a erosão, as franquias, as novidades, o drift, as coleções e as personagens corriam em paralelo com a publicação manual ou com o reset (`api.trigger-sync.jsx`, ramo `!reserva`). Passa a parar, como já fazia o ramo de confirmação da indexação.
+- A escrita em massa de preços (`api.curation.reprice-published.jsx`, ação `execute`) não tomava a reserva. Passa a tomá-la, recusa com 409 se estiver ocupada, e liberta-a no fim.
+- O radar de vendas (`api.shopify.sales-refresh.jsx`) escreve em massa no SQLite e não tomava a reserva. Passa a tomá-la, com a mesma regra.
+
+Fora deste PR, registado como DBG.
+
+- DBG-203, Média, `api.dashboard.stats.jsx`, `app.reports.jsx`, `api.catalog.facets.jsx`, `api.catalog.brands.jsx` e `api.products.export.jsx`. Leituras pesadas do Prisma sem guarda. Correm no mesmo processo que a app, por isso não são as sessões `fly ssh` da Decisão 28. Decisão pedida ao arquiteto: guardar, ou aceitar com medição.
+- DBG-204, Baixa, `api.curation.reprice-published.jsx`, `loader` e `preview`. A leitura da Shopify para pré-visualização não toca no SQLite. Sem guarda, por desenho, até decisão.
+- DBG-205, Alta, scripts CLI de escrita em massa sem reserva: `scripts/catalog/catalog-dedupe.js` (apaga em transação, sem guarda nem dry-run), `franchise-metafield-write.js`, `live-title-reconcile.js`, `collections-cleanup.js` e os de `scripts/maintenance/`. Por fazer. Não estão no caminho do ciclo, mas correm à mão em paralelo com a publicação.
+- DBG-206, Média, `lib/importer/catalog/indexingStream.server.js:377`. O `runSkuLifecycleCycle` arranca depois de a marca de indexação sair, e escreve em massa no `CatalogSkuTracking` sem reserva. Uma publicação pode arrancar nessa janela.
+
+As janelas do ciclo, entre o fim da reserva da publicação e os passos de escrita, são do DBG-193, que já está na ordem do 2c.
+
+O teste fica em `scripts/tests/dbg47-rotas-leituras.test.js`, incluído em `test:sync-safety`, com mutações M40 a M42.
 
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._
