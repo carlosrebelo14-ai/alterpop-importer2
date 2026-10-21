@@ -18,7 +18,7 @@ import {
   motivoDeRecusaPorScript,
   scriptDeIndexacaoEmCurso,
 } from "../../lib/curation/atividadeApp.js";
-import { tentarReservarPublicacao } from "../../lib/importer/shopify/publicacaoEmCurso.js";
+import { reservarPublicacaoEntreProcessos } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import { isShopifyResetRunning } from "../../lib/importer/shopify/shopifyResetJob.server.js";
 import { syncPublishedStockLevels } from "../../lib/importer/shopify/publishedStockSync.server.js";
 import { isShopifySyncRunning } from "../../lib/importer/shopify/shopifySyncJob.server.js";
@@ -267,7 +267,7 @@ export const action = async ({ request }) => {
         let marcaFalhou = false;
         if (!resetEmCurso) {
           try {
-            reserva = tentarReservarPublicacao({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
+            reserva = await reservarPublicacaoEntreProcessos({ marcar: () => marcarAtividadeApp({ tipo: "publicacao" }) });
           } catch (err) {
             marcaFalhou = true;
             console.error("[trigger-sync] ciclo parado antes da publicação: não foi possível marcar a atividade da app.", err?.message || err);

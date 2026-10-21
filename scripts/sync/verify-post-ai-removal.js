@@ -29,6 +29,10 @@ async function main() {
 
   const session = await loadOfflineSessionForShop(SHOP);
   const summary = await runApprovedShopifySync(session, { skus: [SKU] });
+  // DBG-142: sem o trinco de publicação, a verificação não corre por cima de outra publicação ou de um reset.
+  if (summary?.skipped) {
+    throw new Error(`Recusado: ${summary.reason}. Outra publicação ou um reset Shopify está em curso. Nada foi publicado.`);
+  }
 
   console.log("\n=== Concluído sem lançar exceção ===");
   console.log(JSON.stringify(summary, null, 2));

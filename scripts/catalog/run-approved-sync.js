@@ -35,6 +35,11 @@ async function main() {
 
   const t0 = Date.now();
   const res = await runApprovedShopifySync({ shop: SHOP }, { skipInit: true });
+  // DBG-142: outra publicação ou um reset em curso noutro processo. Nada foi publicado, e a saída não é de sucesso.
+  if (res.skipped) {
+    console.error(`Recusado: ${res.reason}. Outra publicação ou um reset Shopify está em curso. Nada foi publicado.`);
+    process.exit(3);
+  }
   const ms = Date.now() - t0;
 
   console.log(`\n── resultado ──`);
