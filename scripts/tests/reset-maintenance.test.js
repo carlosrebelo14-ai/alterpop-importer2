@@ -22,9 +22,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const FONTE = fs.readFileSync(path.join(ROOT, "scripts/maintenance/reset-maintenance.mjs"), "utf8");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "reset-maintenance-"));
 const LOJA = "loja-sintetica.example";
+const SESSAO = "offline_" + LOJA;
 // Eventos que escrevem. Qualquer um deles num dry-run é uma falha.
 const ESCRITAS = ["reset", "reserva:tomar", "reserva:libertar", "marca:publicacao"];
-const PREFIXOS_DO_CONTRATO = /^(RS|RS_ESTADO|RS_D2|RS_GUARDAS|RS_RESULTADO|RS_ERRO): /;
+const PREFIXOS_DO_CONTRATO = /^(RS|RS_ESTADO|RS_D2|RS_GUARDAS|RS_TRAVA|RS_REPARO|RS_RESULTADO|RS_ERRO): /;
 
 const PRODUTOS = [
   { id: "gid://shopify/Product/SINTETICO-001", title: "Título sintético 001", sku: "SKU-SINTETICO-001", tags: ["alterpop"] },
@@ -63,11 +64,18 @@ export function registar(evento, dados = {}) {
 const MOTOR_FALSO = {
   "package.json": '{"type": "module"}\n',
   "stub.mjs": STUB,
-  "lib/importer/shopify/shopifyReset.server.js": String.raw`import { gravarEstado, lerEstado, registar } from "../../../stub.mjs";
+  "lib/importer/shopify/shopifyReset.server.js": String.raw`import fs from "node:fs";
+import path from "node:path";
+import { gravarEstado, lerEstado, registar } from "../../../stub.mjs";
 
 export async function collectProductsForShopifyReset(session, opts = {}) {
   registar("listagem");
   const estado = lerEstado();
+  if (estado.renovaToken && estado.sessao) {
+    // Como loadOfflineSessionForShop: a listagem carrega a sessão offline, e o token renova-se. Grava a sessão nova.
+    estado.sessao = { ...estado.sessao, accessToken: estado.sessao.accessToken + "-renovado" };
+    gravarEstado(estado);
+  }
   if (estado.erroListagem) {
     const primeiro = estado.produtos[0] || { id: "vazio", sku: "vazio" };
     throw new Error("falha de listagem " + primeiro.id + " " + primeiro.sku);
@@ -78,14 +86,21 @@ export async function collectProductsForShopifyReset(session, opts = {}) {
 export async function countShopifyProductsForReset() {
   registar("contagem");
   const estado = lerEstado();
+  const concluido = estado.job?.state === "completed";
   if (estado.erroContagem) throw new Error("falha de contagem");
-  return estado.produtos.length + (estado.contagemFantasma || 0);
+  if (estado.erroContagemFinal && concluido) throw new Error("falha de contagem final");
+  // Antes do reset, a contagem da Shopify pode ficar acima da listagem (contagemExtra). Depois do reset, sobra o contagemFantasma.
+  return estado.produtos.length + (concluido ? estado.contagemFantasma || 0 : estado.contagemExtra || 0);
 }
 
 export async function runShopifyCatalogReset(session, opts = {}) {
   if (opts.dryRun) {
     registar("dry");
     const estado = lerEstado();
+    if (estado.reparaFilaNoDry) {
+      // Como loadCurationQueue no dry-run: o ficheiro corrompido é recuperado, e escreve-se na fila.
+      fs.writeFileSync(path.join(process.cwd(), "curation-queue.json"), JSON.stringify({ items: [], reparada: true }));
+    }
     const estadoFinal = {};
     for (const item of estado.fila) {
       const status = item.status === "PUBLISHED" ? "PENDING" : item.status;
@@ -200,7 +215,10 @@ export function readDbDegraded() {
   return lerEstado().dbDegradado || null;
 }
 `,
-  "lib/curation/curationQueue.server.js": String.raw`import { lerEstado } from "../../stub.mjs";
+  "lib/curation/curationQueue.server.js": String.raw`import path from "node:path";
+import { lerEstado } from "../../stub.mjs";
+
+export const QUEUE_PATH = path.join(process.cwd(), "curation-queue.json");
 
 export async function lerFicheiroDaFilaSemEfeitos() {
   const estado = lerEstado();
@@ -227,6 +245,22 @@ export async function readShopifySyncStatus() {
   return lerEstado().sync || { state: "idle" };
 }
 `,
+  "lib/session/resolveSessionStorage.js": String.raw`import { lerEstado } from "../../stub.mjs";
+
+export function resolveSessionStorage() {
+  return {
+    loadSession: async (id) => {
+      const sessao = lerEstado().sessao;
+      if (!sessao || sessao.id !== id) return undefined;
+      return { id, accessToken: sessao.accessToken };
+    },
+  };
+}
+`,
+  "lib/session/loadOfflineSessionForShop.server.js": String.raw`export function offlineSessionIdForShop(shop) {
+  return "offline_" + shop;
+}
+`,
 };
 
 // ---------- ajudas ----------
@@ -247,6 +281,7 @@ function estadoBase() {
     job: { state: "idle", deleted: 0, failed: 0, revertedLocal: 0 },
     erroListagem: false,
     erroReset: false,
+    sessao: null,
   };
 }
 
@@ -349,6 +384,8 @@ async function casoR1(fonte = FONTE) {
     "RS_ESTADO: estado=SYNC_ERROR n=0",
     "RS_D2: decisoes_humanas_mantidas=0",
     "RS_GUARDAS: indexacao=livre reserva=livre trinco=livre db_degradado=nao",
+    "RS_TRAVA: total_na_loja=3 com_entrada_na_fila=3 igual=sim",
+    "RS_REPARO: fila_reparada=nao token_renovado=nao",
   ]);
 
   // Retoma (D2): decisões humanas depois do primeiro arranque, e o estado final como o motor o deixa.
@@ -409,8 +446,12 @@ async function casoR2(fonte = FONTE) {
 
 async function casoR2b(fonte = FONTE) {
   // A loja muda entre a conferência e a reserva: a segunda conferência, com a reserva tomada, recusa.
+  // O produto novo tem entrada na fila, para a trava passar e a recusa ser a da impressão (a trava vem antes).
   const extra = { id: "gid://shopify/Product/SINTETICO-004", title: "Título sintético 004", sku: "SKU-SINTETICO-004", tags: [] };
-  const raiz = novaRaiz({ aoReservar: { produtos: [...PRODUTOS.map((p) => ({ ...p })), extra] } });
+  const entradaExtra = { sku: "SKU-SINTETICO-004", status: "PENDING", statusChangedAt: "2026-01-01T00:00:00.000Z" };
+  const raiz = novaRaiz({
+    aoReservar: { produtos: [...PRODUTOS.map((p) => ({ ...p })), extra], fila: [...FILA.map((i) => ({ ...i })), entradaExtra] },
+  });
   const r = await correr(raiz, { modo: "execute", ok: impressaoEsperada(IDS_PADRAO), fonte });
   assert.equal(r.status, 3, `loja mudada depois da conferência sai com 3, saiu ${r.status}`);
   assert.deepEqual(linhasDe(r, "RS_ERRO:"), ["RS_ERRO: classe=impressao_diferente"]);
@@ -457,8 +498,8 @@ async function casoR5(fonte = FONTE) {
   const casos = [
     { nome: "indexação (marcador da app)", estado: { atividade: { tipo: "indexacao", pid: 1, origem: "app", motivo: "sintético" } }, classe: "guarda" },
     { nome: "indexação (script)", estado: { script: { tipo: "script", causa: "script", pid: 1, motivo: "sintético" } }, classe: "guarda" },
-    { nome: "indexação (reconstrução em curso)", estado: { rebuild: { state: "running", indexing: true } }, classe: "guarda" },
-    { nome: "reconstrução em curso sem indexing", estado: { rebuild: { state: "running", indexing: false } }, classe: "guarda" },
+    { nome: "reconstrução em curso (indexing)", estado: { rebuild: { state: "running", indexing: true } }, classe: "indexacao_em_curso", codigo: 3 },
+    { nome: "reconstrução em curso sem indexing", estado: { rebuild: { state: "running", indexing: false } }, classe: "indexacao_em_curso", codigo: 3 },
     { nome: "atividade ilegível", estado: { atividade: { tipo: "desconhecida", pid: null, motivo: "sintético" } }, classe: "guarda" },
     { nome: "BD degradada", estado: { dbDegradado: { cause: "sintético", at: null } }, classe: "guarda" },
     { nome: "publicação (marcador)", estado: { atividade: { tipo: "publicacao", pid: 1, origem: "app", motivo: "sintético" } }, classe: "reserva_ocupada" },
@@ -470,7 +511,8 @@ async function casoR5(fonte = FONTE) {
   for (const c of casos) {
     const raiz = novaRaiz(c.estado);
     const r = await correr(raiz, { modo: "execute", ok: impressaoEsperada(IDS_PADRAO), fonte });
-    assert.equal(r.status, 4, `${c.nome}: sai com 4, saiu ${r.status}`);
+    const codigo = c.codigo ?? 4;
+    assert.equal(r.status, codigo, `${c.nome}: sai com ${codigo}, saiu ${r.status}`);
     assert.deepEqual(linhasDe(r, "RS_ERRO:"), [`RS_ERRO: classe=${c.classe}`], c.nome);
     assert.ok(!eventos(raiz).includes("reset"), `${c.nome}: nada apagado`);
     assert.equal(lerEstado(raiz).produtos.length, 3, `${c.nome}: a loja fica como estava`);
@@ -600,7 +642,7 @@ async function casoR11(fonte = FONTE) {
   );
 
   // A leitura final falha depois de o reset correr: sai com leitura_falhou, e o resultado sai com ? no lugar da leitura.
-  const raizLeitura = novaRaiz({ erroContagem: true });
+  const raizLeitura = novaRaiz({ erroContagemFinal: true });
   const leitura = await correr(raizLeitura, { modo: "execute", ok, fonte });
   assert.equal(leitura.status, 2, `leitura final que falha sai com 2, saiu ${leitura.status}`);
   assert.deepEqual(linhasDe(leitura, "RS_ERRO:"), ["RS_ERRO: classe=leitura_falhou"]);
@@ -644,6 +686,226 @@ async function casoR14(fonte = FONTE) {
     linhaUnica(r, "RS_RESULTADO:"),
     "RS_RESULTADO: modo=execute apagados=0 revertidos=0 falhados=0 produtos_restantes=3 published_restantes=1",
   );
+}
+
+// ---------- trava loja/fila, indexação, reparo e saídas (T1 a T7) ----------
+
+/** 57 produtos sintéticos, e entrada na fila em 56 deles: o caso que a trava recusa. */
+function fixtureDeTrava() {
+  const produtos = Array.from({ length: 57 }, (_, i) => {
+    const k = String(i + 1).padStart(3, "0");
+    return { id: `gid://shopify/Product/SINTETICO-${k}`, title: `Título sintético ${k}`, sku: `SKU-SINTETICO-${k}`, tags: [] };
+  });
+  const fila = produtos.slice(0, 56).map((p) => ({ sku: p.sku, status: "PENDING", statusChangedAt: "2026-01-01T00:00:00.000Z" }));
+  return { produtos, fila, ids: produtos.map((p) => p.id) };
+}
+
+async function casoT1(fonte = FONTE) {
+  // Trava: 57 na loja e 56 com entrada na fila. A execução sai com 3 sem apagar, e a reserva é tomada e libertada.
+  const f = fixtureDeTrava();
+  const raiz = novaRaiz({ produtos: f.produtos, fila: f.fila });
+  const r = await correr(raiz, { modo: "execute", ok: impressaoEsperada(f.ids), fonte });
+  assert.equal(r.status, 3, `trava com 57 e 56 sai com 3, saiu ${r.status}`);
+  assert.deepEqual(linhasDe(r, "RS_ERRO:"), ["RS_ERRO: classe=trava_loja_fila"]);
+  assert.equal(linhaUnica(r, "RS_TRAVA:"), "RS_TRAVA: total_na_loja=57 com_entrada_na_fila=56 igual=nao");
+  assert.deepEqual(escritas(raiz), ["reserva:tomar", "marca:publicacao", "reserva:libertar"], "a reserva é tomada e libertada, e mais nada");
+  assert.ok(!eventos(raiz).includes("reset"), "o motor não apaga nada");
+  assert.equal(lerEstado(raiz).produtos.length, 57, "a loja fica como estava");
+  assertSemDados(r, "T1");
+}
+
+async function casoT2(fonte = FONTE) {
+  // A mesma fixture no dry-run: a trava só se imprime (igual=nao), sem saída de erro, e nada é escrito.
+  const f = fixtureDeTrava();
+  const raiz = novaRaiz({ produtos: f.produtos, fila: f.fila });
+  const antes = textoDoEstado(raiz);
+  const r = await correr(raiz, { modo: "dry", fonte });
+  assert.equal(r.status, 0, `o dry com a trava a falhar sai com 0, saiu ${r.status}`);
+  assert.equal(linhaUnica(r, "RS_TRAVA:"), "RS_TRAVA: total_na_loja=57 com_entrada_na_fila=56 igual=nao");
+  assert.deepEqual(linhasDe(r, "RS_ERRO:"), [], "sem RS_ERRO no dry");
+  assert.deepEqual(escritas(raiz), [], "o dry não escreve");
+  assert.equal(textoDoEstado(raiz), antes, "o estado fica igual");
+  assertSemDados(r, "T2");
+}
+
+async function casoT3(fonte = FONTE) {
+  // Indexação em curso (estado running no disco): dry e execute saem com 3, sem tomar a reserva nem apagar.
+  const dry = novaRaiz({ rebuild: { state: "running", indexing: true } });
+  const d = await correr(dry, { modo: "dry", fonte });
+  assert.equal(d.status, 3, `dry com indexação em curso sai com 3, saiu ${d.status}`);
+  assert.deepEqual(linhasDe(d, "RS_ERRO:"), ["RS_ERRO: classe=indexacao_em_curso"]);
+  assert.match(linhaUnica(d, "RS_GUARDAS:"), /indexacao=ocupada/, "as linhas RS saem antes da recusa");
+  assert.deepEqual(escritas(dry), [], "o dry não escreve");
+
+  const exec = novaRaiz({ rebuild: { state: "running", indexing: true } });
+  const e = await correr(exec, { modo: "execute", ok: impressaoEsperada(IDS_PADRAO), fonte });
+  assert.equal(e.status, 3, `execute com indexação em curso sai com 3, saiu ${e.status}`);
+  assert.deepEqual(linhasDe(e, "RS_ERRO:"), ["RS_ERRO: classe=indexacao_em_curso"]);
+  assert.deepEqual(escritas(exec), [], "recusa antes da reserva: nada tomado, nada apagado");
+  assert.equal(lerEstado(exec).produtos.length, 3, "a loja fica como estava");
+  assertSemDados(d, "T3 dry");
+  assertSemDados(e, "T3 execute");
+}
+
+async function casoT4(fonte = FONTE) {
+  // A fila muda durante a leitura (o dry-run repara o ficheiro): fila_reparada=sim. Sem mudança, nao.
+  const mudou = novaRaiz({ reparaFilaNoDry: true });
+  fs.writeFileSync(path.join(mudou, "curation-queue.json"), JSON.stringify({ items: [] }));
+  const a = await correr(mudou, { modo: "dry", fonte });
+  assert.equal(a.status, 0, `saída ${a.status}`);
+  assert.equal(linhaUnica(a, "RS_REPARO:"), "RS_REPARO: fila_reparada=sim token_renovado=nao");
+  assert.deepEqual(escritas(mudou), [], "o driver não escreve na fila: quem escreveu foi a leitura do motor");
+
+  const parada = novaRaiz();
+  fs.writeFileSync(path.join(parada, "curation-queue.json"), JSON.stringify({ items: [] }));
+  const b = await correr(parada, { modo: "dry", fonte });
+  assert.equal(b.status, 0, `saída ${b.status}`);
+  assert.equal(linhaUnica(b, "RS_REPARO:"), "RS_REPARO: fila_reparada=nao token_renovado=nao");
+}
+
+async function casoT5(fonte = FONTE) {
+  // O token da sessão muda durante a leitura (a listagem o renova): token_renovado=sim, e o token nunca sai.
+  const renovou = novaRaiz({ sessao: { id: SESSAO, accessToken: "sintetico-antes" }, renovaToken: true });
+  const a = await correr(renovou, { modo: "dry", fonte });
+  assert.equal(a.status, 0, `saída ${a.status}`);
+  assert.equal(linhaUnica(a, "RS_REPARO:"), "RS_REPARO: fila_reparada=nao token_renovado=sim");
+  assert.ok(!a.stdout.includes("sintetico-antes"), "o token nunca sai no stdout");
+
+  const parado = novaRaiz({ sessao: { id: SESSAO, accessToken: "sintetico-parado" } });
+  const b = await correr(parado, { modo: "dry", fonte });
+  assert.equal(b.status, 0, `saída ${b.status}`);
+  assert.equal(linhaUnica(b, "RS_REPARO:"), "RS_REPARO: fila_reparada=nao token_renovado=nao");
+  assert.ok(!b.stdout.includes("sintetico-parado"), "o token nunca sai no stdout");
+}
+
+async function casoT6(fonte = FONTE) {
+  // As duas linhas saem nos dois modos, no fim da leitura, com os valores certos.
+  const d = await correr(novaRaiz(), { modo: "dry", fonte });
+  assert.equal(d.status, 0, `saída ${d.status}`);
+  assert.deepEqual(d.linhas.slice(-2), [
+    "RS_TRAVA: total_na_loja=3 com_entrada_na_fila=3 igual=sim",
+    "RS_REPARO: fila_reparada=nao token_renovado=nao",
+  ]);
+
+  const e = await correr(novaRaiz(), { modo: "execute", ok: impressaoEsperada(IDS_PADRAO), fonte });
+  assert.equal(e.status, 0, `saída ${e.status}`);
+  assert.equal(linhaUnica(e, "RS_TRAVA:"), "RS_TRAVA: total_na_loja=3 com_entrada_na_fila=3 igual=sim");
+  assert.equal(linhaUnica(e, "RS_REPARO:"), "RS_REPARO: fila_reparada=nao token_renovado=nao");
+  const posicao = (prefixo) => e.linhas.findIndex((l) => l.startsWith(prefixo));
+  assert.ok(
+    posicao("RS_GUARDAS:") < posicao("RS_TRAVA:") && posicao("RS_TRAVA:") < posicao("RS_REPARO:") && posicao("RS_REPARO:") < posicao("RS_RESULTADO:"),
+    "ordem: GUARDAS, TRAVA, REPARO, e só depois o resultado",
+  );
+}
+
+async function casoT7(fonte = FONTE) {
+  // Com a trava a falhar, a saída não traz SKU, GID, título, URL nem a lista dos produtos, nos dois modos.
+  const f = fixtureDeTrava();
+  const dry = await correr(novaRaiz({ produtos: f.produtos, fila: f.fila }), { modo: "dry", fonte });
+  const exec = await correr(novaRaiz({ produtos: f.produtos, fila: f.fila }), { modo: "execute", ok: impressaoEsperada(f.ids), fonte });
+  for (const [nome, r] of [
+    ["dry", dry],
+    ["execute", exec],
+  ]) {
+    assertSemDados(r, `T7 ${nome}`);
+    assert.ok(!r.stdout.includes("://"), `T7 ${nome}: nenhum URL no stdout`);
+    assertFormatoDoContrato(r);
+  }
+  assert.deepEqual(linhasDe(exec, "RS_ERRO:"), ["RS_ERRO: classe=trava_loja_fila"]);
+}
+
+// ---------- achados da revisão (U1 a U5) ----------
+
+/** Dois produtos com o mesmo SKU e só uma entrada na fila para ele: o terceiro produto não tem entrada própria. */
+const PRODUTOS_SKU_REPETIDO = [
+  { id: "gid://shopify/Product/SINTETICO-011", title: "Título sintético 011", sku: "SKU-SINTETICO-011", tags: [] },
+  { id: "gid://shopify/Product/SINTETICO-012", title: "Título sintético 012", sku: "SKU-SINTETICO-012", tags: [] },
+  { id: "gid://shopify/Product/SINTETICO-013", title: "Título sintético 013", sku: "SKU-SINTETICO-011", tags: [] },
+];
+const FILA_SKU_REPETIDO = [
+  { sku: "SKU-SINTETICO-011", status: "PENDING", statusChangedAt: "2026-01-01T00:00:00.000Z" },
+  { sku: "SKU-SINTETICO-012", status: "PENDING", statusChangedAt: "2026-01-01T00:00:00.000Z" },
+  { sku: "SKU-SINTETICO-099", status: "PENDING", statusChangedAt: "2026-01-01T00:00:00.000Z" },
+];
+/** Produto sem SKU: não tem entrada na fila, e não pode contar como se tivesse. */
+const PRODUTO_SEM_SKU = { id: "gid://shopify/Product/SINTETICO-021", title: "Título sintético 021", sku: null, tags: [] };
+
+async function casoU1(fonte = FONTE) {
+  // A Shopify conta 4 produtos e a listagem traz 3, todos com entrada: a trava compara com a contagem, e recusa.
+  const acima = novaRaiz({ contagemExtra: 1 });
+  const d = await correr(acima, { modo: "dry", fonte });
+  assert.equal(d.status, 0, `dry sai com 0, saiu ${d.status}`);
+  assert.equal(linhaUnica(d, "RS_TRAVA:"), "RS_TRAVA: total_na_loja=4 com_entrada_na_fila=3 igual=nao");
+  assert.deepEqual(escritas(acima), [], "o dry não escreve");
+
+  const acimaExec = novaRaiz({ contagemExtra: 1 });
+  const e = await correr(acimaExec, { modo: "execute", ok: impressaoEsperada(IDS_PADRAO), fonte });
+  assert.equal(e.status, 3, `execute com a contagem acima da listagem sai com 3, saiu ${e.status}`);
+  assert.deepEqual(linhasDe(e, "RS_ERRO:"), ["RS_ERRO: classe=trava_loja_fila"]);
+  assert.ok(!eventos(acimaExec).includes("reset"), "nada apagado: a recusa é antes do motor");
+  assert.equal(lerEstado(acimaExec).produtos.length, 3, "a loja fica como estava");
+  assertSemDados(e, "U1 execute");
+
+  // A listagem vem vazia com a loja cheia: a trava recusa, e o motor não apaga o que não listou.
+  const vazia = novaRaiz({ produtos: [], contagemExtra: 3 });
+  const v = await correr(vazia, { modo: "execute", ok: impressaoEsperada([]), fonte });
+  assert.equal(v.status, 3, `listagem vazia com a loja cheia sai com 3, saiu ${v.status}`);
+  assert.deepEqual(linhasDe(v, "RS_ERRO:"), ["RS_ERRO: classe=trava_loja_fila"]);
+  assert.ok(!eventos(vazia).includes("reset"), "nada apagado");
+}
+
+async function casoU2(fonte = FONTE) {
+  // Dois produtos com o mesmo SKU e uma só entrada: um deles não tem entrada própria. Igual=nao, e a execução recusa.
+  const produtos = PRODUTOS_SKU_REPETIDO.map((p) => ({ ...p }));
+  const fila = FILA_SKU_REPETIDO.map((i) => ({ ...i }));
+  const d = await correr(novaRaiz({ produtos, fila }), { modo: "dry", fonte });
+  assert.equal(d.status, 0, `dry sai com 0, saiu ${d.status}`);
+  assert.equal(linhaUnica(d, "RS_TRAVA:"), "RS_TRAVA: total_na_loja=3 com_entrada_na_fila=2 igual=nao");
+
+  const raiz = novaRaiz({ produtos, fila });
+  const e = await correr(raiz, { modo: "execute", ok: impressaoEsperada(produtos.map((p) => p.id)), fonte });
+  assert.equal(e.status, 3, `saiu ${e.status}`);
+  assert.deepEqual(linhasDe(e, "RS_ERRO:"), ["RS_ERRO: classe=trava_loja_fila"]);
+  assert.ok(!eventos(raiz).includes("reset"), "nada apagado");
+  assertSemDados(e, "U2");
+}
+
+async function casoU3(fonte = FONTE) {
+  // Três produtos na loja, duas entradas na fila (para os dois primeiros). O terceiro não tem SKU: igual=nao.
+  const produtos = [...PRODUTOS.slice(0, 2), PRODUTO_SEM_SKU].map((p) => ({ ...p }));
+  const fila = FILA.slice(0, 2).map((i) => ({ ...i }));
+  const d = await correr(novaRaiz({ produtos, fila }), { modo: "dry", fonte });
+  assert.equal(d.status, 0, `dry sai com 0, saiu ${d.status}`);
+  assert.equal(linhaUnica(d, "RS_TRAVA:"), "RS_TRAVA: total_na_loja=3 com_entrada_na_fila=2 igual=nao");
+
+  const raiz = novaRaiz({ produtos, fila });
+  const e = await correr(raiz, { modo: "execute", ok: impressaoEsperada(produtos.map((p) => p.id)), fonte });
+  assert.equal(e.status, 3, `saiu ${e.status}`);
+  assert.deepEqual(linhasDe(e, "RS_ERRO:"), ["RS_ERRO: classe=trava_loja_fila"]);
+  assert.ok(!eventos(raiz).includes("reset"), "nada apagado: o produto sem SKU não é apagado às cegas");
+  assertSemDados(e, "U3");
+}
+
+async function casoU4(fonte = FONTE) {
+  // A reconstrução arranca depois da conferência e antes da reserva: com a reserva tomada, sai com 3 e não com a guarda 4.
+  const raiz = novaRaiz({ aoReservar: { rebuild: { state: "running", indexing: true } } });
+  const r = await correr(raiz, { modo: "execute", ok: impressaoEsperada(IDS_PADRAO), fonte });
+  assert.equal(r.status, 3, `indexação que arranca dentro da reserva sai com 3, saiu ${r.status}`);
+  assert.deepEqual(linhasDe(r, "RS_ERRO:"), ["RS_ERRO: classe=indexacao_em_curso"]);
+  assert.ok(!eventos(raiz).includes("reset"), "nada apagado");
+  assert.ok(eventos(raiz).includes("reserva:libertar"), "a reserva sai");
+  assert.equal(lerEstado(raiz).produtos.length, 3, "a loja fica como estava");
+  assertSemDados(r, "U4");
+}
+
+async function casoU5(fonte = FONTE) {
+  // SHOPIFY_SHOP_URL com protocolo, barra final e maiúsculas: o domínio normaliza-se como no motor, e a sessão acha-se.
+  const renovou = novaRaiz({ sessao: { id: SESSAO, accessToken: "sintetico-antes" }, renovaToken: true });
+  const r = await correr(renovou, { modo: "dry", fonte, env: { SHOPIFY_SHOP_URL: `https://${LOJA.toUpperCase()}/` } });
+  assert.equal(r.status, 0, `saída ${r.status}`);
+  assert.equal(linhaUnica(r, "RS_REPARO:"), "RS_REPARO: fila_reparada=nao token_renovado=sim");
+  assert.ok(!r.stdout.includes("sintetico-antes"), "o token nunca sai no stdout");
+  assertSemDados(r, "U5");
 }
 
 // ---------- execução ----------
@@ -734,7 +996,7 @@ await mutante(
   'if (modo === "execute" && ok === undefined) throw falhar("entrada_invalida");',
   casoR4,
 );
-await check("R5 guardas (indexação, BD degradada, reserva ocupada, reset, sync, atividade ilegível): código 4, nada apagado", () => casoR5());
+await check("R5 guardas (indexação, BD degradada, reserva ocupada, reset, sync, atividade ilegível): código 4, e 3 na reconstrução em curso", () => casoR5());
 await mutante(
   "R5-sem-guarda-de-indexacao",
   'guardas.db === "sim" || guardas.indexacao === "ocupada"',
@@ -822,6 +1084,82 @@ await mutante(
 await check("R12 publicação que entra depois de a reserva sair não conta como falha do reset", () => casoR12());
 await check("R13 o motor apagou mais do que a lista aprovada: sai com 3 e o resultado já impresso", () => casoR13());
 await mutante("R13-sem-conferir-o-total", "if (contadores.total !== esperados) throw falhar(\"impressao_diferente\");", "", casoR13);
+
+console.log("(f) trava loja/fila, indexação em curso, reparo da leitura e saídas");
+await check("T1 trava: 57 na loja e 56 com entrada: execute sai com 3, nada apagado, reserva libertada", () => casoT1());
+await mutante(
+  "T1-sem-trava-na-reserva",
+  'if (!trava.igual) throw falhar("trava_loja_fila");',
+  "",
+  casoT1,
+);
+await check("T2 trava no dry: igual=nao e código 0, sem apagar", () => casoT2());
+await mutante("T2-dry-sai-com-erro", 'if (modo === "dry") {', 'if (modo === "dry") {\n    if (!foto.trava.igual) throw falhar("trava_loja_fila");', casoT2);
+await check("T3 indexação em curso: dry e execute saem com 3 e classe indexacao_em_curso, sem apagar", () => casoT3());
+await mutante(
+  "T3-dry-sem-verificacao",
+  'if (foto.indexacaoEmCurso) throw falhar("indexacao_em_curso");',
+  "",
+  casoT3,
+);
+await mutante(
+  "T3-execute-sem-verificacao",
+  'if (rebuild?.state === "running") throw falhar("indexacao_em_curso");',
+  "",
+  casoT3,
+);
+await check("T4 RS_REPARO: fila_reparada=sim quando a fila muda na leitura, nao quando não muda", () => casoT4());
+await mutante("T4-fila-reparada-fixa", "filaReparada: antes.fila !== depois.fila,", "filaReparada: false,", casoT4);
+await check("T5 RS_REPARO: token_renovado=sim quando o token muda na leitura, nao quando não muda", () => casoT5());
+await mutante("T5-token-renovado-fixo", "tokenRenovado: antes.token !== depois.token }", "tokenRenovado: false }", casoT5);
+await check("T6 RS_TRAVA e RS_REPARO saem nos dois modos, com os valores certos", () => casoT6());
+await mutante("T6-sem-RS_TRAVA", "linha(`RS_TRAVA:", "void (`RS_TRAVA:", casoT6);
+await check("T7 saída sem SKU, GID, título ou URL, mesmo com a trava a falhar", () => casoT7());
+await mutante(
+  "T7-imprime-ids-com-a-trava",
+  'if (!trava.igual) throw falhar("trava_loja_fila");',
+  'if (!trava.igual) { linha(idsDe(produtos).join(" ")); throw falhar("trava_loja_fila"); }',
+  casoT7,
+);
+
+console.log("(g) achados da revisão: total da Shopify, entradas por produto, indexação na reserva e domínio");
+await check("U1 total na loja é a contagem da Shopify, não a listagem: contagem acima da listagem recusa, e listagem vazia também", () => casoU1());
+await mutante(
+  "U1-dry-total-e-a-listagem",
+  "trava: calcularTrava(totalLoja, produtos, fila.items),",
+  "trava: calcularTrava(produtos.length, produtos, fila.items),",
+  casoU1,
+);
+await mutante(
+  "U1-execute-total-e-a-listagem",
+  "const trava = calcularTrava(totalAgora, produtos, fila.items);",
+  "const trava = calcularTrava(produtos.length, produtos, fila.items);",
+  casoU1,
+);
+await check("U2 uma entrada da fila cobre um produto: dois produtos com o mesmo SKU e uma entrada recusam", () => casoU2());
+await mutante(
+  "U2-entrada-conta-para-todos",
+  "      livres.set(chave, restam - 1);",
+  "      livres.set(chave, restam);",
+  casoU2,
+);
+await check("U3 produto sem SKU não tem entrada na fila: a trava recusa", () => casoU3());
+await mutante(
+  "U3-sem-sku-conta-como-entrada",
+  "    if (!temSku(produto?.sku)) continue;\n    const chave = String(produto.sku);\n    const restam = livres.get(chave) || 0;\n    if (restam > 0) {",
+  "    const chave = String(produto?.sku);\n    const restam = livres.get(chave) || 0;\n    if (restam > 0 || !temSku(produto?.sku)) {",
+  casoU3,
+);
+await check("U4 reconstrução que arranca entre a conferência e a reserva: sai com 3 (não com a guarda 4), sem apagar", () => casoU4());
+await mutante(
+  "U4-sem-verificacao-dentro-da-reserva",
+  'if (agora.rebuild?.state === "running") throw falhar("indexacao_em_curso");',
+  "",
+  casoU4,
+);
+await check("U5 SHOPIFY_SHOP_URL com protocolo, barra final e maiúsculas acha a sessão offline e a renovação conta", () => casoU5());
+await mutante("U5-sem-retirar-o-protocolo", '.replace(/^https?:\\/\\//i, "")', "", casoU5);
+await mutante("U5-sem-minusculas", ".toLowerCase()", "", casoU5);
 
 fs.rmSync(tmp, { recursive: true, force: true });
 if (falhas) {

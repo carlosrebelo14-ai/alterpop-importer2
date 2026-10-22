@@ -15,17 +15,30 @@
 //   RS_ESTADO: estado=<PENDING|APPROVED|REJECTED|PUBLISHED|SYNC_ERROR|outro> n=<n>
 //   RS_D2: decisoes_humanas_mantidas=<n>
 //   RS_GUARDAS: indexacao=<livre|ocupada> reserva=<livre|ocupada> trinco=<livre|ocupada> db_degradado=<nao|sim>
+//   RS_TRAVA: total_na_loja=<n> com_entrada_na_fila=<n> igual=<sim|nao>
+//   RS_REPARO: fila_reparada=<sim|nao> token_renovado=<sim|nao>
 //   RS_RESULTADO: modo=execute apagados=<n> revertidos=<n> falhados=<n> produtos_restantes=<n|?> published_restantes=<n|?>
-//   RS_ERRO: classe=<guarda|impressao_diferente|reserva_ocupada|motor_falhou|leitura_falhou|entrada_invalida>
-// As linhas RS, RS_ESTADO, RS_D2 e RS_GUARDAS saem nos dois modos, antes de qualquer escrita.
+//   RS_ERRO: classe=<trava_loja_fila|indexacao_em_curso|guarda|impressao_diferente|reserva_ocupada|motor_falhou|leitura_falhou|entrada_invalida>
+// As linhas RS, RS_ESTADO, RS_D2, RS_GUARDAS, RS_TRAVA e RS_REPARO saem nos dois modos, antes de qualquer escrita.
 // Um ? em RS_RESULTADO quer dizer que essa leitura final falhou. O reset já correu, e a classe diz o resto.
-// Códigos de saída: 0 ok; 64 entrada inválida; 3 impressão diferente; 4 guarda ou reserva recusa;
-// 2 leitura falhou; 1 motor falhou.
+// Códigos de saída: 0 ok; 64 entrada inválida; 3 impressão diferente, trava loja/fila e indexação em curso;
+// 4 guarda ou reserva recusa; 2 leitura falhou; 1 motor falhou.
 //
 // Impressão digital: sha256 dos productIds a apagar, por ordem de código e sem repetições, juntos por "\n".
 // Ficam os 12 primeiros hex. Confere-se antes da reserva (sem escrita) e outra vez dentro dela. Só apaga se bater
 // com RESET_OK. Depois do reset confere-se o total que o motor apagou: o motor relista a loja por conta própria,
 // por isso essa conferência só deteta uma diferença, não a impede.
+//
+// Trava loja/fila: "total_na_loja" é a contagem da Shopify (productsCount), lida à parte, e não o tamanho da listagem
+// do motor. "com_entrada_na_fila" conta os produtos listados que têm uma entrada na fila, uma entrada por produto.
+// Igual=sim só se a contagem, a listagem e as entradas batem. Dentro da reserva, a trava vem antes da confirmação da
+// impressão. No dry-run só se imprime; na execução, igual=nao sai com 3 sem apagar nada.
+// Indexação em curso (estado running no disco da reconstrução) recusa com código 3, nos dois modos, também quando
+// arranca entre a conferência e a reserva.
+// RS_REPARO compara a fila e o token da sessão antes e depois da leitura (a fotografia). Um valor a sim quer dizer que
+// o carregamento da fila (que pode reparar um ficheiro corrompido) ou a listagem (que pode renovar o token) escreveu.
+// Uma escrita da app nesse intervalo também dá sim: o driver não distingue as origens.
+// Na execução, o reset que vem depois da leitura não entra nessa comparação.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -45,6 +58,8 @@ const ESTADOS = ["APPROVED", "PENDING", "PUBLISHED", "REJECTED", "SYNC_ERROR"];
 const CODIGO_DE_SAIDA = {
   entrada_invalida: 64,
   impressao_diferente: 3,
+  trava_loja_fila: 3,
+  indexacao_em_curso: 3,
   guarda: 4,
   reserva_ocupada: 4,
   leitura_falhou: 2,
@@ -221,6 +236,81 @@ function estadoFinalSimulado(itens, desde) {
   return contagem;
 }
 
+/** Mesma normalização de loadOfflineSessionForShop, para achar a sessão offline com o mesmo id. */
+function dominioDaLoja(raw) {
+  return String(raw || "").trim().replace(/^https?:\/\//i, "").replace(/\/$/, "").toLowerCase();
+}
+
+/** Hash dos bytes de um ficheiro, só para comparar antes e depois. Sem ficheiro, 'ausente'; sem leitura, 'ilegivel'. */
+function hashDoFicheiro(caminho) {
+  try {
+    return crypto.createHash("sha256").update(fs.readFileSync(caminho)).digest("hex");
+  } catch (err) {
+    return err?.code === "ENOENT" ? "ausente" : "ilegivel";
+  }
+}
+
+/**
+ * Hash do accessToken da sessão offline da loja, lido sem renovar: loadSession do armazenamento, sem a renovação de
+ * loadOfflineSessionForShop. Sem sessão, 'ausente'; sem leitura, 'ilegivel'. O token nunca sai.
+ */
+async function hashDoToken(motor, shop) {
+  try {
+    const id = motor.sessaoOffline.offlineSessionIdForShop(dominioDaLoja(shop));
+    const sessao = await motor.sessao.resolveSessionStorage().loadSession(id);
+    if (!sessao?.accessToken) return "ausente";
+    return crypto.createHash("sha256").update(String(sessao.accessToken)).digest("hex");
+  } catch {
+    return "ilegivel";
+  }
+}
+
+/** Fila e token, só como hashes, para a comparação antes e depois da leitura. */
+async function instantaneoDaCorrida(motor, shop) {
+  return { fila: hashDoFicheiro(motor.fila.QUEUE_PATH), token: await hashDoToken(motor, shop) };
+}
+
+/** RS_REPARO: uma diferença entre antes e depois da leitura quer dizer que algo escreveu a meio. */
+function reparoDaLeitura(antes, depois) {
+  return { filaReparada: antes.fila !== depois.fila, tokenRenovado: antes.token !== depois.token };
+}
+
+/** Um SKU conta se é texto não vazio. Um produto sem SKU não tem entrada, como o sem_sku do active_vs_queue (DBG-50). */
+const temSku = (sku) => sku !== undefined && sku !== null && sku !== "";
+
+/**
+ * Produtos com entrada na fila: uma entrada da fila cobre um produto. Dois produtos com o mesmo SKU só contam dois se a
+ * fila tiver duas entradas com esse SKU. O active_vs_queue conta por SKU (conjunto), e aqui a regra é mais estrita.
+ */
+function comEntradaNaFila(produtos, itensDaFila) {
+  const livres = new Map();
+  for (const item of itensDaFila) {
+    if (!temSku(item?.sku)) continue;
+    const chave = String(item.sku);
+    livres.set(chave, (livres.get(chave) || 0) + 1);
+  }
+  let comEntrada = 0;
+  for (const produto of produtos) {
+    if (!temSku(produto?.sku)) continue;
+    const chave = String(produto.sku);
+    const restam = livres.get(chave) || 0;
+    if (restam > 0) {
+      livres.set(chave, restam - 1);
+      comEntrada += 1;
+    }
+  }
+  return comEntrada;
+}
+
+/**
+ * Trava loja/fila. `total` é a contagem da Shopify (productsCount), lida à parte: a listagem do motor pode ficar atrás
+ * dela. Igual só se a contagem, a listagem e as entradas batem: cada produto listado tem a sua entrada.
+ */
+function calcularTrava(total, produtos, itensDaFila) {
+  const comEntrada = comEntradaNaFila(produtos, itensDaFila);
+  return { total, comEntrada, igual: total === comEntrada && comEntrada === produtos.length };
+}
+
 /**
  * Loja Shopify. A mesma ordem que o purge usa para a loja de escrita. Sem loja, a entrada está incompleta.
  */
@@ -241,6 +331,8 @@ async function carregarMotor() {
     fila: await import(caminhoDoMotor("lib/curation/curationQueue.server.js")),
     job: await import(caminhoDoMotor("lib/importer/shopify/shopifyResetJob.server.js")),
     sync: await import(caminhoDoMotor("lib/importer/shopify/shopifySyncJob.server.js")),
+    sessao: await import(caminhoDoMotor("lib/session/resolveSessionStorage.js")),
+    sessaoOffline: await import(caminhoDoMotor("lib/session/loadOfflineSessionForShop.server.js")),
   };
 }
 
@@ -254,23 +346,30 @@ async function lerSinais(motor, shop) {
   return { atividade, script, rebuild, sync, resetVivo, db: motor.db.readDbDegraded() };
 }
 
-/** Ids de todos os produtos da loja. O reset apaga a loja toda (scope 'all'), por isso a lista é a da loja. */
-async function listarIds(motor, shop) {
+/** Produtos da loja, como o motor os lista para o reset. O reset apaga a loja toda (scope 'all'). */
+async function listarProdutos(motor, shop) {
   const { products } = await chamar("leitura_falhou", () =>
     motor.reset.collectProductsForShopifyReset({ shop }, { scope: "all" }),
   );
-  return products.map((produto) => produto.id);
+  return products;
 }
 
+/** Total da loja, como a Shopify o conta (productsCount), sem apagar nada. Sem contagem não há trava: falha como leitura. */
+const contarLoja = (motor, shop) => chamar("leitura_falhou", () => motor.reset.countShopifyProductsForReset({ shop }));
+
+const idsDe = (produtos) => produtos.map((produto) => produto.id);
+
 /**
- * Fotografia do estado. Não escreve na loja, na fila nem no estado do reset. A única escrita possível é a da sessão
- * offline, quando o token expirou e o motor o renova (benigno). É o dry-run, e também o ponto de partida da execução.
+ * Fotografia do estado. Não escreve na loja, na fila nem no estado do reset. Pode escrever de forma benigna: a sessão
+ * offline (a listagem renova o token) e a fila (o carregamento no dry-run repara um ficheiro corrompido). RS_REPARO
+ * mostra se o fez. É o dry-run, e também o ponto de partida da execução.
  */
 async function fotografia(motor, shop) {
   // A fila conta-se antes da simulação do motor, como no contrato.
   const fila = await chamar("leitura_falhou", () => motor.fila.lerFicheiroDaFilaSemEfeitos());
   const plano = await chamar("leitura_falhou", () => motor.reset.runShopifyCatalogReset({ shop }, { dryRun: true }));
-  const ids = await listarIds(motor, shop);
+  const produtos = await listarProdutos(motor, shop);
+  const totalLoja = await contarLoja(motor, shop);
   const job = await chamar("leitura_falhou", () => motor.job.readShopifyResetStatus(shop));
   const sinais = await lerSinais(motor, shop);
   const trinco = trincoOcupado(motor.publicacao.caminhoDoTrincoDePublicacao()) ? "ocupada" : "livre";
@@ -279,8 +378,10 @@ async function fotografia(motor, shop) {
     produtosNaLoja: plano.produtosNaLoja,
     publicados: fila.items.filter((item) => item.status === "PUBLISHED").length,
     estadoFinal: estadoFinalSimulado(fila.items, desde),
-    impressao: impressaoDaLista(ids),
+    impressao: impressaoDaLista(idsDe(produtos)),
     d2: decisoesHumanasMantidas(fila.items, desde),
+    trava: calcularTrava(totalLoja, produtos, fila.items),
+    indexacaoEmCurso: sinais.rebuild?.state === "running",
     guardas: { ...avaliarGuardas(sinais, { propria: false }), trinco },
   };
 }
@@ -296,6 +397,13 @@ function imprimirFotografia(foto) {
   linha(`RS_D2: decisoes_humanas_mantidas=${foto.d2}`);
   const g = foto.guardas;
   linha(`RS_GUARDAS: indexacao=${g.indexacao} reserva=${g.reserva} trinco=${g.trinco} db_degradado=${g.db}`);
+  const t = foto.trava;
+  linha(`RS_TRAVA: total_na_loja=${t.total} com_entrada_na_fila=${t.comEntrada} igual=${t.igual ? "sim" : "nao"}`);
+}
+
+/** RS_REPARO, no fim da leitura, nos dois modos. */
+function imprimirReparo(r) {
+  linha(`RS_REPARO: fila_reparada=${r.filaReparada ? "sim" : "nao"} token_renovado=${r.tokenRenovado ? "sim" : "nao"}`);
 }
 
 /** Contagens finais, lidas com a reserva ainda tomada: produtos na loja e PUBLISHED na fila. */
@@ -353,13 +461,20 @@ function conferirFim({ contadores, final, esperados }) {
   if (final.restantes !== 0 || final.publicados !== 0) throw falhar("motor_falhou");
 }
 
-/** Execução: confere a impressão, toma a reserva entre processos, confere outra vez dentro dela e corre o reset real. */
+/**
+ * Execução: confere a indexação e a guarda, depois a impressão, toma a reserva entre processos, confere outra vez dentro
+ * dela (a trava loja/fila vem antes da impressão) e corre o reset real.
+ */
 async function executar(motor, shop, ok, foto) {
+  // Indexação em curso: sai com 3 antes da reserva. Lido outra vez, porque o estado pode ter mudado desde a fotografia.
+  const rebuild = await chamar("leitura_falhou", () => motor.rebuild.readCatalogRebuildStatusFromDisk(shop));
+  if (rebuild?.state === "running") throw falhar("indexacao_em_curso");
   const recusa = classeDaRecusa(foto.guardas);
   if (recusa) throw falhar(recusa);
 
   // Antes da reserva: uma impressão diferente sai sem tomar o trinco nem deixar marca. Nada é escrito.
-  const idsAntes = await listarIds(motor, shop);
+  const produtosAntes = await listarProdutos(motor, shop);
+  const idsAntes = idsDe(produtosAntes);
   if (impressaoDaLista(idsAntes) !== ok) throw falhar("impressao_diferente");
 
   const reserva = await chamar("motor_falhou", () =>
@@ -373,9 +488,17 @@ async function executar(motor, shop, ok, foto) {
   try {
     // Com a reserva tomada, confirma-se o que pode ter mudado. A marca de publicação é a nossa, e não conta.
     const agora = await lerSinais(motor, shop);
+    // Indexação que arrancou entre a conferência e a reserva: sai com 3, como antes da reserva, e não com a guarda 4.
+    if (agora.rebuild?.state === "running") throw falhar("indexacao_em_curso");
     const recusaAgora = classeDaRecusa(avaliarGuardas(agora, { propria: true }));
     if (recusaAgora) throw falhar(recusaAgora);
-    const ids = await listarIds(motor, shop);
+    // Trava loja/fila, com a contagem, a lista e a fila lidas outra vez dentro da reserva. Vem antes da confirmação da impressão.
+    const totalAgora = await contarLoja(motor, shop);
+    const produtos = await listarProdutos(motor, shop);
+    const fila = await chamar("leitura_falhou", () => motor.fila.lerFicheiroDaFilaSemEfeitos());
+    const trava = calcularTrava(totalAgora, produtos, fila.items);
+    if (!trava.igual) throw falhar("trava_loja_fila");
+    const ids = idsDe(produtos);
     if (impressaoDaLista(ids) !== ok) throw falhar("impressao_diferente");
     // Também com a loja vazia: o motor confirma a lista vazia com uma segunda leitura, e fecha o reset (D37).
     const contadores = await apagarComContagem(motor, shop);
@@ -398,9 +521,16 @@ async function principal() {
   if (modo === "execute" && !RESET_OK_RE.test(ok ?? "")) throw falhar("entrada_invalida");
   const shop = lerShop();
   const motor = await chamar("motor_falhou", carregarMotor);
+  const antes = await instantaneoDaCorrida(motor, shop);
   const foto = await fotografia(motor, shop);
+  const depois = await instantaneoDaCorrida(motor, shop);
   imprimirFotografia(foto);
-  if (modo === "dry") return 0;
+  imprimirReparo(reparoDaLeitura(antes, depois));
+  if (modo === "dry") {
+    // Indexação em curso: o dry também recusa, mas só depois de imprimir as linhas RS.
+    if (foto.indexacaoEmCurso) throw falhar("indexacao_em_curso");
+    return 0;
+  }
   return executar(motor, shop, ok, foto);
 }
 

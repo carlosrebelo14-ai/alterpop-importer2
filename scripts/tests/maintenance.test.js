@@ -350,7 +350,7 @@ const IC_SINTETICO = [
 ].join("\n");
 // Saídas sintéticas do driver do reset: o flyctl falso as devolve no lugar da Fly. Só RS e RS_RESULTADO, com contagens.
 const OK_SINTETICO = "0123456789ab";
-const RESET_DRY = [
+const RESET_BASE = [
   "RS: produtos_na_loja=3 itens_publicados=1 impressao=0123456789ab",
   "RS_ESTADO: estado=APPROVED n=1",
   "RS_ESTADO: estado=PENDING n=2",
@@ -361,6 +361,10 @@ const RESET_DRY = [
   "RS_GUARDAS: indexacao=livre reserva=livre trinco=livre db_degradado=nao",
   "",
 ].join("\n");
+// RS_TRAVA e RS_REPARO saem nos dois modos (contrato do driver). Por omissão: loja e fila batem, nada reparado.
+const trava = (igual = "sim", comEntrada = 3, total = 3) => `RS_TRAVA: total_na_loja=${total} com_entrada_na_fila=${comEntrada} igual=${igual}\n`;
+const reparo = (reparada = "nao", token = "nao") => `RS_REPARO: fila_reparada=${reparada} token_renovado=${token}\n`;
+const RESET_DRY = RESET_BASE + trava() + reparo();
 const RESET_EXEC = RESET_DRY + "RS_RESULTADO: modo=execute apagados=3 revertidos=1 falhados=0 produtos_restantes=0 published_restantes=0\n";
 const envDe = (task, phase) =>
   task === "image_check"
@@ -666,9 +670,16 @@ check("reset: nenhum SKU, GID, título, URL nem linha crua sai no stdout, no std
 
 /** Uma cópia do maintenance.sh com uma troca de texto (mutação), numa raiz própria, com o driver ao lado. */
 function trocaUmaSh(texto, nome, antigo, novo) {
-  const vezes = texto.split(antigo).length - 1;
+  const ancora = typeof antigo === "function" ? antigo(texto) : antigo; // âncora calculada a partir do próprio texto
+  const vezes = texto.split(ancora).length - 1;
   if (vezes !== 1) throw new Error(`mutação ${nome}: a âncora tem de existir uma vez (existe ${vezes}x)`);
-  return texto.replace(antigo, () => novo);
+  return texto.replace(ancora, () => novo);
+}
+/** A linha inteira (com o fim de linha) que contém o trecho, única no texto. Para mutar uma linha sem a copiar. */
+function linhaDe(texto, trecho) {
+  const linhas = texto.split("\n").filter((l) => l.includes(trecho));
+  if (linhas.length !== 1) throw new Error(`linha com "${trecho}": existem ${linhas.length}`);
+  return linhas[0] + "\n";
 }
 function scriptMutado(nome, antigo, novo) {
   const raiz = fs.mkdtempSync(path.join(os.tmpdir(), "maint-mut-"));
@@ -690,7 +701,7 @@ function mutanteSh(nome, antigo, novo, caso) {
     if (!apanhou) throw new Error(`mutação ${nome}: o caso não a apanhou`);
   });
 }
-mutanteSh("reset-impressao-sem-conferir", 'if [ "$IMP_LIDA" = "$RESET_OK" ]; then', "if true; then", (script) => {
+mutanteSh("reset-impressao-sem-conferir", 'if [ "$IMP_LIDA" != "$RESET_OK" ]; then', "if false; then", (script) => {
   const r = run("reset_execute", "dry-run", { RESET_OK: "fedcba987654", FAKE_RESET: RESET_DRY }, script);
   assert.equal(r.status, 3, `impressão diferente no job 1 sai com 3, saiu ${r.status}`);
 });
@@ -711,6 +722,125 @@ mutanteSh(
   (script) => {
     const r = run("reset_dry_run", "execute", { FAKE_RESET: RESET_DRY }, script);
     assert.equal(r.status, 64, `reset_dry_run com execute sai com 64, saiu ${r.status}`);
+  },
+);
+
+// S1 a S4: a trava loja/fila, a fila reparada e a indexação entre processos no resumo e nos códigos de saída.
+check("S1 reset_dry_run: imprime 'Loja: total na loja' e 'Fila reparada' com os valores das linhas, e sai com 0 mesmo com igual=nao", () => {
+  const r = run("reset_dry_run", "dry-run", { FAKE_RESET: RESET_BASE + trava("nao", 2, 3) + reparo("sim", "nao") });
+  assert.equal(r.status, 0, r.summaryText);
+  assert.match(r.summaryText, /- Loja: total na loja \*\*3\*\*; com entrada na fila \*\*2\*\*; iguais: \*\*não\*\*\./);
+  assert.match(r.summaryText, /- Fila reparada: \*\*sim\*\*\. Token renovado: \*\*não\*\*\./);
+  assert.match(r.summaryText, /um sim também pode vir de uma escrita da app durante a leitura/i);
+});
+mutanteSh("reset-sem-bullet-loja", (t) => linhaDe(t, "- Loja: total na loja"), "", (script) => {
+  const r = run("reset_dry_run", "dry-run", { FAKE_RESET: RESET_DRY }, script);
+  assert.match(r.summaryText, /Loja: total na loja/, "sem a bullet da loja, o resumo não a tem");
+});
+check("S2 reset_execute, dry-run (job 1): RS_TRAVA igual=nao → código 3, causa de trava e nada em execute; sem a linha da trava → código 2", () => {
+  const r = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_BASE + trava("nao", 2, 3) + reparo() });
+  assert.equal(r.status, 3, r.summaryText);
+  assert.ok(!ran(r, "RESET_MODO=execute"), "nada apagado no job 1");
+  assert.match(r.summaryText, /a loja e a fila não batem: nada foi apagado\. Rever antes do execute\./);
+  assert.doesNotMatch(r.summaryText, /pode aprovar o execute/);
+  const sem = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_BASE + reparo() });
+  assert.equal(sem.status, 2, sem.summaryText);
+  assert.ok(!ran(sem, "RESET_MODO=execute"), "sem a trava, também nada em execute");
+  assert.match(sem.summaryText, /não comparei nada/);
+});
+mutanteSh("reset-job1-sem-trava", "RC=3; causa_reset trava_loja_fila", "RC=0", (script) => {
+  const r = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_BASE + trava("nao", 2, 3) + reparo() }, script);
+  assert.equal(r.status, 3, `loja e fila diferentes no job 1 saem com 3, saiu ${r.status}`);
+  assert.ok(!ran(r, "RESET_MODO=execute"), "o job 1 não chama execute");
+});
+check("S3 reset_execute, dry-run (job 1) e reset_dry_run: classe indexacao_em_curso → código 3 e causa de indexação, mesmo com outro código do driver", () => {
+  for (const rc of ["3", "1"]) {
+    const r = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: "RS_ERRO: classe=indexacao_em_curso\n", FAKE_RESET_RC: rc });
+    assert.equal(r.status, 3, `job 1, driver ${rc}: ${r.summaryText}`);
+    assert.ok(!ran(r, "RESET_MODO=execute"), "nada apagado no job 1");
+    assert.match(r.summaryText, /há uma indexação em curso: nada foi apagado\. Repetir depois\./);
+  }
+  const d = run("reset_dry_run", "dry-run", { FAKE_RESET: "RS_ERRO: classe=indexacao_em_curso\n", FAKE_RESET_RC: "3" });
+  assert.equal(d.status, 3, d.summaryText);
+  assert.match(d.summaryText, /há uma indexação em curso/);
+});
+mutanteSh("reset-sem-causa-indexacao", (t) => linhaDe(t, "indexacao_em_curso) CAUSE="), "", (script) => {
+  const r = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: "RS_ERRO: classe=indexacao_em_curso\n", FAKE_RESET_RC: "3" }, script);
+  assert.match(r.summaryText, /há uma indexação em curso: nada foi apagado/, "sem a causa, a classe cai no texto genérico");
+});
+mutanteSh("reset-job1-sem-rc-indexacao", (t) => linhaDe(t, '"$CLASSE_DRIVER" = "indexacao_em_curso"'), "", (script) => {
+  const r = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: "RS_ERRO: classe=indexacao_em_curso\n", FAKE_RESET_RC: "1" }, script);
+  assert.equal(r.status, 3, `o job 1 sai com 3 com indexação, saiu ${r.status}`);
+});
+check("S4 reset_execute, execute: ok certo e saída limpa chamam o driver em execute; o código 3 do driver (trava) é recusa, não sucesso", () => {
+  const ok = run("reset_execute", "execute", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_EXEC });
+  assert.equal(ok.status, 0, ok.summaryText);
+  assert.ok(ran(ok, `RESET_MODO=execute RESET_OK=${OK_SINTETICO} node --input-type=module -`), "o reset real com o ok");
+  const recusa = run("reset_execute", "execute", {
+    RESET_OK: OK_SINTETICO,
+    FAKE_RESET: RESET_BASE + trava("nao", 2, 3) + reparo() + "RS_ERRO: classe=trava_loja_fila\n",
+    FAKE_RESET_RC: "3",
+  });
+  assert.equal(recusa.status, 3, recusa.summaryText);
+  assert.ok(ran(recusa, "RESET_MODO=execute"), "o execute chamou o driver, que recusou");
+  assert.match(recusa.summaryText, /a loja e a fila não batem: nada foi apagado\. Rever antes do execute\./);
+  assert.doesNotMatch(recusa.summaryText, /Apagados \*\*/);
+});
+mutanteSh("reset-execute-codigo3-sucesso", 'reset_driver execute "$RESET_OK"; RC=$?', 'reset_driver execute "$RESET_OK"; RC=$?; if [ "$RC" -eq 3 ]; then RC=0; fi', (script) => {
+  const r = run("reset_execute", "execute", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_BASE + trava("nao", 2, 3) + reparo() + "RS_ERRO: classe=trava_loja_fila\n", FAKE_RESET_RC: "3" }, script);
+  assert.equal(r.status, 3, `o código 3 do driver não é sucesso, saiu ${r.status}`);
+});
+
+// S5 a S7: o job 1 não aprova com as guardas fechadas nem com uma linha RS incompleta; uma falha de ligação diz que o reset pode ter começado.
+check("S5 reset_execute, dry-run (job 1): guardas fechadas → código 4 e sem 'pode aprovar o execute'; sem a linha das guardas → código 2", () => {
+  const fechadas = [
+    "RS_GUARDAS: indexacao=livre reserva=ocupada trinco=livre db_degradado=nao",
+    "RS_GUARDAS: indexacao=ocupada reserva=livre trinco=livre db_degradado=nao",
+    "RS_GUARDAS: indexacao=livre reserva=livre trinco=livre db_degradado=sim",
+  ];
+  for (const guardas of fechadas) {
+    const r = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_DRY.replace(/^RS_GUARDAS: .*$/m, guardas) });
+    assert.equal(r.status, 4, `${guardas}: sai com 4, saiu ${r.status}: ${r.summaryText}`);
+    assert.doesNotMatch(r.summaryText, /pode aprovar o execute/, guardas);
+    assert.match(r.summaryText, /Guardas ocupadas: não aprovar o execute agora/, guardas);
+    assert.ok(!ran(r, "RESET_MODO=execute"), "nada apagado no job 1");
+  }
+  const sem = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_DRY.replace(/^RS_GUARDAS: .*\n/m, "") });
+  assert.equal(sem.status, 2, sem.summaryText);
+  assert.doesNotMatch(sem.summaryText, /pode aprovar o execute/);
+});
+mutanteSh("reset-job1-guardas-fechadas-passam", 'elif echo "$GUARDAS_LIDAS" | grep -qE \'indexacao=ocupada|reserva=ocupada|db_degradado=sim\'; then', "elif false; then", (script) => {
+  const r = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_DRY.replace(/^RS_GUARDAS: .*$/m, "RS_GUARDAS: indexacao=livre reserva=ocupada trinco=livre db_degradado=nao") }, script);
+  assert.equal(r.status, 4, `guardas fechadas no job 1 saem com 4, saiu ${r.status}`);
+});
+mutanteSh("reset-job1-sem-guardas-aprova", 'elif [ -z "$GUARDAS_LIDAS" ]; then', "elif false; then", (script) => {
+  const r = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_DRY.replace(/^RS_GUARDAS: .*\n/m, "") }, script);
+  assert.equal(r.status, 2, `sem as guardas o job 1 sai com 2, saiu ${r.status}`);
+});
+check("S6 reset_execute, dry-run (job 1): linha RS sem impressão digital → código 2 e causa de leitura, não 'não é a aprovada'", () => {
+  const r = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_DRY.replace(" impressao=0123456789ab", "") });
+  assert.equal(r.status, 2, r.summaryText);
+  assert.match(r.summaryText, /não devolveu a impressão digital da loja/);
+  assert.doesNotMatch(r.summaryText, /não é a aprovada/);
+  assert.ok(!ran(r, "RESET_MODO=execute"), "nada apagado no job 1");
+});
+mutanteSh("reset-job1-linha-sem-impressao-e-3", 'if [ -z "$IMP_LIDA" ]; then', "if false; then", (script) => {
+  const r = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_DRY.replace(" impressao=0123456789ab", "") }, script);
+  assert.equal(r.status, 2, `linha RS sem impressão no job 1 sai com 2, saiu ${r.status}`);
+});
+check("S7 reset_execute, execute: falha de ligação sem classe do driver → código do ssh, e a causa diz que o reset pode já ter começado", () => {
+  const r = run("reset_execute", "execute", { RESET_OK: OK_SINTETICO, FAKE_RESET: "ssh: falhou\n", FAKE_RESET_RC: "255" });
+  assert.equal(r.status, 255, r.summaryText);
+  assert.match(r.summaryText, /ligação ou saída inesperada/);
+  assert.match(r.summaryText, /Se o reset já tinha começado/);
+});
+mutanteSh(
+  "reset-sem-causa-de-ligacao",
+  (t) => linhaDe(t, "devolveu uma classe conhecida"),
+  '    *) CAUSE="o driver do reset não devolveu uma classe conhecida." ;;\n',
+  (script) => {
+    const r = run("reset_execute", "execute", { RESET_OK: OK_SINTETICO, FAKE_RESET: "ssh: falhou\n", FAKE_RESET_RC: "255" }, script);
+    assert.match(r.summaryText, /ligação ou saída inesperada/, "a causa antiga não diz que o reset pode ter começado");
   },
 );
 

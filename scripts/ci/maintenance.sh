@@ -159,6 +159,9 @@ kn() { local v; v="$(kv "$1")"; echo "${v:-0}"; }
 # Reset Shopify: o driver scripts/maintenance/reset-maintenance.mjs vai por stdin em base64, como indexing_status.
 # reset_driver dry | execute <ok>. O ok só chega aqui depois de validado com 12 hex. A saída fica em $OUT, e o resumo
 # só leva contagens, estados e a impressão digital.
+# Trava loja/fila (RS_TRAVA igual=nao) e indexação entre processos (classe indexacao_em_curso): o driver recusa com 3,
+# sem apagar, nos dois modos. O job 1 confirma a trava, a impressão e as guardas antes de se aprovar o execute
+# (guarda fechada no dry-run: código 4, e a frase de aprovação não sai).
 RESET_DRIVER="$ROOT/scripts/maintenance/reset-maintenance.mjs"
 reset_driver() {
   local b64
@@ -180,7 +183,9 @@ causa_reset() {
     leitura_falhou) CAUSE="não consegui ler a loja ou a fila. Se o reset já tinha apagado, ver as contagens." ;;
     motor_falhou) CAUSE="o reset falhou ou não ficou concluído. Ver as contagens do RS_RESULTADO, se saíram." ;;
     entrada_invalida) CAUSE="entrada inválida (modo ou impressão digital)." ;;
-    *) CAUSE="o driver do reset não devolveu uma classe conhecida." ;;
+    trava_loja_fila) CAUSE="a loja e a fila não batem: nada foi apagado. Rever antes do execute." ;;
+    indexacao_em_curso) CAUSE="há uma indexação em curso: nada foi apagado. Repetir depois." ;;
+    *) CAUSE="o driver do reset não devolveu uma classe conhecida (ligação ou saída inesperada). Se o reset já tinha começado, ver as contagens e a loja antes de repetir." ;;
   esac
 }
 
@@ -488,14 +493,36 @@ case "$TASK" in
       DESC="Confere a impressão digital da loja com a aprovada (input ok), sem apagar nada. O reset real só corre no job de execute, depois da aprovação do environment production."
       reset_driver dry; RC=$?
       if [ "$RC" -eq 0 ] && ! grep -q '^RS: ' "$OUT"; then RC=2; CAUSE="o driver do reset não devolveu as contagens: não comparei nada."; fi
+      if [ "$RC" -ne 0 ] && [ -z "$CAUSE" ]; then
+        CLASSE_DRIVER="$(classe_reset)"; causa_reset "$CLASSE_DRIVER"
+        # Indexação a decorrer: o job 1 também recusa com 3, sem apagar, mesmo que o driver saia com outro código.
+        if [ "$CLASSE_DRIVER" = "indexacao_em_curso" ]; then RC=3; fi
+      fi
       if [ "$RC" -eq 0 ]; then
         IMP_LIDA="$(sed 's/\x1b\[[0-9;]*m//g' "$OUT" | grep -E '^RS: ' | head -1 | grep -oE 'impressao=[0-9a-f]{12}' | cut -d= -f2)"
-        if [ "$IMP_LIDA" = "$RESET_OK" ]; then
-          RESULT_OVERRIDE="✅ Impressão igual à aprovada (pode aprovar o execute)"
-        else
+        TRAVA_LIDA="$(sed 's/\x1b\[[0-9;]*m//g' "$OUT" | grep -E '^RS_TRAVA: ' | head -1 | grep -oE 'igual=(sim|nao)' | cut -d= -f2)"
+        GUARDAS_LIDAS="$(sed 's/\x1b\[[0-9;]*m//g' "$OUT" | grep -E '^RS_GUARDAS: ' | head -1)"
+        if [ -z "$IMP_LIDA" ]; then
+          # Linha RS sem impressão digital: leitura incompleta (código 2), não uma impressão diferente.
+          RC=2; CAUSE="o driver do reset não devolveu a impressão digital da loja: não comparei nada."
+        elif [ "$IMP_LIDA" != "$RESET_OK" ]; then
           RC=3; CAUSE="a impressão digital da loja não é a aprovada: nada foi apagado. Repetir o reset_dry_run e rever."
+        elif [ "$TRAVA_LIDA" = "nao" ]; then
+          RC=3; causa_reset trava_loja_fila
+        elif [ "$TRAVA_LIDA" != "sim" ]; then
+          # Sem a linha da trava não há como saber se loja e fila batem: não se aprova nada.
+          RC=2; CAUSE="o driver do reset não devolveu a comparação da loja com a fila: não comparei nada."
+        elif [ -z "$GUARDAS_LIDAS" ]; then
+          # Sem as guardas não se sabe se o execute pode correr agora: não se aprova nada.
+          RC=2; CAUSE="o driver do reset não devolveu as guardas: não sei se o execute pode correr agora."
+        elif echo "$GUARDAS_LIDAS" | grep -qE 'indexacao=ocupada|reserva=ocupada|db_degradado=sim'; then
+          # Com as guardas fechadas, o execute recusa com código 4. A frase de aprovação não pode dizer o contrário.
+          RC=4; RESULT_OVERRIDE="⛔ Guardas ocupadas: não aprovar o execute agora"
+          CAUSE="a app tem atividade em curso (indexação ou publicação) ou a BD está degradada: o execute recusaria sem apagar nada. Repetir depois."
+        else
+          RESULT_OVERRIDE="✅ Impressão igual à aprovada (pode aprovar o execute)"
         fi
-      elif [ -z "$CAUSE" ]; then causa_reset "$(classe_reset)"; fi
+      fi
     fi
     ;;
   image_check)
@@ -734,14 +761,20 @@ case "$TASK" in
     # Só contagens, estados e a impressão digital (12 hex): o driver não imprime SKUs, GIDs nem títulos.
     rsf() { echo "$CLEAN" | grep -E "^$1: " | head -1 | tr ' ' '\n' | grep -E "^$2=" | head -1 | cut -d= -f2-; }
     rse() { local v; v="$(echo "$CLEAN" | grep -E "^RS_ESTADO: estado=$1 " | head -1 | grep -oE 'n=[0-9]+' | cut -d= -f2)"; echo "${v:-0}"; }
+    # rsv <linha> <chave>: como rsf, mas "?" quando o driver não a devolveu (nunca um zero inventado).
+    rsv() { local v; v="$(rsf "$1" "$2")"; echo "${v:-?}"; }
+    # simnao <sim|nao>: o valor da linha em português. "?" se faltar.
+    simnao() { case "$1" in sim) echo "sim" ;; nao) echo "não" ;; *) echo "?" ;; esac; }
     if [ -z "$(rsf RS impressao)" ]; then
       bullets=""; KEY="sem leitura"
     else
       bullets="- Produtos na loja: **$(rsf RS produtos_na_loja)**. Itens publicados na fila: **$(rsf RS itens_publicados)**."
+      bullets="$bullets"$'\n'"- Loja: total na loja **$(rsv RS_TRAVA total_na_loja)**; com entrada na fila **$(rsv RS_TRAVA com_entrada_na_fila)**; iguais: **$(simnao "$(rsf RS_TRAVA igual)")**."
       bullets="$bullets"$'\n'"- Impressão digital da lista a apagar: **$(rsf RS impressao)**."
       bullets="$bullets"$'\n'"- Fila depois do reset: APPROVED **$(rse APPROVED)**, PENDING **$(rse PENDING)**, PUBLISHED **$(rse PUBLISHED)**, REJECTED **$(rse REJECTED)**, SYNC_ERROR **$(rse SYNC_ERROR)**, outro **$(rse outro)**."
       bullets="$bullets"$'\n'"- Decisões humanas mantidas (D2): **$(rsf RS_D2 decisoes_humanas_mantidas)**."
       bullets="$bullets"$'\n'"- Guardas: indexação **$(rsf RS_GUARDAS indexacao)**, reserva **$(rsf RS_GUARDAS reserva)**, trinco **$(rsf RS_GUARDAS trinco)**, BD degradada **$(rsf RS_GUARDAS db_degradado)**."
+      bullets="$bullets"$'\n'"- Fila reparada: **$(simnao "$(rsf RS_REPARO fila_reparada)")**. Token renovado: **$(simnao "$(rsf RS_REPARO token_renovado)")**. Um sim também pode vir de uma escrita da app durante a leitura."
       if [ "$TASK" = "reset_execute" ] && [ "$EFFECTIVE" = "dry-run" ]; then
         if [ "$(rsf RS impressao)" = "${RESET_OK:-}" ]; then conf="sim"; else conf="não"; fi
         bullets="$bullets"$'\n'"- Impressão digital igual à aprovada (ok): **$conf**."
