@@ -6,10 +6,12 @@
 # tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push
 #         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | image_check   (estas só leem; nenhuma aceita execute)
 #         | scale_memory   (muda a memória da única máquina da app; só execute, com aprovação do environment production; Decisão 41)
+#         | reset_dry_run (só lê: o dry-run do reset Shopify, com a impressão digital da lista a apagar)
+#         | reset_execute (o reset real: só execute, com o ok = impressão digital revista; no dry-run confere só o ok, sem apagar)
 # db_push recusa-se com a flag DB_DEGRADED presente no volume (Decisão 34), em dry-run e em execute.
 # image_check corre na Fly por stdin, como indexing_status (scripts/maintenance/image-check.mjs em base64), sem deploy. Só lê.
 # fase    dry-run  só lê (ou lista o que mudaria)
-#         execute  escreve (só tags_cleanup, character_pages_sync, db_push e scale_memory; nas outras é igual ao dry-run)
+#         execute  escreve (só tags_cleanup, character_pages_sync, db_push, scale_memory e reset_execute; nas outras é igual ao dry-run)
 #
 # O repositório é público: logs e resumos só levam CONTAGENS e ESTADOS. A saída bruta da Fly vai para um
 # ficheiro temporário e nunca para o log; daí só se extraem números, ids de verificação (V5...) e estados.
@@ -50,12 +52,15 @@ LOG_SUM=""
 
 case "$TASK" in
   catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | esperar_indexacao | scale_memory | image_check) ;;
+  reset_dry_run | reset_execute) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
 esac
 # As tarefas novas só leem: nenhuma aceita execute, nem como no-op.
 case "$TASK" in
   db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
+  reset_dry_run)
+    if [ "$PHASE" = "execute" ]; then echo "O reset_dry_run só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
 # indexing_status, machine_status, esperar_indexacao e image_check ficam numa guarda própria, para não tocar na linha das tarefas que já recusam execute.
 case "$TASK" in
@@ -68,7 +73,7 @@ case "$PHASE" in
 esac
 
 WRITES=false
-case "$TASK" in volume_snapshot | tags_cleanup | character_pages_sync | db_push | scale_memory) WRITES=true ;; esac
+case "$TASK" in volume_snapshot | tags_cleanup | character_pages_sync | db_push | scale_memory | reset_execute) WRITES=true ;; esac
 EFFECTIVE="$PHASE"
 if [ "$WRITES" = false ]; then EFFECTIVE="dry-run"; fi
 
@@ -150,6 +155,39 @@ wal_state() {
 kv() { echo "$LOG_SUM" | grep -E "^$1=" | head -1 | cut -d= -f2-; }
 # kn <chave>: como kv, mas 0 quando a chave não existe (para comparar com -gt).
 kn() { local v; v="$(kv "$1")"; echo "${v:-0}"; }
+
+# Reset Shopify: o driver scripts/maintenance/reset-maintenance.mjs vai por stdin em base64, como indexing_status.
+# reset_driver dry | execute <ok>. O ok só chega aqui depois de validado com 12 hex. A saída fica em $OUT, e o resumo
+# só leva contagens, estados e a impressão digital.
+# Trava loja/fila (RS_TRAVA igual=nao) e indexação entre processos (classe indexacao_em_curso): o driver recusa com 3,
+# sem apagar, nos dois modos. O job 1 confirma a trava, a impressão e as guardas antes de se aprovar o execute
+# (guarda fechada no dry-run: código 4, e a frase de aprovação não sai).
+RESET_DRIVER="$ROOT/scripts/maintenance/reset-maintenance.mjs"
+reset_driver() {
+  local b64
+  b64="$(base64 -w0 "$RESET_DRIVER")"
+  if [ "$1" = "execute" ]; then
+    remote "echo $b64 | base64 -d | RESET_MODO=execute RESET_OK=$2 node --input-type=module -"
+  else
+    remote "echo $b64 | base64 -d | RESET_MODO=dry node --input-type=module -"
+  fi
+}
+# classe_reset: a classe do driver (RS_ERRO: classe=...). Nunca o texto do erro.
+classe_reset() { sed 's/\x1b\[[0-9;]*m//g' "$OUT" | grep -oE 'RS_ERRO: classe=[a-z_]+' | head -1 | cut -d= -f2; }
+# causa_reset <classe>: a causa em português. Nunca o texto do erro.
+causa_reset() {
+  case "$1" in
+    guarda) CAUSE="a app tinha atividade em curso (indexação, publicação ou BD degradada). Se o reset já tinha começado, ver as contagens. Repetir depois." ;;
+    impressao_diferente) CAUSE="a impressão digital da loja não é a aprovada. Se o reset já tinha apagado, ver as contagens; senão nada foi apagado. Repetir o reset_dry_run e rever." ;;
+    reserva_ocupada) CAUSE="a reserva da publicação está ocupada (publicação ou reset noutro processo): nada foi apagado. Repetir depois." ;;
+    leitura_falhou) CAUSE="não consegui ler a loja ou a fila. Se o reset já tinha apagado, ver as contagens." ;;
+    motor_falhou) CAUSE="o reset falhou ou não ficou concluído. Ver as contagens do RS_RESULTADO, se saíram." ;;
+    entrada_invalida) CAUSE="entrada inválida (modo ou impressão digital)." ;;
+    trava_loja_fila) CAUSE="a loja e a fila não batem: nada foi apagado. Rever antes do execute." ;;
+    indexacao_em_curso) CAUSE="há uma indexação em curso: nada foi apagado. Repetir depois." ;;
+    *) CAUSE="o driver do reset não devolveu uma classe conhecida (ligação ou saída inesperada). Se o reset já tinha começado, ver as contagens e a loja antes de repetir." ;;
+  esac
+}
 
 RC=0
 KEY=""
@@ -434,6 +472,59 @@ case "$TASK" in
       fi
     fi
     ;;
+  reset_dry_run)
+    # Só lê: o driver em RESET_MODO=dry não apaga, não toma a reserva e não escreve o trinco.
+    DESC="Dry-run do reset Shopify em produção: conta os produtos da loja e os itens publicados, o estado da fila depois do reset, as decisões humanas mantidas e as guardas, e imprime a impressão digital da lista a apagar. Não escreve na loja, na fila nem no estado do reset: não apaga nada e não toma a reserva de publicação."
+    reset_driver dry; RC=$?
+    if [ "$RC" -eq 0 ] && ! grep -q '^RS: ' "$OUT"; then RC=2; CAUSE="o driver do reset não devolveu as contagens: não li nada."; fi
+    if [ "$RC" -ne 0 ] && [ -z "$CAUSE" ]; then causa_reset "$(classe_reset)"; fi
+    ;;
+  reset_execute)
+    # O ok é a impressão digital que o reset_dry_run mostrou (12 hex). Sem um ok válido, nada corre.
+    if ! [[ "${RESET_OK:-}" =~ ^[0-9a-f]{12}$ ]]; then
+      RC=64; CAUSE="falta a impressão digital aprovada (input ok, 12 hex): nada foi feito."
+    elif [ "$EFFECTIVE" = "execute" ]; then
+      DESC="Reset Shopify em produção: apaga os produtos da loja e reverte a fila local, com a reserva de publicação tomada. O driver só apaga se a impressão digital da loja for a aprovada. Escreve na loja e na fila."
+      reset_driver execute "$RESET_OK"; RC=$?
+      if [ "$RC" -eq 0 ] && ! grep -q '^RS_RESULTADO: ' "$OUT"; then RC=2; CAUSE="o reset não devolveu o resultado: não confirmo a loja nem a fila."; fi
+      if [ "$RC" -ne 0 ] && [ -z "$CAUSE" ]; then causa_reset "$(classe_reset)"; fi
+    else
+      # Job 1: refaz o dry-run e compara a impressão digital com o ok. Não apaga nada.
+      DESC="Confere a impressão digital da loja com a aprovada (input ok), sem apagar nada. O reset real só corre no job de execute, depois da aprovação do environment production."
+      reset_driver dry; RC=$?
+      if [ "$RC" -eq 0 ] && ! grep -q '^RS: ' "$OUT"; then RC=2; CAUSE="o driver do reset não devolveu as contagens: não comparei nada."; fi
+      if [ "$RC" -ne 0 ] && [ -z "$CAUSE" ]; then
+        CLASSE_DRIVER="$(classe_reset)"; causa_reset "$CLASSE_DRIVER"
+        # Indexação a decorrer: o job 1 também recusa com 3, sem apagar, mesmo que o driver saia com outro código.
+        if [ "$CLASSE_DRIVER" = "indexacao_em_curso" ]; then RC=3; fi
+      fi
+      if [ "$RC" -eq 0 ]; then
+        IMP_LIDA="$(sed 's/\x1b\[[0-9;]*m//g' "$OUT" | grep -E '^RS: ' | head -1 | grep -oE 'impressao=[0-9a-f]{12}' | cut -d= -f2)"
+        TRAVA_LIDA="$(sed 's/\x1b\[[0-9;]*m//g' "$OUT" | grep -E '^RS_TRAVA: ' | head -1 | grep -oE 'igual=(sim|nao)' | cut -d= -f2)"
+        GUARDAS_LIDAS="$(sed 's/\x1b\[[0-9;]*m//g' "$OUT" | grep -E '^RS_GUARDAS: ' | head -1)"
+        if [ -z "$IMP_LIDA" ]; then
+          # Linha RS sem impressão digital: leitura incompleta (código 2), não uma impressão diferente.
+          RC=2; CAUSE="o driver do reset não devolveu a impressão digital da loja: não comparei nada."
+        elif [ "$IMP_LIDA" != "$RESET_OK" ]; then
+          RC=3; CAUSE="a impressão digital da loja não é a aprovada: nada foi apagado. Repetir o reset_dry_run e rever."
+        elif [ "$TRAVA_LIDA" = "nao" ]; then
+          RC=3; causa_reset trava_loja_fila
+        elif [ "$TRAVA_LIDA" != "sim" ]; then
+          # Sem a linha da trava não há como saber se loja e fila batem: não se aprova nada.
+          RC=2; CAUSE="o driver do reset não devolveu a comparação da loja com a fila: não comparei nada."
+        elif [ -z "$GUARDAS_LIDAS" ]; then
+          # Sem as guardas não se sabe se o execute pode correr agora: não se aprova nada.
+          RC=2; CAUSE="o driver do reset não devolveu as guardas: não sei se o execute pode correr agora."
+        elif echo "$GUARDAS_LIDAS" | grep -qE 'indexacao=ocupada|reserva=ocupada|db_degradado=sim'; then
+          # Com as guardas fechadas, o execute recusa com código 4. A frase de aprovação não pode dizer o contrário.
+          RC=4; RESULT_OVERRIDE="⛔ Guardas ocupadas: não aprovar o execute agora"
+          CAUSE="a app tem atividade em curso (indexação ou publicação) ou a BD está degradada: o execute recusaria sem apagar nada. Repetir depois."
+        else
+          RESULT_OVERRIDE="✅ Impressão igual à aprovada (pode aprovar o execute)"
+        fi
+      fi
+    fi
+    ;;
   image_check)
     # Só lê, como indexing_status: o script vai por stdin em base64, sem deploy. Nunca aceita execute.
     DESC="Lê o catálogo indexado: conta os imageUrl por esquema e os hosts mais frequentes, e faz GET a 20 URLs ao acaso, sem e com Referer da app. Só lê. Não mostra URLs nem SKUs. Os pedidos saem da Fly (IP de datacenter), não do browser: um bloqueio por IP parece uma imagem partida."
@@ -665,6 +756,37 @@ case "$TASK" in
     ;;
   scale_memory)
     bullets="$SM_BULLETS"; KEY="$SM_KEY"
+    ;;
+  reset_dry_run | reset_execute)
+    # Só contagens, estados e a impressão digital (12 hex): o driver não imprime SKUs, GIDs nem títulos.
+    rsf() { echo "$CLEAN" | grep -E "^$1: " | head -1 | tr ' ' '\n' | grep -E "^$2=" | head -1 | cut -d= -f2-; }
+    rse() { local v; v="$(echo "$CLEAN" | grep -E "^RS_ESTADO: estado=$1 " | head -1 | grep -oE 'n=[0-9]+' | cut -d= -f2)"; echo "${v:-0}"; }
+    # rsv <linha> <chave>: como rsf, mas "?" quando o driver não a devolveu (nunca um zero inventado).
+    rsv() { local v; v="$(rsf "$1" "$2")"; echo "${v:-?}"; }
+    # simnao <sim|nao>: o valor da linha em português. "?" se faltar.
+    simnao() { case "$1" in sim) echo "sim" ;; nao) echo "não" ;; *) echo "?" ;; esac; }
+    if [ -z "$(rsf RS impressao)" ]; then
+      bullets=""; KEY="sem leitura"
+    else
+      bullets="- Produtos na loja: **$(rsf RS produtos_na_loja)**. Itens publicados na fila: **$(rsf RS itens_publicados)**."
+      bullets="$bullets"$'\n'"- Loja: total na loja **$(rsv RS_TRAVA total_na_loja)**; com entrada na fila **$(rsv RS_TRAVA com_entrada_na_fila)**; iguais: **$(simnao "$(rsf RS_TRAVA igual)")**."
+      bullets="$bullets"$'\n'"- Impressão digital da lista a apagar: **$(rsf RS impressao)**."
+      bullets="$bullets"$'\n'"- Fila depois do reset: APPROVED **$(rse APPROVED)**, PENDING **$(rse PENDING)**, PUBLISHED **$(rse PUBLISHED)**, REJECTED **$(rse REJECTED)**, SYNC_ERROR **$(rse SYNC_ERROR)**, outro **$(rse outro)**."
+      bullets="$bullets"$'\n'"- Decisões humanas mantidas (D2): **$(rsf RS_D2 decisoes_humanas_mantidas)**."
+      bullets="$bullets"$'\n'"- Guardas: indexação **$(rsf RS_GUARDAS indexacao)**, reserva **$(rsf RS_GUARDAS reserva)**, trinco **$(rsf RS_GUARDAS trinco)**, BD degradada **$(rsf RS_GUARDAS db_degradado)**."
+      bullets="$bullets"$'\n'"- Fila reparada: **$(simnao "$(rsf RS_REPARO fila_reparada)")**. Token renovado: **$(simnao "$(rsf RS_REPARO token_renovado)")**. Um sim também pode vir de uma escrita da app durante a leitura."
+      if [ "$TASK" = "reset_execute" ] && [ "$EFFECTIVE" = "dry-run" ]; then
+        if [ "$(rsf RS impressao)" = "${RESET_OK:-}" ]; then conf="sim"; else conf="não"; fi
+        bullets="$bullets"$'\n'"- Impressão digital igual à aprovada (ok): **$conf**."
+        KEY="impressão $(rsf RS impressao), $(rsf RS produtos_na_loja) produtos, $(rsf RS itens_publicados) publicados"
+      fi
+      if [ "$TASK" = "reset_execute" ] && [ "$EFFECTIVE" = "execute" ] && grep -q '^RS_RESULTADO: ' <<< "$CLEAN"; then
+        bullets="$bullets"$'\n'"- Apagados **$(rsf RS_RESULTADO apagados)**, revertidos **$(rsf RS_RESULTADO revertidos)**, falhados **$(rsf RS_RESULTADO falhados)**."
+        bullets="$bullets"$'\n'"- Depois do reset: produtos restantes na loja **$(rsf RS_RESULTADO produtos_restantes)**, PUBLISHED restantes na fila **$(rsf RS_RESULTADO published_restantes)** (? quer dizer que a leitura final falhou)."
+        KEY="apagados $(rsf RS_RESULTADO apagados), revertidos $(rsf RS_RESULTADO revertidos), restantes $(rsf RS_RESULTADO produtos_restantes), PUBLISHED $(rsf RS_RESULTADO published_restantes)"
+      fi
+      if [ -z "$KEY" ]; then KEY="impressão $(rsf RS impressao), $(rsf RS produtos_na_loja) produtos, $(rsf RS itens_publicados) publicados"; fi
+    fi
     ;;
   image_check)
     # Lê as linhas IC:, IC_HOST:, IC_AMOSTRA:, IC_TOTAIS:, IC_RESULTADO: e IC_ERRO: (scripts/maintenance/image-check.mjs).
