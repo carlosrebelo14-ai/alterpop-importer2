@@ -603,5 +603,34 @@ Não bloqueantes, registados como DBG:
 - DBG-218, Baixa. Os testes estáticos R1 a R4 dependem de texto. A regra de comportamento está coberta pelos casos dinâmicos, mas a rota e o painel não são executados.
 - DBG-219, Baixa. A listagem corre antes da reserva da publicação. Uma indexação pode repor um produto no feed entre as duas. O `--skus` aprovado limita o estrago, mas não elimina a janela.
 
+### PR 140: miniatura do painel pela rota da app (22/10/2026)
+
+Merge do PR #140 em `main` (SHA `d0627f7`, travado no head `1f99733`, check `suites` verde). Deploy `deploy.yml` disparado em `main` (run `39783468474`, número 31), à espera da aprovação do environment `production`. A verificação pós-deploy é do arquiteto.
+
+A miniatura passa a pedir a imagem à rota `/api/catalog-image/<sku>/<índice>`. Diagnóstico confirmado pela tarefa `image_check` (run `39772189950`): o fornecedor bloqueia pedidos com Referer da app e responde 200 sem Referer.
+
+Ressalvas aceites pelo arquiteto, sem correção nesta ronda:
+
+- DBG-220, Baixa. O `?v=` do URL assume que uma foto nova tem URL novo. Se o fornecedor trocar a foto no mesmo URL, o browser mantém a antiga até 7 dias (`max-age=604800`). Confirmar com o fornecedor.
+- DBG-221, Baixa. Pedidos abandonados ocupam a fila do limitador. A rota não passa `request.signal` à lib, e o limitador não larga entradas. Com várias páginas carregadas em menos de 30 s, pode haver 503 a pedidos vivos.
+- DBG-222, Baixa. Um SKU `.` ou `..` não funciona: o browser normaliza o segmento de caminho e pede outra rota. Com EAN, não acontece.
+- DBG-223, Baixa. Um 404 do fornecedor gera até três pedidos por miniatura, porque o componente repete a imagem com pausa. Uma imagem em falta gera carga extra no servidor.
+
+Acréscimos aceites, sem DBG:
+
+- Espera máxima de 30 s na fila do limitador. Passado isto, responde-se 503.
+- Repetição no componente: um erro, incluindo 503, pede a imagem outra vez depois de 5 s, até três pedidos no total.
+
+Decisões de desenho aceites: teto de 4 pedidos simultâneos ao fornecedor, por processo, com fila de 100 e 503 acima disso. Cache LRU em memória de 32 MB e 30 min por URL do fornecedor. Rota anónima, porque as imagens são públicas do fornecedor e os SKU são EAN.
+
+### PR 142: reset_dry_run e reset_execute (22/10/2026)
+
+Merge do PR #142 em `main` (merge `20de1a3`, head `77869f1`, check `suites` verde no head). O merge foi feito por um subagente de correção, com SHA travado, e aceite pelo arquiteto.
+
+Ressalvas aceites, registadas para o lote 3:
+
+- DBG-224, Média. A indexação não vê a reserva de publicação entre processos. `startCatalogIndexingWorker` só recusa pela reserva em memória e pelos marcadores de script. O driver do reset verifica o ficheiro de estado da reconstrução (`running`) antes de reservar e antes de apagar, mas uma indexação que arranque depois dessa verificação não é travada. A correção está em `lib/importer/catalog/indexingStream.server.js`, fora do PR #142.
+- DBG-225, Baixa. O `ok` é a única barreira fora do environment `production`. A aprovação do environment é a barreira humana. A impressão digital do dry-run confere coerência entre o que foi revisto e o que se apaga, mas não autoriza nada por si. Aceite.
+
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._
