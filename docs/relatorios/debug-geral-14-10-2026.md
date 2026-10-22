@@ -623,5 +623,14 @@ Acréscimos aceites, sem DBG:
 
 Decisões de desenho aceites: teto de 4 pedidos simultâneos ao fornecedor, por processo, com fila de 100 e 503 acima disso. Cache LRU em memória de 32 MB e 30 min por URL do fornecedor. Rota anónima, porque as imagens são públicas do fornecedor e os SKU são EAN.
 
+### PR 142: reset_dry_run e reset_execute (22/10/2026)
+
+Merge do PR #142 em `main` (merge `20de1a3`, head `77869f1`, check `suites` verde no head). O merge foi feito por um subagente de correção, com SHA travado, e aceite pelo arquiteto.
+
+Ressalvas aceites, registadas para o lote 3:
+
+- DBG-224, Média. A indexação não vê a reserva de publicação entre processos. `startCatalogIndexingWorker` só recusa pela reserva em memória e pelos marcadores de script. O driver do reset verifica o ficheiro de estado da reconstrução (`running`) antes de reservar e antes de apagar, mas uma indexação que arranque depois dessa verificação não é travada. A correção está em `lib/importer/catalog/indexingStream.server.js`, fora do PR #142.
+- DBG-225, Baixa. O `ok` é a única barreira fora do environment `production`. A aprovação do environment é a barreira humana. A impressão digital do dry-run confere coerência entre o que foi revisto e o que se apaga, mas não autoriza nada por si. Aceite.
+
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._
