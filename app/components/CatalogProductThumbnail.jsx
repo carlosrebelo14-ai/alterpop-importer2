@@ -2,20 +2,28 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { ImagePlaceholderIcon } from "./InlineSvgIcon.jsx";
+import {
+  resolveAllProductImages,
+  resolveProductImageSource,
+  urlDaImagemDoCatalogo,
+} from "../../lib/catalog/productImages.js";
+
+// Reexporta com os mesmos nomes, para quem os importa daqui continuar a funcionar.
+export { resolveAllProductImages, resolveProductImageSource };
 
 /**
  * Miniatura para ResourceList — img nativo com galeria de imagens e lightbox.
- * @param {{ imageUrl?: string | string[] | null, title?: string, size?: number }} props
+ * A imagem vem sempre da rota da app, por SKU e índice. O URL do fornecedor não chega ao browser.
+ * @param {{ sku?: string, imageUrl?: string | string[] | null, title?: string, size?: number }} props
  */
-export function CatalogProductThumbnail({ imageUrl, title = "", size = 50 }) {
+export function CatalogProductThumbnail({ sku, imageUrl, title = "", size = 50 }) {
   const [failed, setFailed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
 
+  // O imageUrl só conta as imagens. Nunca é usado como src.
   const images = resolveAllProductImages(imageUrl);
-  const mainSource = images[0] || null;
-  const currentSource = images[activeIdx] || mainSource;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -32,7 +40,8 @@ export function CatalogProductThumbnail({ imageUrl, title = "", size = 50 }) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, images.length]);
 
-  if (!mainSource || failed) {
+  // Sem imagens, sem SKU ou com erro de carregamento: placeholder.
+  if (images.length === 0 || !sku || failed) {
     return (
       <div
         style={{
@@ -168,7 +177,7 @@ export function CatalogProductThumbnail({ imageUrl, title = "", size = 50 }) {
                 )}
 
                 <img
-                  src={currentSource}
+                  src={urlDaImagemDoCatalogo(sku, activeIdx)}
                   alt={title}
                   style={{
                     maxWidth: "100%",
@@ -207,10 +216,10 @@ export function CatalogProductThumbnail({ imageUrl, title = "", size = 50 }) {
 
               {images.length > 1 && (
                 <div style={{ display: "flex", gap: 6, marginTop: 12, overflowX: "auto", maxWidth: "100%", padding: "4px 0" }}>
-                  {images.map((url, i) => (
+                  {images.map((_, i) => (
                     <img
                       key={i}
-                      src={url}
+                      src={urlDaImagemDoCatalogo(sku, i)}
                       alt=""
                       onClick={() => setActiveIdx(i)}
                       style={{
@@ -258,7 +267,7 @@ export function CatalogProductThumbnail({ imageUrl, title = "", size = 50 }) {
   return (
     <div style={{ position: "relative", display: "inline-block", flexShrink: 0 }}>
       <img
-        src={mainSource}
+        src={urlDaImagemDoCatalogo(sku, 0)}
         alt={title}
         width={size}
         height={size}
@@ -314,27 +323,4 @@ export function CatalogProductThumbnail({ imageUrl, title = "", size = 50 }) {
       {modalNode}
     </div>
   );
-}
-
-/** @param {string | string[] | null | undefined} imageUrl */
-export function resolveAllProductImages(imageUrl) {
-  if (!imageUrl) return [];
-  if (Array.isArray(imageUrl)) return imageUrl.filter(Boolean);
-  const str = String(imageUrl).trim();
-  if (!str) return [];
-  const parts = str.split(/[,;|\n\r]+/);
-  const valid = [];
-  for (const p of parts) {
-    const clean = p.trim().replace(/^["']|["']$/g, "");
-    if (clean && /^https?:\/\/[^\s]+/i.test(clean)) {
-      valid.push(clean);
-    }
-  }
-  return Array.from(new Set(valid));
-}
-
-/** @param {string | null | undefined} imageUrl */
-export function resolveProductImageSource(imageUrl) {
-  const images = resolveAllProductImages(imageUrl);
-  return images[0] || null;
 }

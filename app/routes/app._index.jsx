@@ -2685,7 +2685,7 @@ export default function CurationDashboard() {
                             <IndexTable.Row id={sku} key={sku} position={index} selected={selected}>
                               <IndexTable.Cell>
                                 <InlineStack gap="200" blockAlign="center" wrap={false}>
-                                  <CatalogProductThumbnail imageUrl={imageUrl} title={title} size={thumbSize} />
+                                  <CatalogProductThumbnail sku={sku} imageUrl={imageUrl} title={title} size={thumbSize} />
                                   <BlockStack gap="050">
                                     <Text as="span" variant={density === "compact" ? "bodySm" : "bodyMd"} fontWeight="semibold">
                                       {title}
