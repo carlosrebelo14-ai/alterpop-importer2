@@ -4,7 +4,7 @@
 #   bash scripts/ci/maintenance.sh <tarefa> <fase>
 #
 # tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push
-#         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | image_check   (estas só leem; nenhuma aceita execute)
+#         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | image_check | reset_status   (estas só leem; nenhuma aceita execute)
 #         | scale_memory   (muda a memória da única máquina da app; só execute, com aprovação do environment production; Decisão 41)
 #         | reset_dry_run (só lê: o dry-run do reset Shopify, com a impressão digital da lista a apagar)
 #         | reset_execute (o reset real: só execute, com o ok = impressão digital revista; no dry-run confere só o ok, sem apagar)
@@ -51,7 +51,7 @@ RESTORE_OUT="$(mktemp)"
 LOG_SUM=""
 
 case "$TASK" in
-  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | esperar_indexacao | scale_memory | image_check) ;;
+  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | esperar_indexacao | scale_memory | image_check | reset_status) ;;
   reset_dry_run | reset_execute) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
 esac
@@ -64,7 +64,7 @@ case "$TASK" in
 esac
 # indexing_status, machine_status, esperar_indexacao e image_check ficam numa guarda própria, para não tocar na linha das tarefas que já recusam execute.
 case "$TASK" in
-  indexing_status | machine_status | esperar_indexacao | image_check)
+  indexing_status | machine_status | esperar_indexacao | image_check | reset_status)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
 case "$PHASE" in
@@ -538,6 +538,21 @@ case "$TASK" in
       if [ "$RC" -eq 0 ] && ! grep -q "^IC: " "$OUT"; then RC=2; CAUSE="a Fly não devolveu a linha de contagens: não li nada."; fi
     fi
     ;;
+  reset_status)
+    # Só lê o ficheiro de estado do reset: script por stdin em base64, sem deploy. Nunca aceita execute.
+    DESC="Lê o ficheiro de estado do reset Shopify: a tentativa, se retomou outra, e os contadores e a janela. Só lê. Não mostra SKUs, títulos nem textos de erro."
+    if [ ! -f "$ROOT/scripts/maintenance/reset-status.mjs" ]; then
+      RC=2; CAUSE="o script reset-status.mjs não está no repositório: não li nada."
+    else
+      RS64="$(base64 -w0 "$ROOT/scripts/maintenance/reset-status.mjs")"
+      remote "echo $RS64 | base64 -d | node --input-type=module -"; RC=$?
+      if [ "$RC" -eq 0 ] && grep -q "^RS_STATUS: " "$OUT"; then RESULT_OVERRIDE="✅ Estado lido (ver contagens)"; fi
+      # Sem a linha de estado, um exit 0 não é leitura: falha em vez de passar por verde.
+      if [ "$RC" -eq 0 ] && ! grep -q "^RS_STATUS: " "$OUT"; then RC=2; CAUSE="a Fly não devolveu a linha de estado: não li nada."; fi
+      if [ "$RC" -eq 64 ]; then CAUSE="a Fly não tem a loja no ambiente: não li nada."; fi
+      if [ "$RC" -ne 0 ] && [ "$RC" -ne 64 ] && [ -z "$CAUSE" ]; then CAUSE="não consegui ler o estado do reset: não li nada."; fi
+    fi
+    ;;
 esac
 
 # ── resumo em português, só contagens e estados ───────────────────────
@@ -756,6 +771,23 @@ case "$TASK" in
     ;;
   scale_memory)
     bullets="$SM_BULLETS"; KEY="$SM_KEY"
+    ;;
+  reset_status)
+    # Só contagens, estados, ids de tentativa e datas: o script não imprime textos de erro nem SKUs.
+    rsf() { echo "$CLEAN" | grep -E "^$1: " | head -1 | tr ' ' '\n' | grep -E "^$2=" | head -1 | cut -d= -f2-; }
+    rsv() { local v; v="$(rsf "$1" "$2")"; echo "${v:-?}"; }
+    simnao() { case "$1" in sim) echo "sim" ;; nao) echo "não" ;; *) echo "?" ;; esac; }
+    if [ -z "$(rsf RS_STATUS jobId)" ]; then
+      bullets=""; KEY="sem leitura"
+    else
+      retomadoDe="$(rsf RS_STATUS retomadoDe)"
+      bullets="- Tentativa **$(rsv RS_STATUS jobId)** (estado **$(rsv RS_STATUS state)**). Retomou outra tentativa: **$(simnao "$(rsf RS_STATUS retomou)")**."
+      if [ -n "$retomadoDe" ] && [ "$retomadoDe" != "-" ]; then bullets="$bullets"$'\n'"- Retomou a tentativa **$retomadoDe**: os apagados e os revertidos abaixo incluem a anterior."; fi
+      bullets="$bullets"$'\n'"- Contadores deste ficheiro: total **$(rsv RS_STATUS total)**, processados **$(rsv RS_STATUS processed)**, apagados **$(rsv RS_STATUS deleted)**, falhados **$(rsv RS_STATUS failed)**, revertidos **$(rsv RS_STATUS revertedLocal)**."
+      bullets="$bullets"$'\n'"- Janela: início do primeiro arranque **$(rsv RS_STATUS inicioDoPrimeiroArranque)**, início desta tentativa **$(rsv RS_STATUS startedAt)**, fim **$(rsv RS_STATUS finishedAt)**."
+      if [ "$(rsf RS_STATUS ilegivel)" = "sim" ]; then bullets="$bullets"$'\n'"- ⚠️ Ficheiro de estado ilegível: os contadores não são de confiança."; fi
+      KEY="tentativa $(rsv RS_STATUS jobId) ($(rsv RS_STATUS state)), retomou $(simnao "$(rsf RS_STATUS retomou)"), apagados $(rsv RS_STATUS deleted)"
+    fi
     ;;
   reset_dry_run | reset_execute)
     # Só contagens, estados e a impressão digital (12 hex): o driver não imprime SKUs, GIDs nem títulos.
