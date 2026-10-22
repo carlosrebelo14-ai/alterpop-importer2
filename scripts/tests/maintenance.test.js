@@ -40,7 +40,7 @@ check("só workflow_dispatch, só main", () => {
 check("task: lista fechada exata", () => {
   assert.match(
     code,
-    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- price_check\n\s+- volume_snapshot\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+- db_flag_check\n\s+- logs_recent\n\s+- restore_dry_run\n\s+- active_vs_queue\n\s+- elite_purge_dry_run\n\s+- indexing_status\n\s+- machine_status\n\s+- image_check\n\s+- scale_memory\n\s+mode:/
+    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- price_check\n\s+- volume_snapshot\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+- reset_dry_run\n\s+- reset_execute\n\s+- db_flag_check\n\s+- logs_recent\n\s+- restore_dry_run\n\s+- active_vs_queue\n\s+- elite_purge_dry_run\n\s+- indexing_status\n\s+- machine_status\n\s+- image_check\n\s+- scale_memory\n\s+mode:/
   );
 });
 check("mode: dry-run por omissão, execute", () => {
@@ -57,7 +57,7 @@ check("o job execute: needs dry-run, environment production, só mode=execute na
   assert.match(job, /needs: dry-run/);
   assert.match(job, /environment: production/);
   assert.match(job, /inputs\.mode == 'execute'/);
-  assert.match(job, /\["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory"\]/);
+  assert.match(job, /\["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory"]/);
   assert.match(job, /maintenance\.sh "\$TASK" execute/);
 });
 check("nenhum texto livre vai para comandos; token só por secrets.FLY_API_TOKEN; sem flags de loja", () => {
@@ -115,6 +115,8 @@ case "$cmd" in
       unknown) echo "ssh: falhou"; exit 1;;
       *) echo WAL_ABSENT; exit 0;;
     esac;;
+  *RESET_MODO=*)
+    printf '%b' "$FAKE_RESET"; exit "\${FAKE_RESET_RC:-0}";;
   *base64*)
     b=$(echo "$cmd" | cut -d' ' -f7)
     if echo "$b" | base64 -d 2>/dev/null | grep -q "escrita:"; then
@@ -143,9 +145,9 @@ esac
   );
   return { dir, bin, log: path.join(dir, "log"), count: path.join(dir, "count"), summary: path.join(dir, "summary.md") };
 }
-function run(task, phase, env = {}) {
+function run(task, phase, env = {}, script = SCRIPT) {
   const t = setup();
-  const r = spawnSync("bash", [SCRIPT, task, phase], {
+  const r = spawnSync("bash", [script, task, phase], {
     cwd: ROOT,
     encoding: "utf8",
     env: {
@@ -165,7 +167,7 @@ function run(task, phase, env = {}) {
   return { ...r, calls: read(t.log).split("\n").filter(Boolean), summaryText: read(t.summary), probes: Number(read(t.count) || 0) };
 }
 const ran = (r, needle) => r.calls.some((c) => c.includes(needle));
-const SO_LEITURA_NOVA = ["db_flag_check", "logs_recent", "restore_dry_run", "image_check"];
+const SO_LEITURA_NOVA = ["db_flag_check", "logs_recent", "restore_dry_run", "image_check", "reset_dry_run"];
 
 check("tarefa ou fase fora da lista → recusa sem tocar na Fly", () => {
   for (const [t, p] of [["rm_rf", "dry-run"], ["tags_cleanup", "yolo"], ["", ""], ["tags_cleanup; ls", "dry-run"]]) {
@@ -346,10 +348,30 @@ const IC_SINTETICO = [
   "IC_RESULTADO: n=8 esquema=http sem_referer=200/imagem app=200/imagem redireciona=nao destino=-",
   "",
 ].join("\n");
+// Saídas sintéticas do driver do reset: o flyctl falso as devolve no lugar da Fly. Só RS e RS_RESULTADO, com contagens.
+const OK_SINTETICO = "0123456789ab";
+const RESET_DRY = [
+  "RS: produtos_na_loja=3 itens_publicados=1 impressao=0123456789ab",
+  "RS_ESTADO: estado=APPROVED n=1",
+  "RS_ESTADO: estado=PENDING n=2",
+  "RS_ESTADO: estado=PUBLISHED n=0",
+  "RS_ESTADO: estado=REJECTED n=0",
+  "RS_ESTADO: estado=SYNC_ERROR n=0",
+  "RS_D2: decisoes_humanas_mantidas=0",
+  "RS_GUARDAS: indexacao=livre reserva=livre trinco=livre db_degradado=nao",
+  "",
+].join("\n");
+const RESET_EXEC = RESET_DRY + "RS_RESULTADO: modo=execute apagados=3 revertidos=1 falhados=0 produtos_restantes=0 published_restantes=0\n";
+const envDe = (task, phase) =>
+  task === "image_check"
+    ? { FAKE_IC: IC_SINTETICO }
+    : task.startsWith("reset_")
+      ? { RESET_OK: OK_SINTETICO, FAKE_RESET: phase === "execute" ? RESET_EXEC : RESET_DRY }
+      : {};
 check("nenhuma tarefa/fase deixa SKU, handle, preço, GID ou JSON completo no log nem no resumo", () => {
-  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters", "price_check", "volume_snapshot", "tags_cleanup", "character_pages_sync", "db_push", "db_flag_check", "logs_recent", "restore_dry_run", "image_check"]) {
+  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters", "price_check", "volume_snapshot", "tags_cleanup", "character_pages_sync", "db_push", "db_flag_check", "logs_recent", "restore_dry_run", "image_check", "reset_dry_run", "reset_execute"]) {
     for (const phase of SO_LEITURA_NOVA.includes(task) ? ["dry-run"] : ["dry-run", "execute"]) {
-      const r = run(task, phase, task === "image_check" ? { FAKE_IC: IC_SINTETICO } : {});
+      const r = run(task, phase, envDe(task, phase));
       const visivel = `${r.stdout}\n${r.stderr}\n${r.summaryText}`;
       for (const rx of PROIBIDO) assert.doesNotMatch(visivel, rx, `${task}/${phase} expõe ${rx}`);
       assert.ok(visivel.length > 50, `${task}/${phase} sem resumo`);
@@ -553,6 +575,188 @@ check("workflow: o restauro de cópia prepara dependências só nessa tarefa", (
   assert.match(job, /if: inputs\.task == 'restore_dry_run'[\s\S]*npm ci/);
 });
 
+console.log("reset Shopify: reset_dry_run e reset_execute (flyctl falso; o driver real vai por base64 para a Fly)");
+check("reset_dry_run: só o driver em RESET_MODO=dry; resumo com contagens e a impressão digital", () => {
+  const r = run("reset_dry_run", "dry-run", { FAKE_RESET: RESET_DRY });
+  assert.equal(r.status, 0, r.summaryText);
+  assert.ok(ran(r, "RESET_MODO=dry node --input-type=module -"), "o driver corre em dry");
+  assert.ok(!ran(r, "RESET_MODO=execute"), "nenhuma chamada de execute");
+  assert.match(r.summaryText, /Produtos na loja: \*\*3\*\*\. Itens publicados na fila: \*\*1\*\*\./);
+  assert.match(r.summaryText, /Impressão digital da lista a apagar: \*\*0123456789ab\*\*/);
+  assert.match(r.summaryText, /Decisões humanas mantidas \(D2\): \*\*0\*\*/);
+  assert.match(r.summaryText, /Guardas: indexação \*\*livre\*\*, reserva \*\*livre\*\*, trinco \*\*livre\*\*, BD degradada \*\*nao\*\*/);
+  assert.match(r.summaryText, /só leitura/);
+});
+check("reset_dry_run: execute recusa com código 64, sem tocar na Fly", () => {
+  const r = run("reset_dry_run", "execute", { FAKE_RESET: RESET_DRY });
+  assert.equal(r.status, 64);
+  assert.equal(r.calls.length, 0);
+});
+check("reset_dry_run: exit 0 sem linhas RS é falha (código 2), não verde", () => {
+  const r = run("reset_dry_run", "dry-run", { FAKE_RESET: "" });
+  assert.equal(r.status, 2);
+  assert.match(r.summaryText, /o driver do reset não devolveu as contagens/);
+});
+check("reset_dry_run: a classe do driver vira causa, sem texto do erro", () => {
+  const r = run("reset_dry_run", "dry-run", { FAKE_RESET: "RS_ERRO: classe=leitura_falhou\n", FAKE_RESET_RC: "2" });
+  assert.equal(r.status, 2);
+  assert.match(r.summaryText, /não consegui ler a loja ou a fila/);
+});
+check("reset_execute: sem ok válido (vazio, curto, maiúsculas, texto), código 64 e nada chamado, nas duas fases", () => {
+  for (const ok of [undefined, "", "ABC", "0123456789abc", "0123456789AB", "x; ls"]) {
+    for (const phase of ["dry-run", "execute"]) {
+      const env = { FAKE_RESET: RESET_EXEC };
+      if (ok !== undefined) env.RESET_OK = ok;
+      const r = run("reset_execute", phase, env);
+      assert.equal(r.status, 64, `${JSON.stringify(ok)} ${phase}`);
+      assert.equal(r.calls.length, 0, `${JSON.stringify(ok)} ${phase}: nada chamado`);
+    }
+  }
+});
+check("reset_execute, dry-run (job 1): ok igual à impressão → código 0, sem RESET_MODO=execute", () => {
+  const r = run("reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_DRY });
+  assert.equal(r.status, 0, r.summaryText);
+  assert.ok(ran(r, "RESET_MODO=dry node"), "só o dry-run");
+  assert.ok(!ran(r, "RESET_MODO=execute"), "nada apagado no job 1");
+  assert.match(r.summaryText, /Impressão digital igual à aprovada \(ok\): \*\*sim\*\*/);
+  assert.match(r.summaryText, /pode aprovar o execute/);
+});
+check("reset_execute, dry-run (job 1): ok diferente → código 3, sem RESET_MODO=execute", () => {
+  const r = run("reset_execute", "dry-run", { RESET_OK: "fedcba987654", FAKE_RESET: RESET_DRY });
+  assert.equal(r.status, 3);
+  assert.ok(!ran(r, "RESET_MODO=execute"));
+  assert.match(r.summaryText, /a impressão digital da loja não é a aprovada: nada foi apagado/);
+  assert.match(r.summaryText, /Impressão digital igual à aprovada \(ok\): \*\*não\*\*/);
+});
+check("reset_execute, execute: ok certo → RESET_MODO=execute com RESET_OK, resultado com contagens", () => {
+  const r = run("reset_execute", "execute", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_EXEC });
+  assert.equal(r.status, 0, r.summaryText);
+  assert.ok(ran(r, `RESET_MODO=execute RESET_OK=${OK_SINTETICO} node --input-type=module -`), "o reset real com o ok");
+  assert.match(r.summaryText, /Apagados \*\*3\*\*, revertidos \*\*1\*\*, falhados \*\*0\*\*/);
+  assert.match(r.summaryText, /produtos restantes na loja \*\*0\*\*, PUBLISHED restantes na fila \*\*0\*\*/);
+  assert.match(r.summaryText, /execute \(escreve\)/);
+});
+check("reset_execute, execute: o driver recusa (3) ou falha a meio (1), com a causa e as contagens que saíram", () => {
+  let r = run("reset_execute", "execute", { RESET_OK: OK_SINTETICO, FAKE_RESET: "RS_ERRO: classe=impressao_diferente\n", FAKE_RESET_RC: "3" });
+  assert.equal(r.status, 3);
+  assert.match(r.summaryText, /a impressão digital da loja não é a aprovada/);
+  const parcial = RESET_DRY + "RS_RESULTADO: modo=execute apagados=2 revertidos=0 falhados=1 produtos_restantes=1 published_restantes=1\nRS_ERRO: classe=motor_falhou\n";
+  r = run("reset_execute", "execute", { RESET_OK: OK_SINTETICO, FAKE_RESET: parcial, FAKE_RESET_RC: "1" });
+  assert.equal(r.status, 1);
+  assert.match(r.summaryText, /Apagados \*\*2\*\*, revertidos \*\*0\*\*, falhados \*\*1\*\*/);
+  assert.match(r.summaryText, /o reset falhou ou não ficou concluído/);
+});
+check("reset_execute, execute: exit 0 sem RS_RESULTADO não é verde", () => {
+  const r = run("reset_execute", "execute", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_DRY });
+  assert.equal(r.status, 2);
+  assert.match(r.summaryText, /o reset não devolveu o resultado/);
+});
+check("reset: nenhum SKU, GID, título, URL nem linha crua sai no stdout, no stderr nem no resumo", () => {
+  const cru = "erro cru: gid://shopify/Product/SINTETICO-9 SKU-SINTETICO-9 https://loja-sintetica.example/a?v=1\n";
+  for (const [task, phase, env] of [
+    ["reset_dry_run", "dry-run", { FAKE_RESET: RESET_DRY + cru }],
+    ["reset_execute", "dry-run", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_DRY + cru }],
+    ["reset_execute", "execute", { RESET_OK: OK_SINTETICO, FAKE_RESET: RESET_EXEC + cru }],
+  ]) {
+    const r = run(task, phase, env);
+    const visivel = `${r.stdout}\n${r.stderr}\n${r.summaryText}`;
+    for (const rx of [...PROIBIDO, /SINTETICO/, /loja-sintetica/, /:\/\//]) assert.doesNotMatch(visivel, rx, `${task}/${phase} expõe ${rx}`);
+  }
+});
+
+/** Uma cópia do maintenance.sh com uma troca de texto (mutação), numa raiz própria, com o driver ao lado. */
+function trocaUmaSh(texto, nome, antigo, novo) {
+  const vezes = texto.split(antigo).length - 1;
+  if (vezes !== 1) throw new Error(`mutação ${nome}: a âncora tem de existir uma vez (existe ${vezes}x)`);
+  return texto.replace(antigo, () => novo);
+}
+function scriptMutado(nome, antigo, novo) {
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), "maint-mut-"));
+  fs.mkdirSync(path.join(raiz, "scripts/ci"), { recursive: true });
+  fs.mkdirSync(path.join(raiz, "scripts/maintenance"), { recursive: true });
+  fs.writeFileSync(path.join(raiz, "scripts/ci/maintenance.sh"), trocaUmaSh(sh, nome, antigo, novo));
+  fs.copyFileSync(path.join(ROOT, "scripts/maintenance/reset-maintenance.mjs"), path.join(raiz, "scripts/maintenance/reset-maintenance.mjs"));
+  return path.join(raiz, "scripts/ci/maintenance.sh");
+}
+/** Mutação do wrapper: o caso, com o wrapper mutado, tem de falhar. */
+function mutanteSh(nome, antigo, novo, caso) {
+  check(`mutação ${nome}`, () => {
+    let apanhou = false;
+    try {
+      caso(scriptMutado(nome, antigo, novo));
+    } catch {
+      apanhou = true;
+    }
+    if (!apanhou) throw new Error(`mutação ${nome}: o caso não a apanhou`);
+  });
+}
+mutanteSh("reset-impressao-sem-conferir", 'if [ "$IMP_LIDA" = "$RESET_OK" ]; then', "if true; then", (script) => {
+  const r = run("reset_execute", "dry-run", { RESET_OK: "fedcba987654", FAKE_RESET: RESET_DRY }, script);
+  assert.equal(r.status, 3, `impressão diferente no job 1 sai com 3, saiu ${r.status}`);
+});
+mutanteSh("reset-dry-chama-execute", 'if [ "$1" = "execute" ]; then', 'if [ "$1" = "dry" ]; then', (script) => {
+  const r = run("reset_dry_run", "dry-run", { FAKE_RESET: RESET_DRY }, script);
+  assert.equal(r.status, 0, `o dry-run sai com 0, saiu ${r.status}: ${r.stderr}`);
+  assert.ok(ran(r, "RESET_MODO=dry node"), "o dry-run chama o driver em dry");
+  assert.ok(!ran(r, "RESET_MODO=execute"), "o dry-run não chama execute");
+});
+mutanteSh("reset-sem-validar-ok", 'if ! [[ "${RESET_OK:-}" =~ ^[0-9a-f]{12}$ ]]; then', "if false; then", (script) => {
+  const r = run("reset_execute", "execute", { RESET_OK: "x; ls", FAKE_RESET: RESET_EXEC }, script);
+  assert.equal(r.status, 64, `ok mal formado sai com 64, saiu ${r.status}`);
+});
+mutanteSh(
+  "reset-dry-run-aceita-execute",
+  '    if [ "$PHASE" = "execute" ]; then echo "O reset_dry_run só lê',
+  '    if false; then echo "O reset_dry_run só lê',
+  (script) => {
+    const r = run("reset_dry_run", "execute", { FAKE_RESET: RESET_DRY }, script);
+    assert.equal(r.status, 64, `reset_dry_run com execute sai com 64, saiu ${r.status}`);
+  },
+);
+
+/** Porta do execute de reset: needs, environment production, mode=execute, reset_execute na lista e reset_dry_run fora. */
+function portaDoExecute(texto) {
+  const job = texto.slice(texto.indexOf("  execute:"));
+  const tarefas = JSON.parse((job.match(/contains\(fromJSON\('(\[[^\]]*\])'\), inputs\.task\)/) || [])[1] || "[]");
+  return (
+    /needs: dry-run/.test(job) &&
+    /environment: production/.test(job) &&
+    /inputs\.mode == 'execute'/.test(job) &&
+    /\|\| inputs\.task == 'reset_execute'\)/.test(job) &&
+    !tarefas.includes("reset_dry_run") &&
+    !/reset_dry_run/.test(job)
+  );
+}
+check("reset: o execute só corre com environment production, mode=execute e reset_execute na lista (reset_dry_run fora)", () => {
+  assert.ok(portaDoExecute(code), "a porta do execute no workflow real");
+  assert.equal(portaDoExecute(code.replace("    environment: production\n", "")), false, "sem environment, a porta fecha");
+  assert.equal(portaDoExecute(code.replace("inputs.mode == 'execute'", "inputs.mode == 'dry-run'")), false, "sem mode=execute, a porta fecha");
+  assert.equal(portaDoExecute(code.replace("|| inputs.task == 'reset_execute')", ")")), false, "sem a alternativa do reset_execute, a porta fecha");
+  assert.equal(portaDoExecute(code.replace("|| inputs.task == 'reset_execute')", "|| inputs.task == 'reset_dry_run')")), false, "reset_dry_run no execute fecha a porta");
+});
+check("reset: o input ok existe, é texto e opcional; RESET_OK chega aos dois jobs por env, nunca num comando", () => {
+  assert.match(code, /\n {6}ok:\n\s+description: .*\n\s+type: string\n\s+required: false\n\s+default: ""/);
+  assert.match(code, /\n {6}RESET_OK: \$\{\{ inputs\.ok \}\}\n/);
+  assert.equal([...code.matchAll(/RESET_OK: \$\{\{ inputs\.ok \}\}/g)].length, 2);
+  assert.doesNotMatch(code, /run:.*\$\{\{\s*inputs\.ok/);
+});
+check("reset: as tarefas do workflow são as que o maintenance.sh aceita (menos esperar_indexacao, só do deploy)", () => {
+  const bloco = code.match(/task:\n[\s\S]*?options:\n((?:\s+- \w+\n)+)/)[1];
+  const opcoes = bloco.trim().split("\n").map((l) => l.trim().replace(/^- /, "")).sort();
+  const aceites = [
+    ...sh.match(/^  catalog_health \| .*\) ;;$/m)[0].replace(/\) ;;$/, "").split("|"),
+    ...sh.match(/^  reset_dry_run \| reset_execute\) ;;$/m)[0].replace(/\) ;;$/, "").split("|"),
+  ].map((t) => t.trim());
+  assert.deepEqual(opcoes, aceites.filter((t) => t !== "esperar_indexacao").sort());
+});
+check("reset: o job execute e o WRITES do maintenance.sh falam das mesmas tarefas que escrevem", () => {
+  const writes = sh.match(/^case "\$TASK" in (.*?)\) WRITES=true/m)[1].split("|").map((t) => t.trim()).sort();
+  const lista = JSON.parse(code.match(/contains\(fromJSON\('(\[[^\]]*\])'\), inputs\.task\)/)[1]);
+  if (/inputs\.task == 'reset_execute'/.test(code)) lista.push("reset_execute");
+  assert.deepEqual(lista.sort(), writes);
+  assert.ok(writes.includes("reset_execute") && !writes.includes("reset_dry_run"));
+});
+
 console.log("image_check — resumo e falhas (flyctl falso com linhas IC sintéticas)");
 check("image_check: contagens, host, amostra e combinações saem no resumo", () => {
   const r = run("image_check", "dry-run", { FAKE_IC: IC_SINTETICO });
@@ -629,6 +833,10 @@ check("GITHUB_OUTPUT recebe a linha-chave do dry-run para o job execute", () => 
   assert.match(fs.readFileSync(out, "utf8"), /key=lidos 57, a limpar 57,179/);
 });
 
+check("reset: o driver (scripts/tests/reset-maintenance.test.js) corre aqui, para entrar no test:deploy da CI", () => {
+  const r = spawnSync(process.execPath, [path.join(ROOT, "scripts/tests/reset-maintenance.test.js")], { cwd: ROOT, encoding: "utf8", timeout: 900000 });
+  assert.equal(r.status, 0, (r.stdout + r.stderr).slice(-1500));
+});
 if (failures) {
   console.error(`\n${failures} falha(s)`);
   process.exit(1);

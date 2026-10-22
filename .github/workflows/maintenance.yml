@@ -1,8 +1,10 @@
 # Manutenção da app na Fly, disparada à mão: Actions → maintenance → Run workflow.
 #
 # task  lista fechada: catalog_health, diagnose_theme, diagnose_characters, price_check, volume_snapshot, tags_cleanup,
-#       character_pages_sync, db_push, db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run, indexing_status, machine_status, image_check, scale_memory
+#       character_pages_sync, db_push, db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run, indexing_status, machine_status, image_check, scale_memory, reset_dry_run, reset_execute
 #       (db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run, indexing_status, machine_status e image_check só leem: nunca entram no job de escrita)
+#       reset_dry_run também só lê: nunca entra no job de escrita.
+#       reset_execute: o reset Shopify real. Só corre no job execute (environment production), com mode=execute e o input ok (a impressão digital do reset_dry_run). No job 1 só confere o ok.
 #       db_push recusa-se com a flag DB_DEGRADED presente (Decisão 34).
 # mode  dry-run (por omissão) ou execute
 #
@@ -13,7 +15,7 @@
 #      mudaria, ou o SQL do db:push); nas outras faz a tarefa, que é só leitura. O resumo em português fica
 #      no job summary da corrida.
 #   2. Job `execute` (environment "production"): só com mode=execute e só nas tarefas que escrevem
-#      (volume_snapshot, tags_cleanup, character_pages_sync, db_push, scale_memory). Depende do job 1, por isso o dry-run corre antes e está
+#      (volume_snapshot, tags_cleanup, character_pages_sync, db_push, scale_memory, reset_execute). Depende do job 1, por isso o dry-run corre antes e está
 #      visível no summary enquanto o environment pede aprovação. Nas tarefas só de leitura, mode=execute não
 #      faz nada de diferente.
 #
@@ -45,6 +47,8 @@ on:
           - tags_cleanup
           - character_pages_sync
           - db_push
+          - reset_dry_run
+          - reset_execute
           - db_flag_check
           - logs_recent
           - restore_dry_run
@@ -55,12 +59,17 @@ on:
           - image_check
           - scale_memory
       mode:
-        description: "dry-run (por omissão) ou execute; execute só tem efeito em volume_snapshot, tags_cleanup, character_pages_sync, db_push e scale_memory"
+        description: "dry-run (por omissão) ou execute; execute só tem efeito em volume_snapshot, tags_cleanup, character_pages_sync, db_push, scale_memory e reset_execute"
         type: choice
         default: dry-run
         options:
           - dry-run
           - execute
+      ok:
+        description: "Só reset_execute: a impressão digital (12 hex) que o reset_dry_run mostrou. Se não for igual à da loja, nada é apagado."
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -79,6 +88,7 @@ jobs:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       TASK: ${{ inputs.task }}
       MODE: ${{ inputs.mode }}
+      RESET_OK: ${{ inputs.ok }}
     outputs:
       key: ${{ steps.run.outputs.key }}
     steps:
@@ -102,13 +112,14 @@ jobs:
   execute:
     name: "2 · execute (environment production)"
     needs: dry-run
-    if: github.ref == 'refs/heads/main' && inputs.mode == 'execute' && contains(fromJSON('["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory"]'), inputs.task)
+    if: github.ref == 'refs/heads/main' && inputs.mode == 'execute' && (contains(fromJSON('["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory"]'), inputs.task) || inputs.task == 'reset_execute')
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 40
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       TASK: ${{ inputs.task }}
+      RESET_OK: ${{ inputs.ok }}
       DRY_RUN_KEY: ${{ needs.dry-run.outputs.key }}
     steps:
       - uses: actions/checkout@v4
