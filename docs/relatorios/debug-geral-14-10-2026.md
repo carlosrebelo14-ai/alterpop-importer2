@@ -632,5 +632,17 @@ Ressalvas aceites, registadas para o lote 3:
 - DBG-224, Média. A indexação não vê a reserva de publicação entre processos. `startCatalogIndexingWorker` só recusa pela reserva em memória e pelos marcadores de script. O driver do reset verifica o ficheiro de estado da reconstrução (`running`) antes de reservar e antes de apagar, mas uma indexação que arranque depois dessa verificação não é travada. A correção está em `lib/importer/catalog/indexingStream.server.js`, fora do PR #142.
 - DBG-225, Baixa. O `ok` é a única barreira fora do environment `production`. A aprovação do environment é a barreira humana. A impressão digital do dry-run confere coerência entre o que foi revisto e o que se apaga, mas não autoriza nada por si. Aceite.
 
+### Reset: contadores e janela herdados de uma tentativa de setembro (22/10/2026)
+
+Leitura `reset_status` (run `39827513379`, run number 109, `main` em `864a688`, conclusão `success`). Fecha a anomalia do `reset_execute` 39814627500: 64 apagados e 64 revertidos para uma lista de 57.
+
+- A tentativa `shopify-reset-1792688255333` retomou a tentativa `shopify-reset-1788958769464`, de 2026-09-09T12:59:29Z.
+- A lista desta tentativa tem 57 produtos. Os 7 apagados e os 7 revertidos a mais vêm da tentativa de setembro. Herança de contadores confirmada (DBG-178).
+- A janela do D2 também foi herdada desde 09/09. Hoje deu 0, mas a janela continua a ser a de setembro.
+
+Ressalva aceite para o lote 3:
+
+- DBG-226, Média. O reset retoma uma tentativa de há seis semanas. A condição de retoma só olha ao estado anterior (ativo ou `failed`), sem limite de idade. O resumo do execute mostra os contadores acumulados, sem separar os desta tentativa dos herdados. Proposta: só retomar tentativas com menos de 24 h. Acima disso, começa uma tentativa nova. O resumo do execute deve mostrar os contadores desta tentativa à parte dos herdados. A janela do D2 fica no mesmo DBG. Sem correção nesta ronda.
+
 ---
 _Relatório produzido sem escrita em produção e sem alterações ao código da app._
