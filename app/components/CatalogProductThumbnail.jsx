@@ -16,14 +16,27 @@ export { resolveAllProductImages, resolveProductImageSource };
  * A imagem vem sempre da rota da app, por SKU e índice. O URL do fornecedor não chega ao browser.
  * @param {{ sku?: string, imageUrl?: string | string[] | null, title?: string, size?: number }} props
  */
+/** Tentativas a mais depois de um erro. Com a primeira, são três pedidos no total. */
+const TENTATIVAS_EXTRA = 2;
+/** Pausa antes de cada tentativa. É o Retry-After de 5 s que a rota devolve com o 503. */
+const PAUSA_MS = 5000;
+
 export function CatalogProductThumbnail({ sku, imageUrl, title = "", size = 50 }) {
-  const [failed, setFailed] = useState(false);
+  // esgotado: acabaram as tentativas. aguarda: está na pausa antes da próxima tentativa.
+  const [esgotado, setEsgotado] = useState(false);
+  const [aguarda, setAguarda] = useState(false);
+  const [tentativas, setTentativas] = useState(0);
   const [hovered, setHovered] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
+  const failed = esgotado || aguarda;
 
   // O imageUrl só conta as imagens. Nunca é usado como src.
+  // É a mesma lista que o servidor usa. Assim o índice e o ?v= batem nos dois lados.
   const images = resolveAllProductImages(imageUrl);
+  const primeiraImagem = images[0];
+  // A lista pode encolher com o modal aberto. O índice tem de ficar dentro dela, senão não há URL para a imagem.
+  const idxAtivo = activeIdx < images.length ? activeIdx : 0;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -39,6 +52,25 @@ export function CatalogProductThumbnail({ sku, imageUrl, title = "", size = 50 }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, images.length]);
+
+  // Com o modal aberto, a lista pode encolher. O índice volta para dentro dela, senão a primeira seta não mudava a foto.
+  useEffect(() => {
+    if (activeIdx !== idxAtivo) setActiveIdx(idxAtivo);
+  }, [activeIdx, idxAtivo]);
+
+  // Outro SKU ou outra primeira imagem: a falha anterior não se aplica, e a miniatura começa de novo.
+  useEffect(() => {
+    setAguarda(false);
+    setEsgotado(false);
+    setTentativas(0);
+  }, [sku, primeiraImagem]);
+
+  // Pausa antes de pedir a imagem outra vez. Enquanto dura, a miniatura mostra o placeholder.
+  useEffect(() => {
+    if (!aguarda) return undefined;
+    const temporizador = setTimeout(() => setAguarda(false), PAUSA_MS);
+    return () => clearTimeout(temporizador);
+  }, [aguarda]);
 
   // Sem imagens, sem SKU ou com erro de carregamento: placeholder.
   if (images.length === 0 || !sku || failed) {
@@ -177,7 +209,7 @@ export function CatalogProductThumbnail({ sku, imageUrl, title = "", size = 50 }
                 )}
 
                 <img
-                  src={urlDaImagemDoCatalogo(sku, activeIdx)}
+                  src={urlDaImagemDoCatalogo(sku, idxAtivo, images[idxAtivo])}
                   alt={title}
                   style={{
                     maxWidth: "100%",
@@ -219,7 +251,7 @@ export function CatalogProductThumbnail({ sku, imageUrl, title = "", size = 50 }
                   {images.map((_, i) => (
                     <img
                       key={i}
-                      src={urlDaImagemDoCatalogo(sku, i)}
+                      src={urlDaImagemDoCatalogo(sku, i, images[i])}
                       alt=""
                       onClick={() => setActiveIdx(i)}
                       style={{
@@ -228,8 +260,8 @@ export function CatalogProductThumbnail({ sku, imageUrl, title = "", size = 50 }
                         objectFit: "cover",
                         borderRadius: 6,
                         cursor: "pointer",
-                        border: i === activeIdx ? "2px solid #005bd3" : "1px solid #ddd",
-                        opacity: i === activeIdx ? 1 : 0.6,
+                        border: i === idxAtivo ? "2px solid #005bd3" : "1px solid #ddd",
+                        opacity: i === idxAtivo ? 1 : 0.6,
                         transition: "all 0.15s ease",
                       }}
                     />
@@ -253,7 +285,7 @@ export function CatalogProductThumbnail({ sku, imageUrl, title = "", size = 50 }
                   {title}
                   {images.length > 1 && (
                     <span style={{ display: "block", fontSize: 12, fontWeight: 400, color: "#6d7175", marginTop: 4 }}>
-                      {`Foto ${activeIdx + 1} de ${images.length}`}
+                      {`Foto ${idxAtivo + 1} de ${images.length}`}
                     </span>
                   )}
                 </div>
@@ -267,7 +299,7 @@ export function CatalogProductThumbnail({ sku, imageUrl, title = "", size = 50 }
   return (
     <div style={{ position: "relative", display: "inline-block", flexShrink: 0 }}>
       <img
-        src={urlDaImagemDoCatalogo(sku, 0)}
+        src={urlDaImagemDoCatalogo(sku, 0, images[0])}
         alt={title}
         width={size}
         height={size}
@@ -298,7 +330,16 @@ export function CatalogProductThumbnail({ sku, imageUrl, title = "", size = 50 }
           setActiveIdx(0);
           setIsOpen(true);
         }}
-        onError={() => setFailed(true)}
+        onError={() => {
+          // O browser não volta a pedir uma imagem com erro. Um 503 do servidor (muitos pedidos ao mesmo tempo)
+          // não é definitivo. Pede-se outra vez, depois da pausa, até acabarem as tentativas.
+          if (tentativas >= TENTATIVAS_EXTRA) {
+            setEsgotado(true);
+            return;
+          }
+          setTentativas(tentativas + 1);
+          setAguarda(true);
+        }}
       />
       {images.length > 1 && (
         <span

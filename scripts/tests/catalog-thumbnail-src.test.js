@@ -3,9 +3,9 @@
  * Miniatura do catálogo: a imagem vem da rota da app (por SKU e índice), nunca do URL do fornecedor.
  * Uso: node scripts/tests/catalog-thumbnail-src.test.js
  *
- * Teste estático: lê o código-fonte e confirma as regras. Não gera URLs reais, só um SKU sintético.
+ * Teste estático e de funções puras. Lê o código-fonte e chama as funções com hosts e SKUs sintéticos.
  * Os caminhos podem ser trocados por variáveis de ambiente, para a verificação por mutação
- * (CATALOG_THUMB_COMPONENTE, CATALOG_THUMB_LIB, CATALOG_THUMB_RADAR, CATALOG_THUMB_PAINEL).
+ * (CATALOG_THUMB_COMPONENTE, CATALOG_THUMB_LIB, CATALOG_THUMB_RADAR, CATALOG_THUMB_PAINEL, CATALOG_THUMB_ROTA).
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -23,7 +23,15 @@ const FICHEIROS = {
   lib: caminho("CATALOG_THUMB_LIB", "lib/catalog/productImages.js"),
   radar: caminho("CATALOG_THUMB_RADAR", "app/components/IndexingRadarSheet.jsx"),
   painel: caminho("CATALOG_THUMB_PAINEL", "app/routes/app._index.jsx"),
+  rota: caminho("CATALOG_THUMB_ROTA", "app/routes/api.catalog-image.$sku.$i.jsx"),
 };
+
+// Lib do servidor, só para o skuDoCaminho. Este teste não a muta.
+const LIB_SERVIDOR = path.join(RAIZ, "lib/catalog/catalogImageProxy.server.js");
+
+// URLs sintéticos. O host não existe; só serve para o teste.
+const URL_SINTETICO = "https://imagens.fornecedor-sintetico.example/a.png";
+const URL_SINTETICO_B = "https://imagens.fornecedor-sintetico.example/b.png";
 
 let falhas = 0;
 
@@ -38,6 +46,7 @@ async function check(nome, fn) {
 }
 
 const lerComponente = () => fs.readFileSync(FICHEIROS.componente, "utf8");
+const importarLib = () => import(pathToFileURL(FICHEIROS.lib).href);
 
 await check("componente importa resolveAllProductImages e urlDaImagemDoCatalogo de lib/catalog/productImages.js", () => {
   const src = lerComponente();
@@ -58,11 +67,16 @@ await check("componente reexporta resolveAllProductImages e resolveProductImageS
   );
 });
 
-await check("a imagem vem sempre da rota: todo src passa por urlDaImagemDoCatalogo(sku, indice), nunca por imageUrl", () => {
+await check("V6: todo src usa urlDaImagemDoCatalogo(sku, indice, images[indice]), nunca imageUrl", () => {
   const srcs = [...lerComponente().matchAll(/\bsrc=\{([^}]*)\}/g)].map((m) => m[1].trim());
   assert.ok(srcs.length >= 3, `esperava pelo menos 3 atributos src (miniatura, modal, tiras), encontrei ${srcs.length}`);
   for (const expr of srcs) {
-    assert.match(expr, /^urlDaImagemDoCatalogo\(sku,\s*[^()]+\)$/, `src não passa pela rota: {${expr}}`);
+    // O índice do src tem de ser o mesmo que o de images[...]. Com dois argumentos não bate.
+    assert.match(
+      expr,
+      /^urlDaImagemDoCatalogo\(sku,\s*([^,()]+),\s*images\[\1\]\)$/,
+      `src não usa urlDaImagemDoCatalogo com três argumentos: {${expr}}`
+    );
   }
 });
 
@@ -84,9 +98,116 @@ await check("sem imagens, sem sku ou com erro de carregamento o componente mostr
   );
 });
 
-await check('urlDaImagemDoCatalogo("SKU-SINTETICO/1", 2) dá /api/catalog-image/SKU-SINTETICO%2F1/2', async () => {
-  const lib = await import(pathToFileURL(FICHEIROS.lib).href);
-  assert.equal(lib.urlDaImagemDoCatalogo("SKU-SINTETICO/1", 2), "/api/catalog-image/SKU-SINTETICO%2F1/2");
+await check("V1: versaoDaUrl dá 8 caracteres hexadecimais, igual para o mesmo URL e diferente com um caractere a mais", async () => {
+  const lib = await importarLib();
+  const versao = lib.versaoDaUrl(URL_SINTETICO);
+  assert.match(versao, /^[0-9a-f]{8}$/, "a versão não tem 8 caracteres hexadecimais");
+  assert.equal(lib.versaoDaUrl(URL_SINTETICO), versao, "o mesmo URL deu versões diferentes");
+  assert.notEqual(lib.versaoDaUrl(`${URL_SINTETICO}x`), versao, "um caractere a mais deu a mesma versão");
+});
+
+await check("versaoDaUrl é FNV-1a de 32 bits (valores de referência)", async () => {
+  // Valores calculados à parte com duas implementações independentes (Math.imul e BigInt).
+  const lib = await importarLib();
+  assert.equal(lib.versaoDaUrl(""), "811c9dc5", "a base do FNV-1a não bate");
+  assert.equal(lib.versaoDaUrl(URL_SINTETICO), "49c67fb1", "o hash do URL sintético A não bate");
+  assert.equal(lib.versaoDaUrl(URL_SINTETICO_B), "624807d8", "o hash do URL sintético B não bate");
+});
+
+await check("V2: urlDaImagemDoCatalogo(sku, 2, url) dá o prefixo, o sku codificado, o índice e o ?v= desse URL", async () => {
+  const lib = await importarLib();
+  assert.equal(
+    lib.urlDaImagemDoCatalogo("SKU-SINTETICO/1", 2, URL_SINTETICO),
+    "/api/catalog-image/SKU-SINTETICO%2F1/2?v=49c67fb1"
+  );
+});
+
+await check("V3: urlOrigem vazio ou que não seja string lança TypeError", async () => {
+  const lib = await importarLib();
+  for (const valor of ["", null, undefined, 42, {}, []]) {
+    // A mensagem tem de vir da guarda. Sem ela, null e undefined também dariam TypeError, por outra razão.
+    assert.throws(
+      () => lib.urlDaImagemDoCatalogo("SKU-SINTETICO/1", 0, valor),
+      (err) => err instanceof TypeError && /urlOrigem/.test(err.message),
+      `não lançou TypeError da guarda para um valor do tipo ${typeof valor}`
+    );
+  }
+});
+
+await check("V4: a versão muda quando o URL muda na mesma posição", async () => {
+  const lib = await importarLib();
+  const listaA = lib.resolveAllProductImages(URL_SINTETICO);
+  const listaB = lib.resolveAllProductImages(URL_SINTETICO_B);
+  assert.equal(listaA.length, 1, "a lista A devia ter uma imagem");
+  assert.equal(listaB.length, 1, "a lista B devia ter uma imagem");
+  const urlA = lib.urlDaImagemDoCatalogo("SKU-SINTETICO/1", 0, listaA[0]);
+  const urlB = lib.urlDaImagemDoCatalogo("SKU-SINTETICO/1", 0, listaB[0]);
+  assert.notEqual(urlA, urlB, "o mesmo índice com URL de origem diferente deu o mesmo URL");
+});
+
+await check("V5: skuDoCaminho com a query ?v= devolve o mesmo SKU (a rota ignora a query)", async () => {
+  const libServidor = await import(pathToFileURL(LIB_SERVIDOR).href);
+  const semQuery = "/api/catalog-image/SKU-SINTETICO%2F1/2";
+  const comQuery = `${semQuery}?v=49c67fb1`;
+  // A rota usa só o pathname do URL do pedido. Faz-se o mesmo aqui.
+  const pathname = new URL(comQuery, "http://localhost").pathname;
+  assert.equal(pathname, semQuery, "o pathname devia perder a query");
+  assert.equal(libServidor.skuDoCaminho(pathname), "SKU-SINTETICO/1");
+  assert.equal(libServidor.skuDoCaminho(semQuery), "SKU-SINTETICO/1");
+});
+
+await check("V5 (rota, só leitura): a rota passa skuDoCaminho(new URL(request.url).pathname), nunca request.url inteiro", () => {
+  const texto = fs.readFileSync(FICHEIROS.rota, "utf8");
+  assert.match(
+    texto,
+    /skuDoCaminho\(\s*new URL\(request\.url\)\.pathname\s*\)/,
+    "a rota não passa só o pathname a skuDoCaminho"
+  );
+  assert.doesNotMatch(texto, /skuDoCaminho\(\s*request\.url\s*\)/, "a rota passa o URL inteiro a skuDoCaminho");
+});
+
+// URLs sintéticos com hash de zero à esquerda (foto-7) e com o bit de sinal ligado (foto-0).
+const URL_SINTETICO_FOTO_7 = "https://imagens.fornecedor-sintetico.example/foto-7.jpg";
+const URL_SINTETICO_FOTO_0 = "https://imagens.fornecedor-sintetico.example/foto-0.jpg";
+
+await check("V7: versaoDaUrl sai sempre com 8 hexadecimais, com zero à esquerda e sem sinal", async () => {
+  const lib = await importarLib();
+  // Valores calculados à parte com BigInt. Com o padStart ou o >>> 0 em falta, estes dois casos falham.
+  assert.equal(lib.versaoDaUrl(URL_SINTETICO_FOTO_7), "043db6c6", "o hash com zero à esquerda não saiu com 8 caracteres");
+  assert.equal(lib.versaoDaUrl(URL_SINTETICO_FOTO_0), "9d85ec9b", "o hash com bit de sinal saiu com sinal");
+  for (const url of [URL_SINTETICO, URL_SINTETICO_B, URL_SINTETICO_FOTO_7, URL_SINTETICO_FOTO_0]) {
+    assert.match(lib.versaoDaUrl(url), /^[0-9a-f]{8}$/, "a versão não tem 8 caracteres hexadecimais");
+  }
+});
+
+await check("V8: resolveAllProductImages dá a mesma lista com array e com string (protocolo relativo e repetidos)", async () => {
+  const lib = await importarLib();
+  const comoArray = lib.resolveAllProductImages(["//imagens.fornecedor-sintetico.example/a.png", URL_SINTETICO]);
+  const comoString = lib.resolveAllProductImages(`//imagens.fornecedor-sintetico.example/a.png,${URL_SINTETICO}`);
+  assert.deepEqual(comoArray, comoString, "o array e a string dão listas diferentes");
+  assert.deepEqual(comoArray, [URL_SINTETICO], "o protocolo relativo não ficou https, ou o repetido não saiu");
+});
+
+await check("V9: o modal usa um índice dentro da lista, mesmo que a lista tenha encolhido com o modal aberto", () => {
+  const src = lerComponente();
+  assert.match(
+    src,
+    /const\s+idxAtivo\s*=\s*activeIdx\s*<\s*images\.length\s*\?\s*activeIdx\s*:\s*0\s*;/,
+    "falta o índice limitado à lista"
+  );
+  assert.match(
+    src,
+    /src=\{urlDaImagemDoCatalogo\(sku,\s*idxAtivo,\s*images\[idxAtivo\]\)\}/,
+    "a imagem do modal não usa o índice limitado"
+  );
+});
+
+await check("V10: um erro da miniatura pede a imagem outra vez, com pausa de 5 s, antes de desistir", () => {
+  const src = lerComponente();
+  assert.match(src, /const\s+PAUSA_MS\s*=\s*5000\s*;/, "a pausa não é de 5 s, o Retry-After da rota");
+  assert.match(src, /setTimeout\(\(\)\s*=>\s*setAguarda\(false\),\s*PAUSA_MS\)/, "falta a pausa antes da nova tentativa");
+  assert.match(src, /onError=\{\(\)\s*=>\s*\{[\s\S]*?setAguarda\(true\)/, "o erro não agenda uma nova tentativa");
+  assert.doesNotMatch(src, /setFailed\(true\)/, "o erro ainda deixa a miniatura definitiva logo na primeira falha");
 });
 
 if (falhas) {

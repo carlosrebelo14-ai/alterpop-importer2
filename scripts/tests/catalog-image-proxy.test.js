@@ -22,6 +22,18 @@
  *   (18) a ligação ao fornecedor é libertada (3xx, erro, tipo errado, limite) e um corpo parado dá timeout sem imagem parcial.
  *   (19) o SKU vem do caminho cru, descodificado uma vez (um "%2F" escrito à letra não vira "/").
  *   (20) a rota lê a BD por safePrisma (com rethrow) e tira o SKU do caminho cru.
+ *   (A) teto de simultâneos: o quinto pedido não vai ao fornecedor até um dos quatro acabar.
+ *   (B) fila cheia: o 101.º pedido responde 503 com Retry-After 5, sem fetch.
+ *   (C) espera máxima: passado esperaMaxMs, o pedido responde 503 e sai da fila.
+ *   (D) cache: o segundo pedido à mesma URL responde da cache, sem fetch e sem lugar.
+ *   (E) a cache não ocupa lugar: com quatro em curso, responde sem esperar.
+ *   (F) reverificação: depois de ter lugar, o pedido que esperou lê a cache.
+ *   (G) LRU: entrada maior que o teto não se guarda, e sai a menos usada.
+ *   (H) TTL: passado cacheTtlMs, a entrada não se devolve e sai.
+ *   (I) libertar é idempotente: chamar duas vezes não liberta dois lugares.
+ *   (J) libertar sempre: se o fetch lançar, o lugar volta.
+ *   (K) constantes: 4, 100, 30 s, 32 MB e 30 min.
+ *   (21) corpo sem cópia: a resposta da cache entrega o mesmo bloco de bytes que a primeira.
  *
  * Mutações: cada caso tem pelo menos uma. Copia-se a lib para catalogImageProxy.mutante-<nome>.server.js, troca-se
  * UMA âncora, e o caso tem de falhar. Para productImages.js copia-se esse ficheiro e a lib passa a importar a cópia.
@@ -205,7 +217,15 @@ function corpoComCancelamento(pedacos) {
 
 /** Chama a lib com a loja, o SKU e o índice por omissão dos casos. */
 function servir(lib, opcoes) {
-  return lib.servirImagemDoCatalogo({ shop: LOJA, sku: SKU, indice: 0, fornecedoresPermitidos: PERMITIDOS, ...opcoes });
+  // Estado novo por caso: a cache de um caso não pode servir o pedido de outro.
+  return lib.servirImagemDoCatalogo({
+    shop: LOJA,
+    sku: SKU,
+    indice: 0,
+    fornecedoresPermitidos: PERMITIDOS,
+    estado: lib.criarEstadoDoProxy(),
+    ...opcoes,
+  });
 }
 
 /** Apanha os avisos de console.warn durante uma chamada. */
@@ -243,7 +263,7 @@ async function casoHostForaDaLista(lib) {
   assert.equal(lib.FORNECEDORES_PERMITIDOS.has(HOST), false);
   const prisma = prismaFalso({ [SKU]: URL_IMAGEM });
   const fetchImpl = fetchFalso(() => respostaPng());
-  const res = await lib.servirImagemDoCatalogo({ prisma, shop: LOJA, sku: SKU, indice: 0, fetchImpl });
+  const res = await lib.servirImagemDoCatalogo({ prisma, shop: LOJA, sku: SKU, indice: 0, fetchImpl, estado: lib.criarEstadoDoProxy() });
   assert.equal(res.status, 404);
   assert.equal(fetchImpl.chamadas.length, 0, "o fetch não é chamado");
 }
@@ -552,6 +572,322 @@ function errosDaRota(texto) {
   return erros;
 }
 
+// ---------- ajudas dos casos (A) a (K) ----------
+
+/** Espera `ms` milissegundos. Deixa assentar os pedidos que já estão em curso. */
+const atraso = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Espera, de 1 em 1 ms, até `condicao()` ser verdadeira. Rebenta se passar de `limiteMs`. */
+async function aguardaAte(condicao, limiteMs = 2000) {
+  const inicio = Date.now();
+  while (!condicao()) {
+    if (Date.now() - inicio > limiteMs) throw new Error("tempo esgotado à espera de uma condição");
+    await atraso(1);
+  }
+}
+
+/** Marca de "ainda não resolveu". Nenhum pedido devolve este valor. */
+const PENDENTE = Symbol("pendente");
+
+/** Devolve a promessa, ou PENDENTE se ela não resolver dentro de `ms`. */
+function emAte(promessa, ms) {
+  return Promise.race([promessa, atraso(ms).then(() => PENDENTE)]);
+}
+
+/** URL sintético da imagem i. */
+function urlSintetico(i) {
+  return `https://${HOST}/imagem-${i}.png`;
+}
+
+/** BD falsa com n SKU (SKU-SINTETICO-1-0, -1, ...), cada um com a sua imagem sintética. */
+function linhasSinteticas(n) {
+  const linhas = {};
+  for (let i = 0; i < n; i++) linhas[`${SKU}-${i}`] = urlSintetico(i);
+  return linhas;
+}
+
+/**
+ * fetch falso com porta. Com a porta fechada, cada chamada fica pendente até `abreUma` ou `abreTodas`.
+ * Com a porta aberta, responde logo com uma PNG.
+ */
+function fetchComPorta() {
+  const chamadas = [];
+  const pendentes = [];
+  let fechada = false;
+  const fetchImpl = async (url, init) => {
+    chamadas.push({ url, init });
+    if (!fechada) return respostaPng();
+    return new Promise((resolve) => pendentes.push(() => resolve(respostaPng())));
+  };
+  return {
+    fetchImpl,
+    chamadas,
+    fecha() {
+      fechada = true;
+    },
+    abreUma() {
+      pendentes.shift()?.();
+    },
+    abreTodas() {
+      fechada = false;
+      while (pendentes.length > 0) pendentes.shift()();
+    },
+  };
+}
+
+async function casoTetoDeSimultaneos(lib) {
+  const estado = lib.criarEstadoDoProxy({ simultaneos: 4, esperaMaxMs: 5000 });
+  const porta = fetchComPorta();
+  const prisma = prismaFalso(linhasSinteticas(5));
+  const pedido = (i) => servir(lib, { prisma, fetchImpl: porta.fetchImpl, estado, sku: `${SKU}-${i}` });
+  porta.fecha();
+  const pedidos = [0, 1, 2, 3, 4].map(pedido);
+  try {
+    await aguardaAte(() => porta.chamadas.length >= 4);
+    await atraso(30);
+    assert.equal(porta.chamadas.length, 4, "com quatro em curso, o quinto não chama o fornecedor");
+    porta.abreUma();
+    await aguardaAte(() => porta.chamadas.length === 5);
+    assert.equal(porta.chamadas[4].url, urlSintetico(4), "quando um dos quatro acaba, o quinto avança");
+  } finally {
+    porta.abreTodas();
+  }
+  const respostas = await Promise.all(pedidos);
+  assert.deepEqual(
+    respostas.map((res) => res.status),
+    [200, 200, 200, 200, 200]
+  );
+}
+
+async function casoFilaCheia503(lib) {
+  const estado = lib.criarEstadoDoProxy({ simultaneos: 4, filaMaxima: 100, esperaMaxMs: 5000 });
+  const porta = fetchComPorta();
+  const prisma = prismaFalso(linhasSinteticas(105));
+  const pedido = (i) => servir(lib, { prisma, fetchImpl: porta.fetchImpl, estado, sku: `${SKU}-${i}` });
+  porta.fecha();
+  const pedidos = [];
+  try {
+    for (let i = 0; i < 4; i++) pedidos.push(pedido(i));
+    await aguardaAte(() => porta.chamadas.length === 4);
+    for (let i = 4; i < 104; i++) pedidos.push(pedido(i));
+    await atraso(30);
+    assert.equal(porta.chamadas.length, 4, "os cem seguintes esperam, sem ir ao fornecedor");
+
+    const recusado = await emAte(pedido(104), 200);
+    assert.notEqual(recusado, PENDENTE, "o 101.º responde logo, sem esperar");
+    assert.equal(recusado.status, 503, "fila cheia: 503");
+    assert.equal(recusado.headers.get("retry-after"), "5", "Retry-After de 5 s");
+    assert.equal(porta.chamadas.length, 4, "o 101.º não chama o fornecedor");
+  } finally {
+    porta.abreTodas();
+  }
+  const respostas = await Promise.all(pedidos);
+  assert.ok(respostas.every((res) => res.status === 200), "os cem que esperaram são servidos depois");
+}
+
+async function casoEsperaMaxima(lib) {
+  const estado = lib.criarEstadoDoProxy({ simultaneos: 1, esperaMaxMs: 50 });
+  const porta = fetchComPorta();
+  const prisma = prismaFalso(linhasSinteticas(3));
+  const pedido = (i) => servir(lib, { prisma, fetchImpl: porta.fetchImpl, estado, sku: `${SKU}-${i}` });
+  porta.fecha();
+  const primeiro = pedido(0);
+  try {
+    await aguardaAte(() => porta.chamadas.length === 1);
+    const expirou = await emAte(pedido(1), 1000);
+    assert.notEqual(expirou, PENDENTE, "passados 50 ms, a espera acaba");
+    assert.equal(expirou.status, 503, "espera esgotada: 503");
+    assert.equal(porta.chamadas.length, 1, "o pedido que expirou não chama o fornecedor");
+
+    // Saiu da fila: quando o primeiro acaba, o próximo a ter lugar é o terceiro, e não o que expirou.
+    porta.abreTodas();
+    const r0 = await primeiro;
+    const r2 = await pedido(2);
+    assert.equal(r0.status, 200);
+    assert.equal(r2.status, 200);
+    assert.deepEqual(
+      porta.chamadas.map((c) => c.url),
+      [urlSintetico(0), urlSintetico(2)],
+      "o que expirou saiu da fila"
+    );
+  } finally {
+    porta.abreTodas();
+  }
+}
+
+async function casoCacheHit(lib) {
+  const estado = lib.criarEstadoDoProxy({ simultaneos: 1, esperaMaxMs: 5000 });
+  const porta = fetchComPorta();
+  const prisma = prismaFalso({ [SKU]: URL_IMAGEM, [`${SKU}-BLOQUEIO`]: OUTRO_URL });
+  const primeiro = await servir(lib, { prisma, fetchImpl: porta.fetchImpl, estado });
+  assert.equal(primeiro.status, 200);
+  assert.deepEqual(new Uint8Array(await primeiro.arrayBuffer()), PNG);
+
+  // Um pedido em curso ocupa o único lugar. O segundo pedido à mesma URL tem de responder já, da cache.
+  porta.fecha();
+  const bloqueio = servir(lib, { prisma, fetchImpl: porta.fetchImpl, estado, sku: `${SKU}-BLOQUEIO` });
+  try {
+    await aguardaAte(() => porta.chamadas.length === 2);
+    const segundo = await emAte(servir(lib, { prisma, fetchImpl: porta.fetchImpl, estado }), 500);
+    assert.notEqual(segundo, PENDENTE, "a cache responde sem esperar pelo lugar");
+    assert.equal(segundo.status, 200);
+    assert.equal(segundo.headers.get("content-type"), "image/png", "mesmo Content-Type");
+    assert.deepEqual(new Uint8Array(await segundo.arrayBuffer()), PNG, "os mesmos bytes");
+    assert.equal(porta.chamadas.length, 2, "não chama o fornecedor outra vez");
+  } finally {
+    porta.abreTodas();
+    await bloqueio;
+  }
+}
+
+async function casoCacheNaoOcupaLugar(lib) {
+  const estado = lib.criarEstadoDoProxy({ simultaneos: 4, esperaMaxMs: 5000 });
+  const porta = fetchComPorta();
+  const prisma = prismaFalso(linhasSinteticas(5));
+  const pedido = (i) => servir(lib, { prisma, fetchImpl: porta.fetchImpl, estado, sku: `${SKU}-${i}` });
+  const primeiro = await pedido(0);
+  assert.equal(primeiro.status, 200);
+  porta.fecha();
+  const bloqueios = [1, 2, 3, 4].map(pedido);
+  try {
+    await aguardaAte(() => porta.chamadas.length === 5);
+    const daCache = await emAte(pedido(0), 500);
+    assert.notEqual(daCache, PENDENTE, "com quatro em curso, a cache responde sem esperar");
+    assert.equal(daCache.status, 200);
+    assert.equal(porta.chamadas.length, 5, "não chama o fornecedor");
+  } finally {
+    porta.abreTodas();
+  }
+  const respostas = await Promise.all(bloqueios);
+  assert.deepEqual(
+    respostas.map((res) => res.status),
+    [200, 200, 200, 200]
+  );
+}
+
+async function casoReverificacaoDepoisDeLugar(lib) {
+  const estado = lib.criarEstadoDoProxy({ simultaneos: 1, esperaMaxMs: 5000 });
+  const porta = fetchComPorta();
+  const prisma = prismaFalso({ [SKU]: URL_IMAGEM });
+  const pedido = () => servir(lib, { prisma, fetchImpl: porta.fetchImpl, estado });
+  porta.fecha();
+  const primeiro = pedido();
+  let segundo;
+  try {
+    await aguardaAte(() => porta.chamadas.length === 1);
+    // O segundo entra na fila. Ainda não há cache, porque o primeiro não acabou.
+    segundo = pedido();
+    await atraso(30);
+    assert.equal(porta.chamadas.length, 1, "o segundo espera na fila");
+  } finally {
+    porta.abreTodas();
+  }
+  const r1 = await primeiro;
+  const r2 = await segundo;
+  assert.equal(r1.status, 200);
+  assert.equal(r2.status, 200);
+  assert.deepEqual(new Uint8Array(await r2.arrayBuffer()), PNG, "o segundo responde com a imagem da cache");
+  assert.equal(porta.chamadas.length, 1, "o segundo não chama o fornecedor outra vez");
+}
+
+function casoLRUETetoDeBytes(lib) {
+  // Entrada maior que o teto não se guarda.
+  const pequena = lib.criarEstadoDoProxy({ cacheMaxBytes: 10 }).cache;
+  pequena.set("grande", { bytes: new Uint8Array(20), tipo: "image/png" });
+  assert.equal(pequena.get("grande"), null, "20 bytes não cabem num teto de 10");
+
+  // Teto de 25: a terceira entrada de 10 bytes expulsa a menos usada.
+  const cache = lib.criarEstadoDoProxy({ cacheMaxBytes: 25 }).cache;
+  const dez = () => new Uint8Array(10);
+  cache.set("a", { bytes: dez(), tipo: "image/png" });
+  cache.set("b", { bytes: dez(), tipo: "image/png" });
+  assert.notEqual(cache.get("a"), null, "usar a põe-na no fim");
+  cache.set("c", { bytes: dez(), tipo: "image/png" });
+  assert.equal(cache.get("b"), null, "sai a menos usada, que é b");
+  assert.notEqual(cache.get("a"), null, "a usada recentemente fica");
+  assert.notEqual(cache.get("c"), null, "a entrada nova fica");
+}
+
+function casoTTL(lib) {
+  let agoraMs = 0;
+  const cache = lib.criarEstadoDoProxy({ cacheTtlMs: 1000, agora: () => agoraMs }).cache;
+  cache.set("a", { bytes: new Uint8Array(4), tipo: "image/png" });
+  agoraMs = 1000;
+  assert.notEqual(cache.get("a"), null, "aos 1000 ms ainda vale: expira só ao passar do TTL");
+  agoraMs = 2001;
+  assert.equal(cache.get("a"), null, "passado o TTL não se devolve");
+  assert.equal(cache.get("a"), null, "e a entrada já saiu");
+}
+
+async function casoLibertarIdempotente(lib) {
+  const { limitador } = lib.criarEstadoDoProxy({ simultaneos: 4, esperaMaxMs: 5000 });
+  const libertares = [];
+  for (let i = 0; i < 4; i++) libertares.push(await limitador.adquirir());
+  libertares[0]();
+  libertares[0](); // a segunda chamada não pode libertar outro lugar
+  // Ficou um lugar livre: o quinto entra, e o sexto espera.
+  libertares.push(await limitador.adquirir());
+  let sextoEntrou = false;
+  const sexto = limitador.adquirir().then((libertar) => {
+    sextoEntrou = true;
+    return libertar;
+  });
+  await atraso(30);
+  try {
+    assert.equal(sextoEntrou, false, "libertar duas vezes não liberta dois lugares");
+  } finally {
+    for (const libertar of libertares) libertar();
+    (await sexto)();
+  }
+}
+
+async function casoLibertaSempre(lib) {
+  const estado = lib.criarEstadoDoProxy({ simultaneos: 4, esperaMaxMs: 300 });
+  let chamadas = 0;
+  const fetchImpl = fetchFalso(() => {
+    chamadas += 1;
+    if (chamadas <= 4) throw new TypeError("falha de ligação sintética");
+    return respostaPng();
+  });
+  const prisma = prismaFalso(linhasSinteticas(8));
+  const falharam = await comAvisos(() =>
+    Promise.all([0, 1, 2, 3].map((i) => servir(lib, { prisma, fetchImpl, estado, sku: `${SKU}-${i}` })))
+  );
+  for (const res of falharam.resultado) assert.equal(res.status, 404, "o fetch que lança dá 404");
+  // Os quatro lugares voltaram: os quatro seguintes avançam logo, sem esperar pela espera máxima.
+  const seguintes = await Promise.all([4, 5, 6, 7].map((i) => servir(lib, { prisma, fetchImpl, estado, sku: `${SKU}-${i}` })));
+  assert.deepEqual(
+    seguintes.map((res) => res.status),
+    [200, 200, 200, 200],
+    "os quatro lugares voltaram"
+  );
+}
+
+/**
+ * O corpo da resposta é o bloco que a cache guarda, sem cópia. A primeira resposta e a da cache entregam o
+ * mesmo bloco. Com new Response(bytes), cada uma ficava com a sua cópia.
+ */
+async function casoCorpoSemCopia(lib) {
+  const estado = lib.criarEstadoDoProxy();
+  const prisma = prismaFalso({ [SKU]: URL_IMAGEM });
+  const fetchImpl = fetchFalso(() => respostaPng());
+  const primeira = await servir(lib, { prisma, fetchImpl, estado });
+  const segunda = await servir(lib, { prisma, fetchImpl, estado });
+  assert.equal(fetchImpl.chamadas.length, 1, "a segunda resposta vem da cache");
+  const bloco1 = (await primeira.body.getReader().read()).value;
+  const bloco2 = (await segunda.body.getReader().read()).value;
+  assert.deepEqual(new Uint8Array(bloco1), PNG, "o corpo chega igual");
+  assert.equal(bloco2, bloco1, "a resposta da cache entrega o mesmo bloco de bytes, sem cópia");
+}
+
+function casoConstantes(lib) {
+  assert.equal(lib.SIMULTANEOS_MAX, 4);
+  assert.equal(lib.FILA_MAXIMA, 100);
+  assert.equal(lib.ESPERA_MAX_MS, 30 * 1000);
+  assert.equal(lib.CACHE_MAX_BYTES, 32 * 1024 * 1024);
+  assert.equal(lib.CACHE_TTL_MS, 30 * 60 * 1000);
+}
+
 // ---------- execução ----------
 
 await caso("(1) feliz: 200, corpo igual, Content-Type sem parâmetros, Cache-Control e nosniff", () => casoFeliz(libReal));
@@ -659,6 +995,68 @@ await caso("mutação M27-rota-sku-do-parametro (em memória): params.sku passa"
   const mutado = trocaUma(texto, "M27-rota-sku-do-parametro", "skuDoCaminho(new URL(request.url).pathname)", "params.sku");
   await mutacaoTemDeFalhar("M27-rota-sku-do-parametro", () => assert.equal(rotaSeguraDaBd(mutado), true));
 });
+
+// ---------- (A) a (K): teto, fila, espera, cache ----------
+
+await caso("(A) teto de simultâneos: o quinto pedido espera pelo lugar de um dos quatro", () => casoTetoDeSimultaneos(libReal));
+await mutante("M28-teto-cinco", "if (emCurso < simultaneos) {", "if (emCurso < simultaneos + 1) {", casoTetoDeSimultaneos);
+await mutante("M29-sem-teto", "if (emCurso < simultaneos) {", "if (true) {", casoTetoDeSimultaneos);
+
+await caso("(B) fila cheia: o 101.º pedido responde 503 com Retry-After 5, sem ir ao fornecedor", () => casoFilaCheia503(libReal));
+await mutante("M30-fila-sem-limite", "if (fila.length >= filaMaxima) {", "if (false) {", casoFilaCheia503);
+await mutante("M31-sem-retry-after", `"Retry-After": "5", `, "", casoFilaCheia503);
+await mutante("M32-404-em-vez-de-503", "status: 503,", "status: 404,", casoFilaCheia503);
+
+await caso("(C) espera máxima: passado esperaMaxMs, o pedido responde 503 e sai da fila", () => casoEsperaMaxima(libReal));
+await mutante("M33-sem-temporizador", "entrada.temporizador = setTimeout(() => {", "entrada.temporizador = 0 && setTimeout(() => {", casoEsperaMaxima);
+
+await caso("(D) cache: o segundo pedido à mesma URL responde da cache, sem fetch e sem lugar", () => casoCacheHit(libReal));
+await mutante("M34-sem-cache-set", "estado.cache.set(alvo.href, { bytes, tipo });", "void 0;", casoCacheHit);
+await mutante("M35-sem-cache-get-inicio", "const daCache = estado.cache.get(alvo.href);", "const daCache = null;", casoCacheHit);
+
+await caso("(E) a cache não ocupa lugar: com quatro em curso, responde sem esperar", () => casoCacheNaoOcupaLugar(libReal));
+await mutante(
+  "M36-cache-depois-do-lugar",
+  "if (daCache) return respostaDeImagem(daCache.bytes, daCache.tipo);",
+  "if (false) return respostaDeImagem(daCache.bytes, daCache.tipo);",
+  casoCacheNaoOcupaLugar
+);
+
+await caso("(F) reverificação: depois de ter lugar, o pedido que esperou lê a cache e não chama o fornecedor", () => casoReverificacaoDepoisDeLugar(libReal));
+await mutante(
+  "M37-sem-segunda-leitura",
+  "if (depoisDeLugar) return respostaDeImagem(depoisDeLugar.bytes, depoisDeLugar.tipo);",
+  "if (false) return respostaDeImagem(depoisDeLugar.bytes, depoisDeLugar.tipo);",
+  casoReverificacaoDepoisDeLugar
+);
+
+await caso("(G) LRU: entrada maior que o teto não se guarda, e sai a menos usada", () => casoLRUETetoDeBytes(libReal));
+await mutante("M38-sem-expulsao", "while (bytesOcupados + bytes.byteLength > cacheMaxBytes", "while (false", casoLRUETetoDeBytes);
+await mutante("M39-get-sem-mover", "      entradas.delete(chave);\n      entradas.set(chave, entrada);\n", "", casoLRUETetoDeBytes);
+
+await caso("(H) TTL: passado cacheTtlMs, a entrada não se devolve e sai", () => casoTTL(libReal));
+await mutante("M40-sem-ttl", "if (agora() - entrada.criadaEm > cacheTtlMs) {", "if (false) {", casoTTL);
+
+await caso("(I) libertar é idempotente: chamar duas vezes não liberta dois lugares", () => casoLibertarIdempotente(libReal));
+await mutante("M41-libertar-sem-guarda", "if (libertado) return;", "if (false) return;", casoLibertarIdempotente);
+
+await caso("(J) libertar sempre: se o fetch lançar, o lugar volta", () => casoLibertaSempre(libReal));
+await mutante(
+  "M42-libertar-fora-do-finally",
+  "  try {\n    return await trabalho();\n  } finally {\n    libertar();\n  }",
+  "  const resposta = await trabalho();\n  libertar();\n  return resposta;",
+  casoLibertaSempre
+);
+
+await caso("(K) constantes: teto 4, fila 100, espera 30 s, cache 32 MB, TTL 30 min", () => casoConstantes(libReal));
+await mutante("M43-simultaneos", "export const SIMULTANEOS_MAX = 4;", "export const SIMULTANEOS_MAX = 5;", casoConstantes);
+await mutante("M44-fila", "export const FILA_MAXIMA = 100;", "export const FILA_MAXIMA = 101;", casoConstantes);
+await mutante("M45-espera", "export const ESPERA_MAX_MS = 30000;", "export const ESPERA_MAX_MS = 60000;", casoConstantes);
+await mutante("M46-cache-bytes", "export const CACHE_MAX_BYTES = 32 * 1024 * 1024;", "export const CACHE_MAX_BYTES = 16 * 1024 * 1024;", casoConstantes);
+await mutante("M47-ttl", "export const CACHE_TTL_MS = 30 * 60 * 1000;", "export const CACHE_TTL_MS = 60 * 60 * 1000;", casoConstantes);
+
+await caso("(21) corpo sem cópia: a resposta da cache entrega o mesmo bloco de bytes", () => casoCorpoSemCopia(libReal));
+await mutante("M48-corpo-com-copia", "return new Response(corpo, {", "return new Response(bytes, {", casoCorpoSemCopia);
 
 if (falhas) {
   console.error(`${falhas} falha(s)`);
