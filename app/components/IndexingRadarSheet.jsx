@@ -228,7 +228,7 @@ export function IndexingRadarSheet({
             ) : (
               items.map((p) => (
                 <InlineStack key={p.sku} gap="300" blockAlign="center" wrap={false}>
-                  <CatalogProductThumbnail imageUrl={p.imageUrl} title={p.title} size={50} />
+                  <CatalogProductThumbnail sku={p.sku} imageUrl={p.imageUrl} title={p.title} size={50} />
                   <BlockStack gap="050">
                     <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
                       {p.title}
