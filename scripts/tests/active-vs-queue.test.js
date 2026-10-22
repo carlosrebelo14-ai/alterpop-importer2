@@ -204,7 +204,7 @@ await check("active_vs_queue fica fora de WRITES e na lista que recusa execute",
   const linhaWrites = sh.split("\n").find((l) => l.includes("WRITES=true ;;"));
   assert.ok(linhaWrites && !linhaWrites.includes("active_vs_queue"));
   assert.match(sh, /^ {2}db_flag_check \| logs_recent \| restore_dry_run \| active_vs_queue(?: \| elite_purge_dry_run)?\)$/m);
-  assert.match(sh, /\| restore_dry_run \| active_vs_queue(?: \| elite_purge_dry_run)?(?: \| indexing_status)?(?: \| machine_status)?(?: \| esperar_indexacao)?(?: \| scale_memory)?\) ;;/);
+  assert.match(sh, /\| restore_dry_run \| active_vs_queue(?: \| elite_purge_dry_run)?(?: \| indexing_status)?(?: \| machine_status)?(?: \| esperar_indexacao)?(?: \| scale_memory)?(?: \| image_check)?\) ;;/);
 });
 
 /** flyctl falso: o comando remoto (argumento 6) vai para o log e a saída vem de FAKE_OUT. */
@@ -293,7 +293,7 @@ console.log("(d) maintenance.yml");
 const yml = fs.readFileSync(YML, "utf8");
 const ymlCodigo = yml.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
 await check("active_vs_queue nas opções da tarefa, logo a seguir a restore_dry_run", () => {
-  assert.match(ymlCodigo, /\n\s+- restore_dry_run\n\s+- active_vs_queue\n\s+- elite_purge_dry_run\n\s+- indexing_status\n\s+- machine_status\n\s+- scale_memory\n\s+mode:/);
+  assert.match(ymlCodigo, /\n\s+- restore_dry_run\n\s+- active_vs_queue\n\s+- elite_purge_dry_run\n\s+- indexing_status\n\s+- machine_status\n\s+- image_check\n\s+- scale_memory\n\s+mode:/);
 });
 await check("o job de escrita (execute) não a inclui: a lista de tarefas que escrevem é a mesma", () => {
   const job = ymlCodigo.slice(ymlCodigo.indexOf("  execute:"));
@@ -306,7 +306,7 @@ await check("o job dry-run corre só dry-run (sem environment e sem execute)", (
   assert.match(job, /maintenance\.sh "\$TASK" dry-run/);
 });
 await check("cabeçalho do workflow diz que active_vs_queue só lê", () => {
-  assert.match(yml, /^#\s+\(db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run, indexing_status e machine_status só leem: nunca entram no job de escrita\)$/m);
+  assert.match(yml, /^#\s+\(db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run, indexing_status, machine_status e image_check só leem: nunca entram no job de escrita\)$/m);
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });

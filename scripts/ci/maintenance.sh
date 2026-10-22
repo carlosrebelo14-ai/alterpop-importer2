@@ -4,9 +4,10 @@
 #   bash scripts/ci/maintenance.sh <tarefa> <fase>
 #
 # tarefa  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push
-#         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status   (estas só leem; nenhuma aceita execute)
+#         | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | image_check   (estas só leem; nenhuma aceita execute)
 #         | scale_memory   (muda a memória da única máquina da app; só execute, com aprovação do environment production; Decisão 41)
 # db_push recusa-se com a flag DB_DEGRADED presente no volume (Decisão 34), em dry-run e em execute.
+# image_check corre na Fly por stdin, como indexing_status (scripts/maintenance/image-check.mjs em base64), sem deploy. Só lê.
 # fase    dry-run  só lê (ou lista o que mudaria)
 #         execute  escreve (só tags_cleanup, character_pages_sync, db_push e scale_memory; nas outras é igual ao dry-run)
 #
@@ -48,7 +49,7 @@ RESTORE_OUT="$(mktemp)"
 LOG_SUM=""
 
 case "$TASK" in
-  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | esperar_indexacao | scale_memory) ;;
+  catalog_health | diagnose_theme | diagnose_characters | price_check | volume_snapshot | tags_cleanup | character_pages_sync | db_push | db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run | indexing_status | machine_status | esperar_indexacao | scale_memory | image_check) ;;
   *) echo "Tarefa desconhecida." >&2; exit 64 ;;
 esac
 # As tarefas novas só leem: nenhuma aceita execute, nem como no-op.
@@ -56,9 +57,9 @@ case "$TASK" in
   db_flag_check | logs_recent | restore_dry_run | active_vs_queue | elite_purge_dry_run)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
-# indexing_status, machine_status e esperar_indexacao ficam numa guarda própria, para não tocar na linha das tarefas que já recusam execute.
+# indexing_status, machine_status, esperar_indexacao e image_check ficam numa guarda própria, para não tocar na linha das tarefas que já recusam execute.
 case "$TASK" in
-  indexing_status | machine_status | esperar_indexacao)
+  indexing_status | machine_status | esperar_indexacao | image_check)
     if [ "$PHASE" = "execute" ]; then echo "Esta tarefa só lê: não aceita execute." >&2; exit 64; fi ;;
 esac
 case "$PHASE" in
@@ -433,6 +434,19 @@ case "$TASK" in
       fi
     fi
     ;;
+  image_check)
+    # Só lê, como indexing_status: o script vai por stdin em base64, sem deploy. Nunca aceita execute.
+    DESC="Lê o catálogo indexado: conta os imageUrl por esquema e os hosts mais frequentes, e faz GET a 20 URLs ao acaso, sem e com Referer da app. Só lê. Não mostra URLs nem SKUs. Os pedidos saem da Fly (IP de datacenter), não do browser: um bloqueio por IP parece uma imagem partida."
+    if [ ! -f "$ROOT/scripts/maintenance/image-check.mjs" ]; then
+      RC=2; CAUSE="o script image-check.mjs não está no repositório: não li nada."
+    else
+      IC64="$(base64 -w0 "$ROOT/scripts/maintenance/image-check.mjs")"
+      remote "echo $IC64 | base64 -d | node --input-type=module -"; RC=$?
+      if [ "$RC" -eq 0 ] && grep -q "^IC: " "$OUT"; then RESULT_OVERRIDE="✅ Leitura concluída (ver contagens)"; fi
+      # Sem a linha de contagens, um exit 0 não é leitura: falha em vez de passar por verde.
+      if [ "$RC" -eq 0 ] && ! grep -q "^IC: " "$OUT"; then RC=2; CAUSE="a Fly não devolveu a linha de contagens: não li nada."; fi
+    fi
+    ;;
 esac
 
 # ── resumo em português, só contagens e estados ───────────────────────
@@ -651,6 +665,37 @@ case "$TASK" in
     ;;
   scale_memory)
     bullets="$SM_BULLETS"; KEY="$SM_KEY"
+    ;;
+  image_check)
+    # Lê as linhas IC:, IC_HOST:, IC_AMOSTRA:, IC_TOTAIS:, IC_RESULTADO: e IC_ERRO: (scripts/maintenance/image-check.mjs).
+    # Só pares chave=valor e hosts. Nenhuma URL, SKU nem linha crua sai daqui.
+    icf() { echo "$CLEAN" | grep -E "^$1: " | head -1 | tr ' ' '\n' | grep -E "^$2=" | head -1 | cut -d= -f2-; }
+    icn() { local v; v="$(icf "$1" "$2")"; echo "${v:-0}"; }
+    icl() { echo "$1" | tr ' ' '\n' | grep -E "^$2=" | head -1 | cut -d= -f2-; }
+    if [ -z "$(echo "$CLEAN" | grep -E '^IC: ' | head -1)" ]; then
+      bullets=""; KEY="sem leitura"
+      case "$(icf IC_ERRO classe)" in
+        catalogo_falhou) CAUSE="não consegui ler o catálogo na base de dados: não contei nada." ;;
+        catalogo_mudou)  CAUSE="o catálogo mudou durante a leitura, provavelmente por uma indexação a decorrer: não contei nada. Repetir depois." ;;
+        modulo_falhou)   CAUSE="não consegui carregar o cliente Prisma na Fly." ;;
+      esac
+    else
+      bullets="- Catálogo indexado: **$(icn IC total)** linhas. imageUrl: https **$(icn IC https)**, http **$(icn IC http)**, vazio **$(icn IC vazio)**, inválido **$(icn IC invalido)**. Com mais de um URL: **$(icn IC multi)**."
+      # Só hosts no formato de nome com porta opcional. O resto da linha não sai, e a bullet diz quantos ficaram de fora.
+      hl="$(echo "$CLEAN" | grep -E '^IC_HOST: ' | sort -k2,2 | sed -nE 's/^IC_HOST: pos=[0-9]+ host=([A-Za-z0-9._-]+(:[0-9]{1,5})?) n=([0-9]+).*/\1 (\3)/p' | paste -sd, - | sed 's/,/, /g')"
+      hosts_fora=$(( $(echo "$CLEAN" | grep -cE '^IC_HOST: ' || true) - $(echo "$CLEAN" | grep -cE '^IC_HOST: pos=[0-9]+ host=[A-Za-z0-9._-]+(:[0-9]{1,5})? n=[0-9]+' || true) ))
+      nota_hosts=""
+      if [ "$hosts_fora" -gt 0 ]; then nota_hosts=" Fora do formato de nome, não mostrados: $hosts_fora."; fi
+      bullets="$bullets"$'\n'"- Hosts mais frequentes (primeiro URL válido): ${hl:-nenhum com 2 ou mais linhas}.$nota_hosts"
+      bullets="$bullets"$'\n'"- Amostra: **$(icn IC_AMOSTRA obtidas)** linhas com URL válido, ao acaso (https **$(icn IC_AMOSTRA https)**, http **$(icn IC_AMOSTRA http)**)."
+      bullets="$bullets"$'\n'"- Resposta da amostra: OK sem Referer **$(icn IC_TOTAIS ok_sem_referer)**; OK com Referer da app **$(icn IC_TOTAIS ok_referer_app)**; redirecionam para https **$(icn IC_TOTAIS para_https)**, para http **$(icn IC_TOTAIS para_http)**; com erro **$(icn IC_TOTAIS com_erro)**."
+      bullets="$bullets"$'\n'"- Pedido com https, sem Referer, a cada linha http da amostra: 200 com imagem em **$(icn IC_HTTPS ok)** de **$(icn IC_HTTPS testadas)**; com erro **$(icn IC_HTTPS com_erro)**."
+      while IFS= read -r linha_ic; do
+        [ -z "$linha_ic" ] && continue
+        bullets="$bullets"$'\n'"- **$(icl "$linha_ic" n)** × esquema **$(icl "$linha_ic" esquema)**: sem Referer **$(icl "$linha_ic" sem_referer)**, com Referer da app **$(icl "$linha_ic" app)**, redireciona **$(icl "$linha_ic" redireciona)**, destino **$(icl "$linha_ic" destino)**."
+      done < <(echo "$CLEAN" | grep -E '^IC_RESULTADO: ' || true)
+      KEY="https $(icn IC https), http $(icn IC http), inválidas $(icn IC invalido); amostra: $(icn IC_TOTAIS ok_sem_referer) OK sem Referer, $(icn IC_TOTAIS ok_referer_app) OK com Referer da app; https 200 com imagem em $(icn IC_HTTPS ok) de $(icn IC_HTTPS testadas) linhas http"
+    fi
     ;;
 esac
 
