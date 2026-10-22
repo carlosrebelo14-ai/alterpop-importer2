@@ -40,7 +40,7 @@ check("só workflow_dispatch, só main", () => {
 check("task: lista fechada exata", () => {
   assert.match(
     code,
-    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- price_check\n\s+- volume_snapshot\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+- db_flag_check\n\s+- logs_recent\n\s+- restore_dry_run\n\s+- active_vs_queue\n\s+- elite_purge_dry_run\n\s+- indexing_status\n\s+- machine_status\n\s+- scale_memory\n\s+mode:/
+    /task:\n\s+description: .*\n\s+type: choice\n\s+required: true\n\s+options:\n\s+- catalog_health\n\s+- diagnose_theme\n\s+- diagnose_characters\n\s+- price_check\n\s+- volume_snapshot\n\s+- tags_cleanup\n\s+- character_pages_sync\n\s+- db_push\n\s+- db_flag_check\n\s+- logs_recent\n\s+- restore_dry_run\n\s+- active_vs_queue\n\s+- elite_purge_dry_run\n\s+- indexing_status\n\s+- machine_status\n\s+- image_check\n\s+- scale_memory\n\s+mode:/
   );
 });
 check("mode: dry-run por omissão, execute", () => {
@@ -120,6 +120,7 @@ case "$cmd" in
     if echo "$b" | base64 -d 2>/dev/null | grep -q "escrita:"; then
       printf 'ERRO: escrita: metaobjectUpsert(…): Products cannot be blank\\n'; exit 0
     fi
+    if echo "$b" | base64 -d 2>/dev/null | grep -q "IC_AMOSTRA"; then printf '%b' "$FAKE_IC"; exit "\${FAKE_IC_RC:-0}"; fi
     n=$(cat "$FAKE_COUNT" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$FAKE_COUNT"
     if [ "$n" -le "\${FAKE_INDEXING_CALLS:-0}" ]; then echo "[check-no-indexing] INDEXAÇÃO A DECORRER. O db:push não corre"; exit 1; fi
     if [ -n "$FAKE_PROBE_ERROR" ]; then echo "[check-no-indexing] não consegui ler"; exit 2; fi
@@ -164,7 +165,7 @@ function run(task, phase, env = {}) {
   return { ...r, calls: read(t.log).split("\n").filter(Boolean), summaryText: read(t.summary), probes: Number(read(t.count) || 0) };
 }
 const ran = (r, needle) => r.calls.some((c) => c.includes(needle));
-const SO_LEITURA_NOVA = ["db_flag_check", "logs_recent", "restore_dry_run"];
+const SO_LEITURA_NOVA = ["db_flag_check", "logs_recent", "restore_dry_run", "image_check"];
 
 check("tarefa ou fase fora da lista → recusa sem tocar na Fly", () => {
   for (const [t, p] of [["rm_rf", "dry-run"], ["tags_cleanup", "yolo"], ["", ""], ["tags_cleanup; ls", "dry-run"]]) {
@@ -333,10 +334,21 @@ check("execute com estado ilegível: não corre db:push", () => {
 
 console.log("repositório público: logs e resumos só com contagens e estados");
 const PROIBIDO = [/vol_/, /vs_/, /8435450233067/, /darth-vader/, /gid:\/\/shopify/, /9,99/, /€/, /star-wars-/, /loja-secreta/, /Segredo/, /"checkedAt"/];
+// Saída de contagens do image_check, sintética: o flyctl falso devolve-a no lugar da Fly.
+const IC_SINTETICO = [
+  "IC: total=26 vazio=3 https=13 http=8 invalido=2 multi=3",
+  "IC_HOST: pos=1 host=cdn-sintetico.example n=17",
+  "IC_HOST: pos=2 host=[::1]:443 n=4",
+  "IC_AMOSTRA: pedidas=20 obtidas=20 https=10 http=10",
+  "IC_TOTAIS: ok_sem_referer=18 ok_referer_app=18 para_https=0 para_http=0 com_erro=0",
+  "IC_RESULTADO: n=12 esquema=https sem_referer=200/imagem app=200/imagem redireciona=nao",
+  "IC_RESULTADO: n=8 esquema=http sem_referer=200/imagem app=200/imagem redireciona=nao",
+  "",
+].join("\n");
 check("nenhuma tarefa/fase deixa SKU, handle, preço, GID ou JSON completo no log nem no resumo", () => {
-  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters", "price_check", "volume_snapshot", "tags_cleanup", "character_pages_sync", "db_push", "db_flag_check", "logs_recent", "restore_dry_run"]) {
+  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters", "price_check", "volume_snapshot", "tags_cleanup", "character_pages_sync", "db_push", "db_flag_check", "logs_recent", "restore_dry_run", "image_check"]) {
     for (const phase of SO_LEITURA_NOVA.includes(task) ? ["dry-run"] : ["dry-run", "execute"]) {
-      const r = run(task, phase);
+      const r = run(task, phase, task === "image_check" ? { FAKE_IC: IC_SINTETICO } : {});
       const visivel = `${r.stdout}\n${r.stderr}\n${r.summaryText}`;
       for (const rx of PROIBIDO) assert.doesNotMatch(visivel, rx, `${task}/${phase} expõe ${rx}`);
       assert.ok(visivel.length > 50, `${task}/${phase} sem resumo`);
@@ -527,9 +539,71 @@ check("workflow: as tarefas novas não entram no job de escrita (execute)", () =
   const job = code.slice(code.indexOf("  execute:"));
   for (const task of SO_LEITURA_NOVA) assert.doesNotMatch(job, new RegExp(task));
 });
+check("image_check: nas opções do workflow, fora do job execute e fora de WRITES do sh", () => {
+  assert.match(code, /^\s+- image_check$/m);
+  const job = code.slice(code.indexOf("  execute:"));
+  assert.doesNotMatch(job, /image_check/);
+  const writes = sh.match(/^case "\$TASK" in (.*?)\) WRITES=true/m);
+  assert.ok(writes, "linha WRITES do maintenance.sh");
+  assert.doesNotMatch(writes[1], /image_check/);
+});
 check("workflow: o restauro de cópia prepara dependências só nessa tarefa", () => {
   const job = code.slice(code.indexOf("  dry-run:"), code.indexOf("  execute:"));
   assert.match(job, /if: inputs\.task == 'restore_dry_run'[\s\S]*npm ci/);
+});
+
+console.log("image_check — resumo e falhas (flyctl falso com linhas IC sintéticas)");
+check("image_check: contagens, host, amostra e combinações saem no resumo", () => {
+  const r = run("image_check", "dry-run", { FAKE_IC: IC_SINTETICO });
+  assert.equal(r.status, 0);
+  for (const frag of [
+    "Catálogo indexado: **26** linhas. imageUrl: https **13**, http **8**, vazio **3**, inválido **2**. Com mais de um URL: **3**.",
+    "Hosts mais frequentes (primeiro URL válido): cdn-sintetico.example (17).",
+    "Amostra: **20** linhas com URL válido, ao acaso (https **10**, http **10**).",
+    "Resposta da amostra: OK sem Referer **18**; OK com Referer da app **18**;",
+    "- **12** × esquema **https**: sem Referer **200/imagem**, com Referer da app **200/imagem**, redireciona **nao**.",
+    "**Em resumo:** https 13, http 8, inválidas 2; amostra: 18 OK sem Referer, 18 OK com Referer da app",
+    "✅ Leitura concluída (ver contagens)",
+  ]) {
+    assert.ok(r.summaryText.includes(frag), frag);
+  }
+});
+check("image_check: host fora do formato de nome não sai, e o resumo diz quantos ficaram de fora", () => {
+  const r = run("image_check", "dry-run", { FAKE_IC: IC_SINTETICO });
+  assert.ok(r.summaryText.includes("Fora do formato de nome, não mostrados: 1."), "contagem de hosts fora");
+  assert.doesNotMatch(r.summaryText, /::1/);
+});
+check("image_check: sem hosts com duas ou mais linhas, o resumo diz porquê", () => {
+  const sem = IC_SINTETICO.split("\n").filter((l) => !l.startsWith("IC_HOST:")).join("\n");
+  const r = run("image_check", "dry-run", { FAKE_IC: sem });
+  assert.ok(r.summaryText.includes("Hosts mais frequentes (primeiro URL válido): nenhum com 2 ou mais linhas."));
+});
+check("image_check: linha fora do contrato não sai no stdout, no stderr nem no resumo", () => {
+  const r = run("image_check", "dry-run", { FAKE_IC: IC_SINTETICO + "erro cru: https://loja-sintetica.example/a/SKU-SINTETICO-9?v=1\n" });
+  assert.equal(r.status, 0);
+  for (const texto of [r.stdout, r.stderr, r.summaryText]) {
+    assert.doesNotMatch(texto, /:\/\//);
+    assert.doesNotMatch(texto, /SKU-SINTETICO|loja-sintetica|\?v=/);
+  }
+});
+check("image_check: exit 0 sem linha de contagens é falha, não verde", () => {
+  const r = run("image_check", "dry-run", { FAKE_IC: "" });
+  assert.equal(r.status, 2);
+  assert.ok(r.summaryText.includes("❌ Falhou (código 2)"));
+  assert.ok(r.summaryText.includes("a Fly não devolveu a linha de contagens: não li nada."));
+});
+check("image_check: IC_ERRO dá a causa classificada e nenhum detalhe", () => {
+  const casos = [
+    ["catalogo_falhou", "não consegui ler o catálogo na base de dados"],
+    ["catalogo_mudou", "o catálogo mudou durante a leitura"],
+    ["modulo_falhou", "não consegui carregar o cliente Prisma na Fly"],
+  ];
+  for (const [classe, texto] of casos) {
+    const r = run("image_check", "dry-run", { FAKE_IC: `IC_ERRO: classe=${classe}\n`, FAKE_IC_RC: "1" });
+    assert.equal(r.status, 1, classe);
+    assert.ok(r.summaryText.includes(texto), classe);
+    assert.ok(r.summaryText.includes("**Em resumo:** sem leitura"), classe);
+  }
 });
 
 console.log("resumo");
