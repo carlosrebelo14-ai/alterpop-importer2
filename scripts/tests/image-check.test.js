@@ -9,9 +9,10 @@
  * Uso: node scripts/tests/image-check.test.js
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -309,7 +310,8 @@ await check("hotlink: ok sem Referer e não ok com o Referer da app; o pedido le
   const t = lerCampos(linhaUnica(r, "IC_TOTAIS:"));
   assert.equal(t.ok_sem_referer, "1");
   assert.equal(t.ok_referer_app, "0");
-  assert.equal(linhaUnica(r, "IC_RESULTADO:"), "IC_RESULTADO: n=1 esquema=http sem_referer=200/imagem app=403/nao_imagem redireciona=nao");
+  assert.equal(linhaUnica(r, "IC_RESULTADO:"), "IC_RESULTADO: n=1 esquema=http sem_referer=200/imagem app=403/nao_imagem redireciona=nao destino=-");
+  assert.equal(linhaUnica(r, "IC_HTTPS:"), "IC_HTTPS: testadas=1 ok=0 com_erro=1", "o https de uma linha http é pedido, e aqui falha em TLS");
   const hits = pedidos.filter((p) => p.caminho === "/hotlink");
   assert.equal(hits.length, 2);
   assert.equal(hits[0].referer, null, "o primeiro pedido não tem Referer");
@@ -320,17 +322,48 @@ await check("hotlink: ok sem Referer e não ok com o Referer da app; o pedido le
   }
   semEscritas(stub);
 });
-await check("redirect para http: para_http, e a amostra fica ok nos dois pedidos", async () => {
+await check("redirect: o 3xx fica registado com o destino, não é seguido e não conta como ok", async () => {
+  pedidos.length = 0;
   const stub = novoStub({ modo: "normal", linhas: [LINHA("SKU-SINTETICO-F1", `http://127.0.0.1:${PORTA}/redir`)] });
   const r = await correrComStub(stub);
   assert.equal(r.status, 0, `saída: ${r.status}`);
   const t = lerCampos(linhaUnica(r, "IC_TOTAIS:"));
   assert.equal(t.para_http, "1");
   assert.equal(t.para_https, "0");
-  assert.equal(t.ok_sem_referer, "1");
-  assert.equal(t.ok_referer_app, "1");
-  assert.equal(linhaUnica(r, "IC_RESULTADO:"), "IC_RESULTADO: n=1 esquema=http sem_referer=200/imagem app=200/imagem redireciona=para_http");
+  assert.equal(t.ok_sem_referer, "0");
+  assert.equal(t.ok_referer_app, "0");
+  assert.equal(
+    linhaUnica(r, "IC_RESULTADO:"),
+    "IC_RESULTADO: n=1 esquema=http sem_referer=301/- app=301/- redireciona=para_http destino=mesmo",
+  );
+  assert.equal(pedidos.filter((p) => p.caminho === "/ok/redir").length, 0, "o destino do redirecionamento não é pedido");
   semEscritas(stub);
+});
+await check("https 200 com imagem: a sonda https conta como ok quando responde; TLS só aqui, com certificado de teste", async () => {
+  // Servidor TLS com certificado autoassinado gerado na hora. O processo filho aceita-o só neste caso (NODE_TLS_REJECT_UNAUTHORIZED).
+  const chave = path.join(tmp, "tls-key.pem");
+  const cert = path.join(tmp, "tls-cert.pem");
+  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", chave, "-out", cert, "-days", "1", "-subj", "/CN=127.0.0.1"], { stdio: "ignore" });
+  const tlsServidor = https.createServer({ key: fs.readFileSync(chave), cert: fs.readFileSync(cert) }, (req, res) => {
+    if (req.url.startsWith("/ok")) {
+      res.writeHead(200, { "content-type": "image/png" });
+      return res.end("png");
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((r) => tlsServidor.listen(0, "127.0.0.1", r));
+  try {
+    const porta = tlsServidor.address().port;
+    const stub = novoStub({ modo: "normal", linhas: [LINHA("SKU-SINTETICO-T1", `http://127.0.0.1:${porta}/ok/tls1`)] });
+    const r = await correr({ IMAGE_CHECK_PRISMA: stub.caminho, NODE_TLS_REJECT_UNAUTHORIZED: "0" });
+    assert.equal(r.status, 0, `saída: ${r.status}`);
+    assert.equal(linhaUnica(r, "IC_HTTPS:"), "IC_HTTPS: testadas=1 ok=1 com_erro=0");
+    assert.match(linhaUnica(r, "IC_RESULTADO:"), /^IC_RESULTADO: n=1 esquema=http sem_referer=erro\/[A-Z_]+ app=erro\/[A-Z_]+ redireciona=nao destino=-$/);
+    semEscritas(stub);
+  } finally {
+    await new Promise((r) => tlsServidor.close(r));
+  }
 });
 await check("respostas que não são imagem: html e 500 ficam nao_imagem e não contam como ok", async () => {
   const stub = novoStub({
@@ -340,23 +373,25 @@ await check("respostas que não são imagem: html e 500 ficam nao_imagem e não 
   const r = await correrComStub(stub);
   assert.equal(r.status, 0, `saída: ${r.status}`);
   assert.deepEqual(linhasDe(r, "IC_RESULTADO:"), [
-    "IC_RESULTADO: n=1 esquema=http sem_referer=200/nao_imagem app=200/nao_imagem redireciona=nao",
-    "IC_RESULTADO: n=1 esquema=http sem_referer=500/nao_imagem app=500/nao_imagem redireciona=nao",
+    "IC_RESULTADO: n=1 esquema=http sem_referer=200/nao_imagem app=200/nao_imagem redireciona=nao destino=-",
+    "IC_RESULTADO: n=1 esquema=http sem_referer=500/nao_imagem app=500/nao_imagem redireciona=nao destino=-",
   ]);
   const t = lerCampos(linhaUnica(r, "IC_TOTAIS:"));
   assert.equal(t.ok_sem_referer, "0");
   assert.equal(t.ok_referer_app, "0");
+  assert.equal(linhaUnica(r, "IC_HTTPS:"), "IC_HTTPS: testadas=2 ok=0 com_erro=2");
   semEscritas(stub);
 });
-await check("https sem servidor: erro de rede como erro/<código>, sem mensagem", async () => {
+await check("https sem servidor: erro de rede como erro/<código>, sem mensagem; linha https não gera sonda", async () => {
   const stub = novoStub({ modo: "normal", linhas: [LINHA("SKU-SINTETICO-H1", `https://127.0.0.1:${FECHADA}/x`)] });
   const r = await correrComStub(stub);
   assert.equal(r.status, 0, `saída: ${r.status}`);
   assert.match(
     linhaUnica(r, "IC_RESULTADO:"),
-    /^IC_RESULTADO: n=1 esquema=https sem_referer=erro\/(ECONNREFUSED|FETCH) app=erro\/(ECONNREFUSED|FETCH) redireciona=nao$/,
+    /^IC_RESULTADO: n=1 esquema=https sem_referer=erro\/(ECONNREFUSED|FETCH) app=erro\/(ECONNREFUSED|FETCH) redireciona=nao destino=-$/,
   );
   assert.equal(lerCampos(linhaUnica(r, "IC_TOTAIS:")).com_erro, "1");
+  assert.equal(linhaUnica(r, "IC_HTTPS:"), "IC_HTTPS: testadas=0 ok=0 com_erro=0", "só as linhas http têm sonda https");
   semEscritas(stub);
 });
 

@@ -340,9 +340,10 @@ const IC_SINTETICO = [
   "IC_HOST: pos=1 host=cdn-sintetico.example n=17",
   "IC_HOST: pos=2 host=[::1]:443 n=4",
   "IC_AMOSTRA: pedidas=20 obtidas=20 https=10 http=10",
+  "IC_HTTPS: testadas=10 ok=9 com_erro=1",
   "IC_TOTAIS: ok_sem_referer=18 ok_referer_app=18 para_https=0 para_http=0 com_erro=0",
-  "IC_RESULTADO: n=12 esquema=https sem_referer=200/imagem app=200/imagem redireciona=nao",
-  "IC_RESULTADO: n=8 esquema=http sem_referer=200/imagem app=200/imagem redireciona=nao",
+  "IC_RESULTADO: n=12 esquema=https sem_referer=200/imagem app=200/imagem redireciona=nao destino=-",
+  "IC_RESULTADO: n=8 esquema=http sem_referer=200/imagem app=200/imagem redireciona=nao destino=-",
   "",
 ].join("\n");
 check("nenhuma tarefa/fase deixa SKU, handle, preço, GID ou JSON completo no log nem no resumo", () => {
@@ -560,8 +561,9 @@ check("image_check: contagens, host, amostra e combinações saem no resumo", ()
     "Catálogo indexado: **26** linhas. imageUrl: https **13**, http **8**, vazio **3**, inválido **2**. Com mais de um URL: **3**.",
     "Hosts mais frequentes (primeiro URL válido): cdn-sintetico.example (17).",
     "Amostra: **20** linhas com URL válido, ao acaso (https **10**, http **10**).",
+    "Pedido com https, sem Referer, a cada linha http da amostra: 200 com imagem em **9** de **10**; com erro **1**.",
     "Resposta da amostra: OK sem Referer **18**; OK com Referer da app **18**;",
-    "- **12** × esquema **https**: sem Referer **200/imagem**, com Referer da app **200/imagem**, redireciona **nao**.",
+    "- **12** × esquema **https**: sem Referer **200/imagem**, com Referer da app **200/imagem**, redireciona **nao**, destino **-**.",
     "**Em resumo:** https 13, http 8, inválidas 2; amostra: 18 OK sem Referer, 18 OK com Referer da app",
     "✅ Leitura concluída (ver contagens)",
   ]) {

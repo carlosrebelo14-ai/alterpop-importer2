@@ -689,11 +689,12 @@ case "$TASK" in
       bullets="$bullets"$'\n'"- Hosts mais frequentes (primeiro URL válido): ${hl:-nenhum com 2 ou mais linhas}.$nota_hosts"
       bullets="$bullets"$'\n'"- Amostra: **$(icn IC_AMOSTRA obtidas)** linhas com URL válido, ao acaso (https **$(icn IC_AMOSTRA https)**, http **$(icn IC_AMOSTRA http)**)."
       bullets="$bullets"$'\n'"- Resposta da amostra: OK sem Referer **$(icn IC_TOTAIS ok_sem_referer)**; OK com Referer da app **$(icn IC_TOTAIS ok_referer_app)**; redirecionam para https **$(icn IC_TOTAIS para_https)**, para http **$(icn IC_TOTAIS para_http)**; com erro **$(icn IC_TOTAIS com_erro)**."
+      bullets="$bullets"$'\n'"- Pedido com https, sem Referer, a cada linha http da amostra: 200 com imagem em **$(icn IC_HTTPS ok)** de **$(icn IC_HTTPS testadas)**; com erro **$(icn IC_HTTPS com_erro)**."
       while IFS= read -r linha_ic; do
         [ -z "$linha_ic" ] && continue
-        bullets="$bullets"$'\n'"- **$(icl "$linha_ic" n)** × esquema **$(icl "$linha_ic" esquema)**: sem Referer **$(icl "$linha_ic" sem_referer)**, com Referer da app **$(icl "$linha_ic" app)**, redireciona **$(icl "$linha_ic" redireciona)**."
+        bullets="$bullets"$'\n'"- **$(icl "$linha_ic" n)** × esquema **$(icl "$linha_ic" esquema)**: sem Referer **$(icl "$linha_ic" sem_referer)**, com Referer da app **$(icl "$linha_ic" app)**, redireciona **$(icl "$linha_ic" redireciona)**, destino **$(icl "$linha_ic" destino)**."
       done < <(echo "$CLEAN" | grep -E '^IC_RESULTADO: ' || true)
-      KEY="https $(icn IC https), http $(icn IC http), inválidas $(icn IC invalido); amostra: $(icn IC_TOTAIS ok_sem_referer) OK sem Referer, $(icn IC_TOTAIS ok_referer_app) OK com Referer da app"
+      KEY="https $(icn IC https), http $(icn IC http), inválidas $(icn IC invalido); amostra: $(icn IC_TOTAIS ok_sem_referer) OK sem Referer, $(icn IC_TOTAIS ok_referer_app) OK com Referer da app; https 200 com imagem em $(icn IC_HTTPS ok) de $(icn IC_HTTPS testadas) linhas http"
     fi
     ;;
 esac

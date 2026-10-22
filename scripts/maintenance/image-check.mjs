@@ -21,8 +21,10 @@
 //   IC: total=<n> vazio=<n> https=<n> http=<n> invalido=<n> multi=<n>
 //   IC_HOST: pos=<1..5> host=<host> n=<n>   (só hosts com 2 ou mais linhas)
 //   IC_AMOSTRA: pedidas=20 obtidas=<n> https=<n> http=<n>
+//   IC_HTTPS: testadas=<m> ok=<n> com_erro=<k>   (m = linhas http da amostra; ok = 200 com image/*, pedido com https e sem Referer)
 //   IC_TOTAIS: ok_sem_referer=<n> ok_referer_app=<n> para_https=<n> para_http=<n> com_erro=<n>
-//   IC_RESULTADO: n=<n> esquema=<https|http> sem_referer=<cod> app=<cod> redireciona=<nao|para_https|para_http>
+//   IC_RESULTADO: n=<n> esquema=<https|http> sem_referer=<cod> app=<cod> redireciona=<nao|para_https|para_http|sem_location|outro_esquema> destino=<mesmo|-|host|outro>
+//     Os redirecionamentos não se seguem: o 3xx fica registado, com o esquema e o destino do Location. O host do destino só sai com 2 ou mais linhas no catálogo; senão, outro.
 //   IC_ERRO: classe=<catalogo_falhou|catalogo_mudou|modulo_falhou>   (exit 1, e nada mais no stdout)
 
 import crypto from "node:crypto";
@@ -167,49 +169,73 @@ function tipoDoConteudo(valor) {
   return s.startsWith("image/") ? "imagem" : "nao_imagem";
 }
 
-/** O fetch só segue http e https, por isso o esquema final é um dos dois. */
-function esquemaDe(url) {
-  return new URL(url).protocol === "https:" ? "https" : "http";
+/**
+ * O destino de um 3xx, sem o seguir. O Location resolve-se contra o pedido. O host só sai se tiver 2 ou mais
+ * linhas no catálogo, a mesma regra da lista de hosts. Se não, sai "outro". O cabeçalho em bruto não sai.
+ * @param {string | null} localizacao
+ * @param {string} urlPedido
+ * @param {Set<string>} hostsComDuas
+ */
+function destinoDoRedirecionamento(localizacao, urlPedido, hostsComDuas) {
+  if (!localizacao) return { redireciona: "sem_location", destino: "-" };
+  let alvo;
+  try {
+    alvo = new URL(localizacao, urlPedido);
+  } catch {
+    return { redireciona: "sem_location", destino: "outro" };
+  }
+  if (alvo.protocol !== "https:" && alvo.protocol !== "http:") return { redireciona: "outro_esquema", destino: "outro" };
+  const redireciona = alvo.protocol === "https:" ? "para_https" : "para_http";
+  if (alvo.host === new URL(urlPedido).host) return { redireciona, destino: "mesmo" };
+  return { redireciona, destino: hostsComDuas.has(alvo.host) ? alvo.host : "outro" };
 }
 
 /**
  * Um GET parecido com o que o browser faz à miniatura. Sai da Fly, com IP de datacenter, não do browser.
- * Lê só o estado, o tipo e o esquema final, e cancela o corpo.
- * Nunca guarda bytes, nem a mensagem do erro, nem o cabeçalho Location.
+ * Não segue redirecionamentos: o 3xx fica registado, com o esquema e o destino do Location.
+ * Lê só o estado, o tipo e o destino, e cancela o corpo.
+ * Nunca guarda bytes, nem a mensagem do erro.
  */
-async function pedir(url, referer) {
+async function pedir(url, referer, hostsComDuas) {
   const controlo = new AbortController();
   const temporizador = setTimeout(() => controlo.abort(), TIMEOUT_MS);
   const headers = { "User-Agent": USER_AGENT, Accept: ACCEPT };
   if (referer) headers.Referer = referer;
   try {
-    const res = await fetch(url, { headers, redirect: "follow", signal: controlo.signal });
-    const tipo = tipoDoConteudo(res.headers.get("content-type"));
-    const redireciona = res.redirected ? `para_${esquemaDe(res.url)}` : "nao";
+    const res = await fetch(url, { headers, redirect: "manual", signal: controlo.signal });
+    const redirecionamento = res.status >= 300 && res.status < 400;
+    const tipo = redirecionamento ? "-" : tipoDoConteudo(res.headers.get("content-type"));
+    const { redireciona, destino } = redirecionamento
+      ? destinoDoRedirecionamento(res.headers.get("location"), url, hostsComDuas)
+      : { redireciona: "nao", destino: "-" };
     try {
       await res.body?.cancel();
     } catch {
       // O corpo não interessa: basta o estado.
     }
-    return { cod: `${res.status}/${tipo}`, erro: false, status: res.status, tipo, redireciona };
+    return { cod: `${res.status}/${tipo}`, erro: false, status: res.status, tipo, redireciona, destino };
   } catch (err) {
-    if (err?.name === "AbortError") return { cod: "timeout/-", erro: true, status: null, tipo: null, redireciona: "nao" };
+    if (err?.name === "AbortError") return { cod: "timeout/-", erro: true, status: null, tipo: null, redireciona: "nao", destino: "-" };
     // Sem err.message: pode trazer o URL. Só o código de rede, se for um token simples.
     const codigo = err?.cause?.code;
     const classe = typeof codigo === "string" && CODIGO_REDE.test(codigo) ? codigo : "FETCH";
-    return { cod: `erro/${classe}`, erro: true, status: null, tipo: null, redireciona: "nao" };
+    return { cod: `erro/${classe}`, erro: true, status: null, tipo: null, redireciona: "nao", destino: "-" };
   } finally {
     clearTimeout(temporizador);
   }
 }
 
-/** Dois pedidos por URL da amostra: sem Referer, e com o Referer da app. Um de cada vez, para não martelar o fornecedor. */
-async function verificarAmostra(amostra) {
+/**
+ * Dois pedidos por URL da amostra: sem Referer, e com o Referer da app. Uma linha http leva mais um pedido, à mesma
+ * URL com https e sem Referer: é isso que diz se o https responde. Um de cada vez, para não martelar o fornecedor.
+ */
+async function verificarAmostra(amostra, hostsComDuas) {
   const resultados = [];
   for (const item of amostra) {
-    const sem = await pedir(item.url, null);
-    const app = await pedir(item.url, REFERER_APP);
-    resultados.push({ esquema: item.esquema, sem, app });
+    const sem = await pedir(item.url, null, hostsComDuas);
+    const app = await pedir(item.url, REFERER_APP, hostsComDuas);
+    const https = item.esquema === "http" ? await pedir(item.url.replace(/^http:\/\//i, "https://"), null, hostsComDuas) : null;
+    resultados.push({ esquema: item.esquema, sem, app, https });
   }
   return resultados;
 }
@@ -219,8 +245,19 @@ function ok(r) {
   return !r.erro && r.status >= 200 && r.status < 300 && r.tipo === "imagem";
 }
 
+/** Sonda https: 200 exato e tipo imagem. É o critério do arquiteto para decidir entre reescrever e proxy. */
+function okHttps(r) {
+  return !r.erro && r.status === 200 && r.tipo === "imagem";
+}
+
+/** Hosts com 2 ou mais linhas, como conjunto. É a regra da lista de hosts e a do destino dos redirecionamentos. */
+function hostsComDuasOuMais(hosts) {
+  return new Set([...hosts.entries()].filter(([, n]) => n >= 2).map(([host]) => host));
+}
+
 function resumirAmostra(resultados) {
   const totais = { ok_sem_referer: 0, ok_referer_app: 0, para_https: 0, para_http: 0, com_erro: 0 };
+  const httpsTotais = { testadas: 0, ok: 0, com_erro: 0 };
   const combinacoes = new Map();
   for (const r of resultados) {
     if (ok(r.sem)) totais.ok_sem_referer += 1;
@@ -228,13 +265,18 @@ function resumirAmostra(resultados) {
     if (r.sem.redireciona === "para_https") totais.para_https += 1;
     if (r.sem.redireciona === "para_http") totais.para_http += 1;
     if (r.sem.erro || r.app.erro) totais.com_erro += 1;
-    const resto = `esquema=${r.esquema} sem_referer=${r.sem.cod} app=${r.app.cod} redireciona=${r.sem.redireciona}`;
+    if (r.https) {
+      httpsTotais.testadas += 1;
+      if (okHttps(r.https)) httpsTotais.ok += 1;
+      if (r.https.erro) httpsTotais.com_erro += 1;
+    }
+    const resto = `esquema=${r.esquema} sem_referer=${r.sem.cod} app=${r.app.cod} redireciona=${r.sem.redireciona} destino=${r.sem.destino}`;
     combinacoes.set(resto, (combinacoes.get(resto) || 0) + 1);
   }
   const combinacoesOrdenadas = [...combinacoes.entries()]
     .sort((a, b) => b[1] - a[1] || comparar(a[0], b[0]))
     .map(([resto, n]) => `IC_RESULTADO: n=${n} ${resto}`);
-  return { totais, combinacoesOrdenadas };
+  return { totais, httpsTotais, combinacoesOrdenadas };
 }
 
 function imprimirResultado(acum, resultados) {
@@ -242,7 +284,8 @@ function imprimirResultado(acum, resultados) {
   topHosts(acum.hosts).forEach(([host, n], i) => linha(`IC_HOST: pos=${i + 1} host=${host} n=${n}`));
   const https = acum.amostra.filter((s) => s.esquema === "https").length;
   linha(`IC_AMOSTRA: pedidas=${TAMANHO_AMOSTRA} obtidas=${acum.amostra.length} https=${https} http=${acum.amostra.length - https}`);
-  const { totais, combinacoesOrdenadas } = resumirAmostra(resultados);
+  const { totais, httpsTotais, combinacoesOrdenadas } = resumirAmostra(resultados);
+  linha(`IC_HTTPS: testadas=${httpsTotais.testadas} ok=${httpsTotais.ok} com_erro=${httpsTotais.com_erro}`);
   linha(
     `IC_TOTAIS: ok_sem_referer=${totais.ok_sem_referer} ok_referer_app=${totais.ok_referer_app} para_https=${totais.para_https} para_http=${totais.para_http} com_erro=${totais.com_erro}`,
   );
@@ -290,7 +333,7 @@ async function main() {
   await fecharPrisma(prisma);
   if (!acum) return falha(classe);
 
-  const resultados = await verificarAmostra(acum.amostra);
+  const resultados = await verificarAmostra(acum.amostra, hostsComDuasOuMais(acum.hosts));
   imprimirResultado(acum, resultados);
   return 0;
 }
