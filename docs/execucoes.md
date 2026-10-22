@@ -27,6 +27,7 @@ Sem entrada, sem `--execute`.
   - Comando: `task=reset_execute`, `mode=execute`, `ok=6139ac643a25`, ref `main` em `20de1a3` (merge do #142). Dentro do runner: o driver `scripts/maintenance/reset-maintenance.mjs` em `RESET_MODO=execute`, com a reserva de publicação tomada e o reset chamado com `reservaTomada`.
   - Dry-run antes (run `39814245832`, run number 106, mesmo `20de1a3`): 57 produtos na loja e 57 na lista a apagar, iguais. Impressão digital `6139ac643a25`.
   - OK do arquiteto: revisão do dry-run (57/57 iguais) e ordem de disparar o execute com `ok=6139ac643a25`, na conversa de 22/10.
+  - Aprovação do environment `production`: Carlos. O job execute correu às 16:57:20Z.
   - Resultado: `conclusion` success. Verificado pelo arquiteto depois da corrida: restantes na loja 0, PUBLISHED 0, falhados 0. `productsCount` na Shopify 0. `active_vs_queue` (run `39818851357`): 0 ACTIVE.
   - Decisão 35 levantada pelo arquiteto depois desta verificação.
   - Anomalia no resumo: o execute diz apagados 64 e revertidos 64 para uma lista de 57. Ver a nota de 22/10 sobre a anomalia.
