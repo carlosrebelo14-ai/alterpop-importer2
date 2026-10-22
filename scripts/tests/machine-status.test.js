@@ -219,7 +219,7 @@ function mutanteDoMaintenance(nome, antigo, novo) {
 }
 
 await check("mutação: sem a guarda do execute, a tarefa chama a Fly (o caso do execute tem de ficar vermelho)", async () => {
-  const m = mutanteDoMaintenance("sem-guarda", "  indexing_status | machine_status | esperar_indexacao | image_check)\n    if", "  indexing_status | esperar_indexacao | image_check)\n    if");
+  const m = mutanteDoMaintenance("sem-guarda", "  indexing_status | machine_status | esperar_indexacao | image_check | reset_status)\n    if", "  indexing_status | esperar_indexacao | image_check | reset_status)\n    if");
   try {
     const marca = path.join(tmp, "fly-chamada-mutante");
     const espiao = path.join(tmp, "flyctl-espiao-mutante");

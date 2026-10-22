@@ -1,9 +1,9 @@
 # Manutenção da app na Fly, disparada à mão: Actions → maintenance → Run workflow.
 #
 # task  lista fechada: catalog_health, diagnose_theme, diagnose_characters, price_check, volume_snapshot, tags_cleanup,
-#       character_pages_sync, db_push, db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run, indexing_status, machine_status, image_check, scale_memory, reset_dry_run, reset_execute
+#       character_pages_sync, db_push, db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run, indexing_status, machine_status, image_check, scale_memory, reset_dry_run, reset_execute, reset_status
 #       (db_flag_check, logs_recent, restore_dry_run, active_vs_queue, elite_purge_dry_run, indexing_status, machine_status e image_check só leem: nunca entram no job de escrita)
-#       reset_dry_run também só lê: nunca entra no job de escrita.
+#       reset_dry_run e reset_status também só leem: nunca entram no job de escrita.
 #       reset_execute: o reset Shopify real. Só corre no job execute (environment production), com mode=execute e o input ok (a impressão digital do reset_dry_run). No job 1 só confere o ok.
 #       db_push recusa-se com a flag DB_DEGRADED presente (Decisão 34).
 # mode  dry-run (por omissão) ou execute
@@ -49,6 +49,7 @@ on:
           - db_push
           - reset_dry_run
           - reset_execute
+          - reset_status
           - db_flag_check
           - logs_recent
           - restore_dry_run
