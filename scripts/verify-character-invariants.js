@@ -14,6 +14,7 @@ import { prisma } from "../lib/prisma/prismaSafe.server.js";
 import { loadOfflineSessionForShop } from "../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../lib/importer/shopifyClient.js";
 import { checkCharacterInvariants } from "../lib/importer/catalog/characterInvariants.js";
+import { buildInvariantInput } from "../lib/importer/catalog/characterInvariantInput.js";
 import { FRANCHISE_UNIVERSES } from "../lib/importer/catalog/franchiseUniverses.js";
 import { MANUFACTURER_TIERS } from "../lib/importer/catalog/manufacturerTiers.js";
 import { CHARACTER_METAOBJECT_TYPE } from "../lib/importer/shopify/characterMetaobjectSetup.js";
@@ -43,6 +44,7 @@ const CHARACTERS_QUERY = `
     metaobjects(type: "${CHARACTER_METAOBJECT_TYPE}", first: ${PAGE}, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       nodes {
+        id
         handle
         capabilities { publishable { status } }
         universe: field(key: "universe") { value }
@@ -76,15 +78,6 @@ async function fetchAll(client, query, pick) {
   return nodes;
 }
 
-function parseList(value) {
-  try {
-    const v = JSON.parse(value || "[]");
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return [];
-  }
-}
-
 async function main() {
   console.log(`\n=== verify-character-invariants (${SHOP}) · read-only ===\n`);
   const session = await loadOfflineSessionForShop(SHOP);
@@ -93,50 +86,20 @@ async function main() {
   const shopProducts = await fetchAll(client, PUBLISHED_PRODUCTS_QUERY, (d) => d?.products);
   const characterNodes = await fetchAll(client, CHARACTERS_QUERY, (d) => d?.metaobjects);
 
-  // GID -> handle, para ler alterpop.character e C.products.
-  const handleByProductGid = new Map();
-  const products = shopProducts.map((n) => {
-    const sku = n.variants?.nodes?.[0]?.sku || null;
-    handleByProductGid.set(n.id, sku);
-    return {
-      sku,
-      status: n.status,
-      published: true,
-      franchise: parseList(n.franchise?.value)[0] || null,
-      vendor: n.vendor || null,
-      characterGids: parseList(n.character?.value),
-    };
-  });
-
-  const handleByCharacterGid = new Map(characterNodes.map((n) => [n.id, n.handle]));
-  const characters = new Map(
-    characterNodes.map((n) => [
-      n.handle,
-      {
-        status: n.capabilities?.publishable?.status || "DRAFT",
-        universes: parseList(n.universe?.value).map((gid) => gid),
-        products: parseList(n.products?.value).map((gid) => handleByProductGid.get(gid)).filter(Boolean),
-      },
-    ]),
-  );
-  // Ligação do produto em handles (I1/I2 usam handles).
-  for (const p of products) {
-    p.characters = p.characterGids.map((gid) => handleByCharacterGid.get(gid)).filter(Boolean);
-    delete p.characterGids;
-  }
-
-  // Metaobject guarda GIDs de coleção Universe. Resolve-se GID -> nome pelo handle da tabela.
-  const universeCharacters = new Map();
-  const universeNameByGid = new Map();
+  // Tudo passa por GID antes de comparar (ver lib/importer/catalog/characterInvariantInput.js).
+  const universeCollections = [];
   for (const u of FRANCHISE_UNIVERSES) {
     if (!u.handle) continue;
     const data = await client.graphql(UNIVERSE_COLLECTION_QUERY, { handle: u.handle });
     const col = data?.collectionByHandle;
     if (!col) continue;
-    universeNameByGid.set(col.id, u.name);
-    universeCharacters.set(u.name, parseList(col.characters?.value).map((gid) => handleByCharacterGid.get(gid) || gid));
+    universeCollections.push({ name: u.name, id: col.id, characters: col.characters });
   }
-  for (const c of characters.values()) c.universes = c.universes.map((gid) => universeNameByGid.get(gid) || gid);
+  const { products, characters, universeCharacters } = buildInvariantInput({
+    characterNodes,
+    productNodes: shopProducts.map((n) => ({ ...n, sku: n.variants?.nodes?.[0]?.sku || null })),
+    universeCollections,
+  });
 
   const canonicalVendors = new Set(MANUFACTURER_TIERS.map((m) => m.name));
   const { red, yellow } = checkCharacterInvariants({ characters, products, universeCharacters, canonicalVendors });
