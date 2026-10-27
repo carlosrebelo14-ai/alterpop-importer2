@@ -1,0 +1,82 @@
+# Operações pontuais na Fly do PR 4 (Characters), disparadas à mão: Actions → fly-ops → Run workflow.
+#
+# comando  lista fechada, nunca texto livre:
+#   db-push       npm run db:push na Fly (sem --accept-data-loss). Antes corre a pré-verificação
+#                 de `scripts/ci/maintenance.sh db_push dry-run`: recusa com a flag DB_DEGRADED e
+#                 espera por indexação (até 15 min). Mostra o diff do esquema.
+#   b1-dry        character-links-backfill.js --mode store (dry-run)
+#   b2-dry        character-links-backfill.js --mode resolver (dry-run)
+#   census-c      character-census.js (read-only, limiar 1)
+#   verify-base   verify-character-invariants.js --baseline (read-only)
+#
+# Nenhum --execute existe neste workflow. O --execute de B1 e B2 continua manual, com OK do arquiteto.
+#
+# Saída completa no log do job e como artefacto (fly-ops-<comando>, 30 dias).
+# Precisa do secret FLY_API_TOKEN (já existe) e do environment "production".
+# Só corre a partir de main (ver a guarda do job).
+name: fly-ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      comando:
+        description: "Comando (lista fechada)"
+        type: choice
+        required: true
+        options:
+          - db-push
+          - b1-dry
+          - b2-dry
+          - census-c
+          - verify-base
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  fly-ops:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 60
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      COMANDO: ${{ inputs.comando }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Pré-verificação (só db-push)
+        if: inputs.comando == 'db-push'
+        run: bash scripts/ci/maintenance.sh db_push dry-run
+
+      - name: Executar comando na Fly
+        shell: bash
+        run: |
+          set -o pipefail
+          case "$COMANDO" in
+            db-push)    CMD='npm run db:push' ;;
+            b1-dry)     CMD='node scripts/catalog/character-links-backfill.js --mode store' ;;
+            b2-dry)     CMD='node scripts/catalog/character-links-backfill.js --mode resolver' ;;
+            census-c)   CMD='node scripts/catalog/character-census.js' ;;
+            verify-base) CMD='node scripts/verify-character-invariants.js --baseline' ;;
+            *) echo "comando desconhecido: $COMANDO" >&2; exit 64 ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/fly-ops"
+          flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && $CMD'" 2>&1 | tee "$RUNNER_TEMP/fly-ops/saida.txt"
+
+      - name: Guardar saída como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fly-ops-${{ inputs.comando }}
+          path: ${{ runner.temp }}/fly-ops/saida.txt
+          retention-days: 30
+          if-no-files-found: warn
