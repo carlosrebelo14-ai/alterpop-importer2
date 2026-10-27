@@ -23,7 +23,7 @@ function check(name, fn) {
   }
 }
 
-check("chega a 3, sem metaobject prévio -> create", () => {
+check("chega ao limiar, sem metaobject prévio -> create", () => {
   const actions = planCharacterMetaobjects({
     liveCounts: new Map([["luffy", { universo: "One Piece", productSkus: ["a", "b", "c"] }]]),
     existing: new Map(),
@@ -35,7 +35,7 @@ check("chega a 3, sem metaobject prévio -> create", () => {
   assert.equal(a.universo, "One Piece");
 });
 
-check("já ACTIVE, continua em 3+ -> update", () => {
+check("já ACTIVE, continua acima do limiar -> update", () => {
   const actions = planCharacterMetaobjects({
     liveCounts: new Map([["luffy", { universo: "One Piece", productSkus: ["a", "b", "c", "d"] }]]),
     existing: new Map([["luffy", { id: "gid://shopify/Metaobject/1", status: "ACTIVE" }]]),
@@ -54,9 +54,9 @@ check("já DRAFT, volta a bater o limiar -> reactivate", () => {
   assert.equal(a.targetStatus, "ACTIVE");
 });
 
-check("desce abaixo de 3, já ACTIVE -> set-draft, sem productSkus (não mexe)", () => {
+check("desce a 0 produtos, já ACTIVE -> set-draft, sem productSkus (não mexe)", () => {
   const actions = planCharacterMetaobjects({
-    liveCounts: new Map([["grogu", { universo: "Star Wars", productSkus: ["a"] }]]),
+    liveCounts: new Map([["grogu", { universo: "Star Wars", productSkus: [] }]]),
     existing: new Map([["grogu", { id: "gid://shopify/Metaobject/2", status: "ACTIVE" }]]),
   });
   const a = actions.find((x) => x.handle === "grogu");
@@ -65,9 +65,9 @@ check("desce abaixo de 3, já ACTIVE -> set-draft, sem productSkus (não mexe)",
   assert.equal(a.productSkus, undefined);
 });
 
-check("nunca teve metaobject, abaixo do limiar -> skip", () => {
+check("nunca teve metaobject, 0 produtos -> skip", () => {
   const actions = planCharacterMetaobjects({
-    liveCounts: new Map([["elsa", { universo: "Frozen", productSkus: ["a"] }]]),
+    liveCounts: new Map([["elsa", { universo: "Frozen", productSkus: [] }]]),
     existing: new Map(),
   });
   const a = actions.find((x) => x.handle === "elsa");
@@ -77,6 +77,24 @@ check("nunca teve metaobject, abaixo do limiar -> skip", () => {
 check("existe no vocabulário mas sem produto live nenhum -> skip (count 0)", () => {
   const actions = planCharacterMetaobjects({ liveCounts: new Map(), existing: new Map() });
   assert.equal(actions.length, 0); // sem liveCounts nem existing, nada a decidir
+});
+
+for (const n of [1, 2]) {
+  check(`${n} produto(s) live, sem metaobject -> create (limiar ${CHARACTER_THRESHOLD})`, () => {
+    const actions = planCharacterMetaobjects({
+      liveCounts: new Map([["luke-skywalker", { universo: "Star Wars", productSkus: Array.from({ length: n }, (_, i) => `s${i}`) }]]),
+      existing: new Map(),
+    });
+    assert.equal(actions.find((x) => x.handle === "luke-skywalker").action, "create");
+  });
+}
+
+check("1 produto live, já DRAFT -> reactivate (limiar 1)", () => {
+  const actions = planCharacterMetaobjects({
+    liveCounts: new Map([["luke-skywalker", { universo: "Star Wars", productSkus: ["s0"] }]]),
+    existing: new Map([["luke-skywalker", { id: "gid://shopify/Metaobject/9", status: "DRAFT" }]]),
+  });
+  assert.equal(actions.find((x) => x.handle === "luke-skywalker").action, "reactivate");
 });
 
 check(`mais de ${CHARACTER_PRODUCTS_MAX} produtos -> error, nunca truncar`, () => {
@@ -124,7 +142,7 @@ check("planUniverseCharacterCollections agrupa por universo, maior contagem prim
 
 check("planUniverseCharacterCollections não inclui set-draft/skip/error", () => {
   const actions = planCharacterMetaobjects({
-    liveCounts: new Map([["grogu", { universo: "Star Wars", productSkus: ["a"] }]]),
+    liveCounts: new Map([["grogu", { universo: "Star Wars", productSkus: [] }]]),
     existing: new Map([["grogu", { id: "gid://shopify/Metaobject/2", status: "ACTIVE" }]]),
   });
   const plan = planUniverseCharacterCollections(actions);

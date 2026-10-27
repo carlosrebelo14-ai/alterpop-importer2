@@ -365,3 +365,20 @@ model MarketPriceObservation {
 
   @@index([shop, sku, observedAt])
 }
+
+/// PR 4, decisão de 27/10/2026. Ligação produto ↔ Character, fonte de verdade do pipeline.
+/// Só ADD TABLE, sem FK para CatalogProduct (chave composta shop+sku, como o resto do schema).
+/// `origem`: "store" = lida do alterpop.character já escrito na loja (backfill B1, nunca
+/// removida pelo resolver); "resolver" = calculada pelo characterResolver (backfill B2 e ciclo).
+model ProductCharacter {
+  shop            String
+  sku             String
+  characterHandle String
+  universeHandle  String?
+  origem          String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@id([shop, sku, characterHandle])
+  @@index([shop, characterHandle])
+}
