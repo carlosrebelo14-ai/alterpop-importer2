@@ -135,7 +135,7 @@ case "$cmd" in
     if [ -n "\$FAKE_SSH_FAIL" ]; then echo "Error: failed to dial machine: connection refused"; exit 1; fi
     case "\${FAKE_DIFF_RC:-2}" in
       0) exit 0;;
-      2) printf 'CREATE TABLE "Segredo" (preco 9,99);\\nCREATE UNIQUE INDEX "x" ON "Segredo"(a);\\n'; exit 2;;
+      2) printf 'CREATE TABLE "Segredo" (preco 9,99);\\nCREATE UNIQUE INDEX "x" ON "Segredo"(a);\\n'; echo "Error: ssh shell: Process exited with status 2"; exit 1;;
       *) echo "Error: \${FAKE_PRISMA_MSG:-schema invalid}"; echo "Error: ssh shell: Process exited with status \${FAKE_DIFF_RC:-1}"; exit 1;;
     esac;;
   *price-check*)
@@ -314,6 +314,7 @@ check("dry-run: só migrate diff (sem db:push), SQL diferente é sucesso", () =>
   assert.equal(r.status, 0);
   assert.ok(ran(r, "prisma migrate diff") && !ran(r, "npm run db:push"));
   assert.match(r.summaryText, /difere.*1 tabelas a criar, 0 alterações de tabela, 1 índices a criar/);
+  assert.match(r.summaryText, /fora de ProductCharacter a criar: 1 \(têm de ser 0/);
 });
 check("db_push dry-run: exit 0 do prisma é 'sem alterações'", () => {
   const r = run("db_push", "dry-run", { FAKE_DIFF_RC: "0" });

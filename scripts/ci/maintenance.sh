@@ -374,8 +374,12 @@ case "$TASK" in
       if [ "$WRC" -eq 2 ]; then NOTE="Não consegui ler o estado da indexação."; fi
       # 0 = sem diferença, 2 = há diferença (o SQL fica no ficheiro de saída), qualquer outro código = o diff NÃO foi medido.
       # Antes, todo o código != 2 era lido como "sem alterações", e um erro do prisma ou do ssh passava por zero alterações.
+      # O flyctl ssh sai com 1 quando o comando remoto sai com qualquer código não-zero. O código do prisma
+      # está na linha "Process exited with status N". Sem essa linha, o comando remoto saiu com 0 ou falhou ao correr.
       remote "npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script --exit-code"; RC=$?
-      case "$RC" in
+      prisma_rc="$(sed 's/\x1b\[[0-9;]*m//g' "$OUT" | grep -oE 'Process exited with status [0-9]+' | tail -1 | grep -oE '[0-9]+$' || true)"
+      if [ -z "$prisma_rc" ] && [ "$RC" -eq 0 ]; then prisma_rc=0; fi
+      case "$prisma_rc" in
         0) DIFF=false; RC=0 ;;
         2) DIFF=true; RC=0 ;;
         *) DIFF=erro; RC=1 ;;
@@ -679,8 +683,10 @@ case "$TASK" in
         fi
       elif [ "${DIFF:-false}" = true ]; then
         ct=$(count '^CREATE TABLE'); at=$(count '^ALTER TABLE'); ci=$(count '^CREATE (UNIQUE )?INDEX'); dr=$(count '^DROP ')
+        outras=$(echo "$CLEAN" | grep -E '^CREATE TABLE' | grep -vc 'ProductCharacter' || true)
         bullets="- O esquema da base **difere** do Prisma: $ct tabelas a criar, $at alterações de tabela, $ci índices a criar, $dr remoções (DROP)."
         if [ "$dr" -gt 0 ]; then bullets="$bullets"$'\n'"- ⚠️ Há remoções: o db:push real recusaria perda de dados."; fi
+        bullets="$bullets"$'\n'"- Tabelas fora de ProductCharacter a criar: $outras (têm de ser 0 para o execute)."
         KEY="há alterações"
       else
         bullets="- Sem alterações: a base já está igual ao esquema."; KEY="sem alterações"
