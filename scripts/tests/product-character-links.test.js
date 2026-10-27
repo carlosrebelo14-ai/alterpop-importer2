@@ -94,31 +94,39 @@ check("B1: alterpop.character da loja vira linhas origem store", () => {
   assert.deepEqual(rows, [{ sku: "A1", characterHandle: "luffy", universeHandle: "one-piece", origem: ORIGEM_STORE }]);
 });
 
-check("filtro LOTR: legolas sem metaobject fica de fora e aparece em excluded", () => {
+check("filtro LOTR: legolas (lista D3) entra", () => {
   const plan = planProductCharacterLinks({
     products: [{ sku: "L1", originalTitle: "Legolas bow replica", resolvedFranchise: "The Lord of the Rings" }],
     existingLinks: new Map(),
-    metaobjectHandles: new Set(["gandalf", "ahsoka-tano"]),
+  });
+  assert.deepEqual(plan[0].add, [{ characterHandle: "legolas", origem: ORIGEM_RESOLVER }]);
+  assert.deepEqual(plan[0].excluded, []);
+});
+
+check("filtro LOTR: personagem fora da lista aprovada fica de fora e aparece em excluded", () => {
+  const plan = planProductCharacterLinks({
+    products: [{ sku: "L2", originalTitle: "Legolas bow replica", resolvedFranchise: "The Lord of the Rings" }],
+    existingLinks: new Map(),
+    aprovadosFiltrado: new Set(["gandalf"]),
   });
   assert.deepEqual(plan[0].add, []);
   assert.deepEqual(plan[0].excluded, ["legolas"]);
 });
 
-check("filtro LOTR: gandalf com metaobject entra", () => {
+check("filtro LOTR: gandalf (lista D3) entra", () => {
   const plan = planProductCharacterLinks({
     products: [{ sku: "G1", originalTitle: "Gandalf the Grey statue", resolvedFranchise: "The Lord of the Rings" }],
     existingLinks: new Map(),
-    metaobjectHandles: new Set(["gandalf"]),
   });
   assert.deepEqual(plan[0].add, [{ characterHandle: "gandalf", origem: ORIGEM_RESOLVER }]);
   assert.deepEqual(plan[0].excluded, []);
 });
 
-check("filtro LOTR: ahsoka-tano (Star Wars) entra mesmo sem filtro de LOTR", () => {
+check("filtro LOTR: ahsoka-tano (Star Wars) não passa pelo filtro", () => {
   const plan = planProductCharacterLinks({
     products: [{ sku: "A1", originalTitle: "Ahsoka Tano figure", resolvedFranchise: "Star Wars" }],
     existingLinks: new Map(),
-    metaobjectHandles: new Set(),
+    aprovadosFiltrado: new Set(),
   });
   assert.deepEqual(plan[0].add, [{ characterHandle: "ahsoka-tano", origem: ORIGEM_RESOLVER }]);
   assert.deepEqual(plan[0].excluded, []);

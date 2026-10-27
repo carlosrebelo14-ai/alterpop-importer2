@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ALLOWED_PRODUCT_TAGS,
+  V18_NIVEL,
   isAllowedTag,
   findTagsOutsideAllowlist,
   planTagsCleanup,
@@ -36,6 +37,10 @@ function check(name, fn) {
 }
 
 // ── builder ──
+
+check("V18 é amarelo (warn) até ao tags-cleanup execute, decisão de 27/10/2026", () => {
+  assert.equal(V18_NIVEL, "warn");
+});
 
 check("lista permitida = [\"alterpop\"], a mesma marca que o shopifyReset usa", () => {
   assert.deepEqual([...ALLOWED_PRODUCT_TAGS], ["alterpop"]);
