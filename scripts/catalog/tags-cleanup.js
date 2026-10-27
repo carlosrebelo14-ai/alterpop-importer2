@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * N4, opção A (decisão do Carlos, 29/09/2026) — remove as tags fora da lista permitida
- * (ALLOWED_PRODUCT_TAGS = ["alterpop"], tagAllowlist.js) nos produtos da loja.
+ * (GATE_ALLOWED_TAGS, tagAllowlist.js) nos produtos da loja.
  *
  * Dry-run por omissão. Escreve só com --execute, e só com tagsRemove (exceção explícita
  * à regra de escrita, decidida para a opção A). Nunca productUpdate, nunca tagsAdd.
@@ -27,7 +27,7 @@ import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionF
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { fetchProductTags, removeProductTags } from "../../lib/importer/shopify/productTags.server.js";
 import {
-  ALLOWED_PRODUCT_TAGS,
+  GATE_ALLOWED_TAGS,
   findTagsOutsideAllowlist,
   planTagsCleanup,
   probeTagBuilder,
@@ -61,7 +61,7 @@ async function probeProductionCode() {
 async function main() {
   console.log(
     `=== ${TAG} (${SHOP}) · ${EXECUTE ? "EXECUTE" : "dry-run"} · âmbito ${ALL_STATUSES ? "todos os status" : "ACTIVE"}` +
-      ` · permitidas: ${ALLOWED_PRODUCT_TAGS.join(", ")}${INCLUDE_LOCKED ? " · COM sync_locked" : ""} ===`,
+      ` · permitidas: ${GATE_ALLOWED_TAGS.join(", ")}${INCLUDE_LOCKED ? " · COM sync_locked" : ""} ===`,
   );
 
   const probe = await probeProductionCode();

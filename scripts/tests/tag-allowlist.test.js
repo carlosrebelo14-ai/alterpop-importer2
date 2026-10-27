@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ALLOWED_PRODUCT_TAGS,
+  GATE_ALLOWED_TAGS,
   isAllowedTag,
   findTagsOutsideAllowlist,
   planTagsCleanup,
@@ -89,6 +90,12 @@ check("portão — \"alterpop\" é permitida, sem distinção de maiúsculas", (
   assert.equal(isAllowedTag("alterpop"), true);
   assert.equal(isAllowedTag(" Alterpop "), true);
   assert.equal(isAllowedTag("Onepiece"), false);
+  // Trava de 27/10/2026: new-arrival é do gate, e o publisher continua a escrever só alterpop.
+  assert.equal(isAllowedTag("new-arrival"), true);
+  assert.equal(isAllowedTag("New-Arrival"), true);
+  assert.equal(isAllowedTag("Action Figures"), false);
+  assert.deepEqual([...GATE_ALLOWED_TAGS], ["alterpop", "new-arrival"]);
+  assert.deepEqual(buildShopifyProductTags("X", [], [], {}), ["alterpop"]);
 });
 
 check("portão — vermelho com a lista de produtos e as tags fora da lista (caso real Onepiece/One Piece)", () => {
