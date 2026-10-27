@@ -1,9 +1,7 @@
 # Operações pontuais na Fly do PR 4 (Characters), disparadas à mão: Actions → fly-ops → Run workflow.
 #
-# comando  lista fechada, nunca texto livre:
-#   db-push       npm run db:push na Fly (sem --accept-data-loss). Antes corre a pré-verificação
-#                 de `scripts/ci/maintenance.sh db_push dry-run`: recusa com a flag DB_DEGRADED e
-#                 espera por indexação (até 15 min). Mostra o diff do esquema.
+# comando  lista fechada, nunca texto livre. O db:push NÃO está aqui: corre só pela tarefa db_push
+#          do workflow maintenance (Decisão 34, linha em docs/execucoes.md).
 #   b1-dry        character-links-backfill.js --mode store (dry-run)
 #   b2-dry        character-links-backfill.js --mode resolver (dry-run)
 #   census-c      character-census.js (read-only, limiar 1)
@@ -24,7 +22,6 @@ on:
         type: choice
         required: true
         options:
-          - db-push
           - b1-dry
           - b2-dry
           - census-c
@@ -53,16 +50,11 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Pré-verificação (só db-push)
-        if: inputs.comando == 'db-push'
-        run: bash scripts/ci/maintenance.sh db_push dry-run
-
       - name: Executar comando na Fly
         shell: bash
         run: |
           set -o pipefail
           case "$COMANDO" in
-            db-push)    CMD='npm run db:push' ;;
             b1-dry)     CMD='node scripts/catalog/character-links-backfill.js --mode store' ;;
             b2-dry)     CMD='node scripts/catalog/character-links-backfill.js --mode resolver' ;;
             census-c)   CMD='node scripts/catalog/character-census.js' ;;
