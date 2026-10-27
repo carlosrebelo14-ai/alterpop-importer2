@@ -130,7 +130,14 @@ case "$cmd" in
     echo "[check-no-indexing] nenhuma indexação a decorrer."; exit 0;;
   *"npm run catalog:health"*)
     printf '  ✓ V3  produtos APPROVED = 0\n  ✗ V5  total — esperado 8435450233067, obtido darth-vader\n  ! V11  gid://shopify/Product/123 a 9,99 €\n'; exit "\${FAKE_HEALTH_RC:-0}";;
-  *"migrate diff"*) printf 'CREATE TABLE "Segredo" (preco 9,99);\nCREATE UNIQUE INDEX "x" ON "Segredo"(a);\n'; exit "\${FAKE_DIFF_RC:-2}";;
+  *"migrate diff"*)
+    # Como o flyctl real: falha de ligação não tem "Process exited"; saída não-zero do comando remoto tem.
+    if [ -n "\$FAKE_SSH_FAIL" ]; then echo "Error: failed to dial machine: connection refused"; exit 1; fi
+    case "\${FAKE_DIFF_RC:-2}" in
+      0) exit 0;;
+      2) printf 'CREATE TABLE "Segredo" (preco 9,99);\\nCREATE UNIQUE INDEX "x" ON "Segredo"(a);\\n'; exit 2;;
+      *) echo "Error: \${FAKE_PRISMA_MSG:-schema invalid}"; echo "Error: ssh shell: Process exited with status \${FAKE_DIFF_RC:-1}"; exit 1;;
+    esac;;
   *price-check*)
     printf 'PC: regra_servidor=LEGACY\\nPC: impostos_incluidos=true\\nPC: publicados=57\\nPC: conformes_net=0\\nPC: a_atualizar=50\\nPC: sobem=0\\nPC: descem=50\\nPC: mediana_diff_pct=-17.4\\nPC: banda_ate_1=0\\nPC: banda_1_a_5=2\\nPC: banda_5_a_15=3\\nPC: banda_acima_15=45\\nPC: fora_preco_manual=4\\nPC: manual_override=3\\nPC: manual_detetado=1\\nPC: trancados=0\\nPC: sem_registo=1\\nPC: outros_ignorados=0\\nPC: falhados=1\\nPC: nao_encontrados=1\\n'; exit "\${FAKE_RC:-0}";;
   *tags-cleanup*)
@@ -303,18 +310,36 @@ check("o tempo de espera por omissão é 15 min (15 sondagens de 60 s)", () => {
 
 console.log("db_push");
 check("dry-run: só migrate diff (sem db:push), SQL diferente é sucesso", () => {
-  let r = run("db_push", "dry-run");
+  const r = run("db_push", "dry-run", { FAKE_DIFF_RC: "2" });
   assert.equal(r.status, 0);
   assert.ok(ran(r, "prisma migrate diff") && !ran(r, "npm run db:push"));
   assert.match(r.summaryText, /difere.*1 tabelas a criar, 0 alterações de tabela, 1 índices a criar/);
-  r = run("db_push", "dry-run", { FAKE_DIFF_RC: "0" });
+});
+check("db_push dry-run: exit 0 do prisma é 'sem alterações'", () => {
+  const r = run("db_push", "dry-run", { FAKE_DIFF_RC: "0" });
   assert.equal(r.status, 0);
   assert.match(r.summaryText, /Sem alterações/);
-  r = run("db_push", "dry-run", { FAKE_DIFF_RC: "1" });
+});
+check("db_push dry-run: falha de ligação (sem 'Process exited') -> diff não medido, causa de ligação", () => {
+  const r = run("db_push", "dry-run", { FAKE_SSH_FAIL: "1" });
   assert.equal(r.status, 1);
-  assert.doesNotMatch(r.summaryText, /Sem alterações/, "diff com erro não pode ler-se como sem alterações");
+  assert.doesNotMatch(r.summaryText, /Sem alterações/);
   assert.match(r.summaryText, /não foi medido/);
-  assert.match(r.summaryText, /prisma migrate diff falhou|erro não classificado/);
+  assert.match(r.summaryText, /não consegui ligar à Fly/);
+});
+check("db_push dry-run: prisma sai com 1 (Process exited) -> causa do prisma, não de ligação", () => {
+  const r = run("db_push", "dry-run", { FAKE_DIFF_RC: "1", FAKE_PRISMA_MSG: "Error: something odd happened" });
+  assert.equal(r.status, 1);
+  assert.doesNotMatch(r.summaryText, /Sem alterações|não consegui ligar/);
+  assert.match(r.summaryText, /não foi medido/);
+  assert.match(r.summaryText, /saiu com código 1 na Fly/);
+  assert.match(r.summaryText, /outro \(ver o log da app na Fly\)/);
+});
+check("db_push dry-run: variável de ambiente em falta -> causa classificada, sem nomear a variável", () => {
+  const r = run("db_push", "dry-run", { FAKE_DIFF_RC: "1", FAKE_PRISMA_MSG: "Environment variable not found: DATABASE_URL" });
+  assert.equal(r.status, 1);
+  assert.match(r.summaryText, /variável de ambiente em falta na máquina/);
+  assert.doesNotMatch(r.summaryText, /DATABASE_URL/);
 });
 check("execute sem indexação: npm run db:push", () => {
   const r = run("db_push", "execute");

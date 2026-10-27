@@ -77,6 +77,16 @@ case "$TASK" in volume_snapshot | tags_cleanup | character_pages_sync | db_push 
 EFFECTIVE="$PHASE"
 if [ "$WRITES" = false ]; then EFFECTIVE="dry-run"; fi
 
+# prisma_causa: classifica a saída do prisma por palavras-chave, sem a publicar (DATABASE_URL e caminhos ficam fora do log).
+prisma_causa() {
+  if echo "$CLEAN" | grep -qiE 'environment variable not found|variável de ambiente'; then echo "variável de ambiente em falta na máquina"
+  elif echo "$CLEAN" | grep -qiE 'P[0-9]{4}'; then echo "erro de prisma com código conhecido"
+  elif echo "$CLEAN" | grep -qiE 'engine|binary|download'; then echo "motor do prisma indisponível na máquina"
+  elif echo "$CLEAN" | grep -qiE 'cannot find module|module_not_found'; then echo "dependências do prisma em falta na imagem"
+  elif echo "$CLEAN" | grep -qiE 'eacces|eperm|permission denied'; then echo "permissão negada no volume"
+  else echo "outro (ver o log da app na Fly)"; fi
+}
+
 # remote <comando fixo>: corre na Fly, a partir de /app. A saída vai só para $OUT, nunca para o log.
 remote() {
   "$FLYCTL" ssh console -a "$APP" -C "sh -lc 'cd /app && $1'" >>"$OUT" 2>&1
@@ -659,6 +669,14 @@ case "$TASK" in
       if [ "${DIFF:-false}" = erro ]; then
         bullets="- O esquema **não foi medido**: o diff falhou na Fly. Não há prova de alterações nem de ausência de alterações."
         KEY="diff não medido"
+        # O flyctl ssh escreve "Process exited with status N" quando o comando remoto sai com N.
+        # Sem essa linha, a falha é da ligação. Com ela, o comando correu e o prisma falhou.
+        remote_rc="$(echo "$CLEAN" | grep -oE 'Process exited with status [0-9]+' | tail -1 | grep -oE '[0-9]+$' || true)"
+        if [ -z "$remote_rc" ]; then
+          CAUSE="não consegui ligar à Fly: o ssh falhou antes de o comando correr."
+        else
+          CAUSE="o prisma migrate diff saiu com código $remote_rc na Fly. Causa classificada: $(prisma_causa)."
+        fi
       elif [ "${DIFF:-false}" = true ]; then
         ct=$(count '^CREATE TABLE'); at=$(count '^ALTER TABLE'); ci=$(count '^CREATE (UNIQUE )?INDEX'); dr=$(count '^DROP ')
         bullets="- O esquema da base **difere** do Prisma: $ct tabelas a criar, $at alterações de tabela, $ci índices a criar, $dr remoções (DROP)."
