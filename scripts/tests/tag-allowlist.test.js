@@ -89,6 +89,12 @@ check("portão — \"alterpop\" é permitida, sem distinção de maiúsculas", (
   assert.equal(isAllowedTag("alterpop"), true);
   assert.equal(isAllowedTag(" Alterpop "), true);
   assert.equal(isAllowedTag("Onepiece"), false);
+  // admin, Carlos (27/10/2026): marcas manuais ficam fora do tags-cleanup e do gate.
+  for (const m of ["Tamashii Nations", "Diamond Select", "Gentle Giant", "Jada Toys", "Banpresto"]) {
+    assert.equal(isAllowedTag(m), true, m);
+  }
+  assert.equal(isAllowedTag("Funko"), false);
+  assert.deepEqual(buildShopifyProductTags("X", [], [], {}), ["alterpop"]);
 });
 
 check("portão — vermelho com a lista de produtos e as tags fora da lista (caso real Onepiece/One Piece)", () => {
