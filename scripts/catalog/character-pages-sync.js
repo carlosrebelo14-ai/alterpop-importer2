@@ -121,9 +121,6 @@ async function execute() {
       console.log(`  ${a.action.padEnd(10)} ${a.handle}  →  DRAFT (referências removidas dos produtos)`);
     }
   }
-  for (const u of result.undraftable || []) {
-    console.log(`  undraftable ${u.handle}  →  a Shopify não deixa passar a rascunho (campo obrigatório em branco); fica ACTIVE`);
-  }
   console.log(`\nalterpop.character escrito em ${result.productWrites} produto(s)`);
   for (const c of result.collectionsWritten) {
     console.log(`  alterpop.characters(${c.universo}) = [${c.handles.join(", ")}]`);
