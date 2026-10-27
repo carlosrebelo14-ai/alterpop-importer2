@@ -312,6 +312,9 @@ check("dry-run: só migrate diff (sem db:push), SQL diferente é sucesso", () =>
   assert.match(r.summaryText, /Sem alterações/);
   r = run("db_push", "dry-run", { FAKE_DIFF_RC: "1" });
   assert.equal(r.status, 1);
+  assert.doesNotMatch(r.summaryText, /Sem alterações/, "diff com erro não pode ler-se como sem alterações");
+  assert.match(r.summaryText, /não foi medido/);
+  assert.match(r.summaryText, /prisma migrate diff falhou|erro não classificado/);
 });
 check("execute sem indexação: npm run db:push", () => {
   const r = run("db_push", "execute");

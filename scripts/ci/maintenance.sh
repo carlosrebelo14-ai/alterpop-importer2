@@ -362,8 +362,14 @@ case "$TASK" in
       DESC="Conta as alterações que o db:push aplicaria, sem as aplicar. Só lê."
       if [ "$WRC" -eq 1 ]; then NOTE="Há uma indexação a decorrer: o db:push real esperaria por ela."; fi
       if [ "$WRC" -eq 2 ]; then NOTE="Não consegui ler o estado da indexação."; fi
+      # 0 = sem diferença, 2 = há diferença (o SQL fica no ficheiro de saída), qualquer outro código = o diff NÃO foi medido.
+      # Antes, todo o código != 2 era lido como "sem alterações", e um erro do prisma ou do ssh passava por zero alterações.
       remote "npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script --exit-code"; RC=$?
-      if [ "$RC" -eq 2 ]; then DIFF=true; RC=0; else DIFF=false; fi
+      case "$RC" in
+        0) DIFF=false; RC=0 ;;
+        2) DIFF=true; RC=0 ;;
+        *) DIFF=erro; RC=1 ;;
+      esac
     fi
     fi
     ;;
@@ -650,7 +656,10 @@ case "$TASK" in
     ;;
   db_push)
     if [ "$EFFECTIVE" = "dry-run" ] && [ "$DB_BLOCKED" -eq 0 ]; then
-      if [ "${DIFF:-false}" = true ]; then
+      if [ "${DIFF:-false}" = erro ]; then
+        bullets="- O esquema **não foi medido**: o diff falhou na Fly. Não há prova de alterações nem de ausência de alterações."
+        KEY="diff não medido"
+      elif [ "${DIFF:-false}" = true ]; then
         ct=$(count '^CREATE TABLE'); at=$(count '^ALTER TABLE'); ci=$(count '^CREATE (UNIQUE )?INDEX'); dr=$(count '^DROP ')
         bullets="- O esquema da base **difere** do Prisma: $ct tabelas a criar, $at alterações de tabela, $ci índices a criar, $dr remoções (DROP)."
         if [ "$dr" -gt 0 ]; then bullets="$bullets"$'\n'"- ⚠️ Há remoções: o db:push real recusaria perda de dados."; fi
@@ -858,6 +867,7 @@ if [ "$RC" -ne 0 ] && [ "$RC" -ne 75 ] && [ -z "$CAUSE" ]; then
   if [ "$TASK" = "catalog_health" ] && [ "$(count '^  [✓✗!] ')" -gt 0 ]; then CAUSE="o portão correu e tem verificações vermelhas (ver a lista acima)."
   elif echo "$CLEAN" | grep -qiE 'cannot find module|MODULE_NOT_FOUND'; then CAUSE="o código na Fly ainda não tem este script: falta fazer deploy."
   elif echo "$CLEAN" | grep -qiE 'unauthorized|not authorized|token|forbidden|401|403'; then CAUSE="autorização da Fly ou da Shopify recusada."
+  elif [ "$TASK" = "db_push" ] && echo "$CLEAN" | grep -qiE 'prisma|migrate|schema|engine|P[0-9]{4}'; then CAUSE="o prisma migrate diff falhou na Fly. O esquema não foi medido."
   elif echo "$CLEAN" | grep -qiE 'connect|timeout|timed out|no such host|dial|ssh'; then CAUSE="não consegui ligar à Fly."
   elif echo "$CLEAN" | grep -qiE 'access scope|required access|read_themes|permission'; then CAUSE="falta uma permissão (scope) na Shopify."
   elif echo "$CLEAN" | grep -qiE 'recus|fatal'; then CAUSE="o próprio script recusou correr (guarda de segurança)."
