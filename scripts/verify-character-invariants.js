@@ -4,6 +4,11 @@
  * Só lê a loja e o Prisma. Sai com 1 se houver vermelho. Amarelo vai para o relatório.
  *
  * Correr na Fly:  node scripts/verify-character-invariants.js
+ *                 node scripts/verify-character-invariants.js --baseline
+ *
+ * --baseline (PR 4, desvio 4 do arquiteto, 27/10/2026): I1 antes do passo 7 é baseline.
+ * `products` a null lê-se como lista vazia, por isso I1 fica vermelho até o passo 7 escrever
+ * o array completo. Com --baseline, I1 aparece no relatório e não bloqueia. Os restantes vermelhos bloqueiam.
  */
 import { prisma } from "../lib/prisma/prismaSafe.server.js";
 import { loadOfflineSessionForShop } from "../lib/session/loadOfflineSessionForShop.server.js";
@@ -15,6 +20,7 @@ import { CHARACTER_METAOBJECT_TYPE } from "../lib/importer/shopify/characterMeta
 
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
 const PAGE = 100;
+const BASELINE = process.argv.includes("--baseline");
 
 const PUBLISHED_PRODUCTS_QUERY = `
   query VerifyProducts($cursor: String) {
@@ -136,12 +142,17 @@ async function main() {
   const { red, yellow } = checkCharacterInvariants({ characters, products, universeCharacters, canonicalVendors });
 
   console.log(`produtos ACTIVE publicados: ${products.length} · characters: ${characters.size}`);
-  for (const r of red) console.log(`VERMELHO ${r.id}  ${r.handle || r.sku}  ${r.message}`);
+  const baseline = BASELINE ? red.filter((r) => r.id === "I1") : [];
+  const blocking = red.filter((r) => !baseline.includes(r));
+  for (const r of red) {
+    const tag = baseline.includes(r) ? "BASELINE" : "VERMELHO";
+    console.log(`${tag} ${r.id}  ${r.handle || r.sku}  ${r.message}`);
+  }
   for (const y of yellow) console.log(`amarelo  ${y.id}  ${y.sku}  ${y.message}`);
-  console.log(`\nvermelho: ${red.length} · amarelo: ${yellow.length}`);
+  console.log(`\nvermelho bloqueante: ${blocking.length} · baseline I1: ${baseline.length} · amarelo: ${yellow.length}`);
 
   await prisma.$disconnect();
-  process.exitCode = red.length ? 1 : 0;
+  process.exitCode = blocking.length ? 1 : 0;
 }
 
 main().catch((err) => {

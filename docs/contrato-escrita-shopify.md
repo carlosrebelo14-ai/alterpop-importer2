@@ -18,13 +18,13 @@ Decisão do arquiteto, 27/10/2026 (PR 4, pipeline de Characters).
 
 | Ficheiro | Linhas | Mutação | Motivo |
 |---|---|---|---|
-| `lib/importer/shopify/shopifyProductPublisher.server.js` | 98–100, 445, 492, 519 | `productUpdate` | Sync de produto existente (`updateExistingProduct`) e passagem a DRAFT quando o preço falha |
+| `lib/importer/shopify/shopifyProductPublisher.server.js` | 101–103, 448, 495, 522 | `productUpdate` | Sync de produto existente (`updateExistingProduct`) e passagem a DRAFT quando o preço falha |
 | `lib/importer/importers/ProductImporter.js` | 60–62, 411, 614, 740, 797, 829 | `productUpdate` | Importador: atualização de produto existente, estado após criação, passagem a DRAFT quando o preço falha, e `simulateDryRunUpsert` |
 | `lib/importer/shopify/despublicacao.server.js` | 9, 23 | `productUpdate` com `{ id, status: "DRAFT" }` | Decisão 44, ponto 6 (emenda ao briefing de 17/09, :24) |
 | `scripts/catalog/vendor-backfill.js` | 56, 158 | `productUpdate` (vendor, descrição) | Backfill de vendor. Não corre no PR 4 |
 | `scripts/catalog/live-title-reconcile.js` | 72, 201 | `productUpdate` (só `title`) | Reconciliação de título, por desenho |
-| `scripts/maintenance/backfill-product-descriptions-b15.mjs` | 34–36, 86 | `productUpdate` (descrição) | Ferramenta de manutenção existente. **Não constava da lista do arquiteto de 27/10. Incluída para o teste passar; a confirmar.** |
-| `scripts/maintenance/fix-license-universe-links.mjs` | 37–39, 72 | `productUpdate` (descrição) | Ferramenta de manutenção existente. **Não constava da lista do arquiteto de 27/10. Incluída para o teste passar; a confirmar.** |
+| `scripts/maintenance/backfill-product-descriptions-b15.mjs` | 34–36, 86 | `productUpdate` (descrição) | Script de correção pontual, fora do ciclo. Aprovado pelo arquiteto, 27/10/2026 |
+| `scripts/maintenance/fix-license-universe-links.mjs` | 37–39, 72 | `productUpdate` (descrição) | Script de correção pontual, fora do ciclo. Aprovado pelo arquiteto, 27/10/2026 |
 
 ## Sem chamada própria
 
@@ -35,5 +35,7 @@ Decisão do arquiteto, 27/10/2026 (PR 4, pipeline de Characters).
 
 - Nenhum `productSet` no código em 27/10.
 - O passo 5 do pipeline (um `productSet` na criação) não entra no PR 4. A criação continua em
-  `productCreate`. A ligação de personagem chega por `metafieldsSet` no passo 3 e no ciclo,
-  para todo o produto publicado.
+  `productCreate`, com uma condição (desvio 2, aprovado pelo arquiteto, 27/10/2026):
+  `alterpop.franchise` e `alterpop.character` vão no input `metafields` do mesmo `productCreate`.
+  Os passos 3 e 4 correm antes da criação (`characterCreate.server.js`). Sem isto, o P1 fica aberto.
+- Se a preparação dos personagens falhar, o produto não é criado e fica SYNC_ERROR visível.
