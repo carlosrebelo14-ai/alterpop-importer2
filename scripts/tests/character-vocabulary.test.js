@@ -13,6 +13,7 @@ import {
   EPONYM_CANDIDATES,
   EPONYM_OVERRIDES,
 } from "../../lib/importer/catalog/characterVocabulary.js";
+import { resolveCharacters } from "../../lib/importer/catalog/characterResolver.server.js";
 
 let failures = 0;
 function check(name, fn) {
@@ -27,6 +28,27 @@ function check(name, fn) {
 
 const universoNames = new Set(FRANCHISE_UNIVERSES.map((u) => u.name));
 const byUniverso = Object.fromEntries(CHARACTER_VOCABULARY.map((e) => [e.universo, e.nomes]));
+
+check("LOTR: lista D3 de 27/10/2026 completa, sem criaturas genéricas", () => {
+  const lotr = CHARACTER_VOCABULARY.find((e) => e.universo === "The Lord of the Rings");
+  for (const nome of ["Frodo", "Gandalf", "Aragorn", "Gollum", "Legolas", "Gimli", "Boromir", "Merry", "Pippin", "Sam", "Sauron", "Saruman", "Éowyn", "Éomer", "Arwen", "Elrond", "Faramir", "Witch-King", "Balrog", "Lurtz", "Mouth of Sauron"]) {
+    assert.ok(lotr.nomes.includes(nome), `falta ${nome}`);
+  }
+  for (const fora of ["Moria Orc", "Cave Troll", "Nazgûl"]) assert.ok(!lotr.nomes.includes(fora), `não devia entrar ${fora}`);
+});
+
+check("resolver: Mouth of Sauron dá só mouth-of-sauron (Sauron contido no trecho não conta)", () => {
+  assert.deepEqual(resolveCharacters({ originalTitle: "LOTR Mouth of Sauron 18cm", resolvedFranchise: "The Lord of the Rings" }), ["mouth-of-sauron"]);
+});
+
+check("resolver: Frodo Baggins & Gollum dá os dois (trechos não se sobrepõem)", () => {
+  assert.deepEqual(resolveCharacters({ originalTitle: "LOTR Frodo Baggins & Gollum set", resolvedFranchise: "The Lord of the Rings" }), ["frodo", "gollum"]);
+});
+
+check("LOTR: aliases D3 resolvem para o handle do personagem", () => {
+  assert.deepEqual(resolveCharacters({ originalTitle: "LOTR Samwise Gamgee figure", resolvedFranchise: "The Lord of the Rings" }), ["sam"]);
+  assert.deepEqual(resolveCharacters({ originalTitle: "LOTR Eowyn figure", resolvedFranchise: "The Lord of the Rings" }), ["eowyn"]);
+});
 
 check("todos os universos do vocabulário batem exatamente com FRANCHISE_UNIVERSES", () => {
   for (const entry of CHARACTER_VOCABULARY) {
