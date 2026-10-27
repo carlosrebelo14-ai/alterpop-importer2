@@ -94,5 +94,35 @@ check("B1: alterpop.character da loja vira linhas origem store", () => {
   assert.deepEqual(rows, [{ sku: "A1", characterHandle: "luffy", universeHandle: "one-piece", origem: ORIGEM_STORE }]);
 });
 
+check("filtro LOTR: legolas sem metaobject fica de fora e aparece em excluded", () => {
+  const plan = planProductCharacterLinks({
+    products: [{ sku: "L1", originalTitle: "Legolas bow replica", resolvedFranchise: "The Lord of the Rings" }],
+    existingLinks: new Map(),
+    metaobjectHandles: new Set(["gandalf", "ahsoka-tano"]),
+  });
+  assert.deepEqual(plan[0].add, []);
+  assert.deepEqual(plan[0].excluded, ["legolas"]);
+});
+
+check("filtro LOTR: gandalf com metaobject entra", () => {
+  const plan = planProductCharacterLinks({
+    products: [{ sku: "G1", originalTitle: "Gandalf the Grey statue", resolvedFranchise: "The Lord of the Rings" }],
+    existingLinks: new Map(),
+    metaobjectHandles: new Set(["gandalf"]),
+  });
+  assert.deepEqual(plan[0].add, [{ characterHandle: "gandalf", origem: ORIGEM_RESOLVER }]);
+  assert.deepEqual(plan[0].excluded, []);
+});
+
+check("filtro LOTR: ahsoka-tano (Star Wars) entra mesmo sem filtro de LOTR", () => {
+  const plan = planProductCharacterLinks({
+    products: [{ sku: "A1", originalTitle: "Ahsoka Tano figure", resolvedFranchise: "Star Wars" }],
+    existingLinks: new Map(),
+    metaobjectHandles: new Set(),
+  });
+  assert.deepEqual(plan[0].add, [{ characterHandle: "ahsoka-tano", origem: ORIGEM_RESOLVER }]);
+  assert.deepEqual(plan[0].excluded, []);
+});
+
 console.log(failures ? `\nFALHOU — ${failures} falha(s)` : "\nOK — 0 falha(s)");
 process.exitCode = failures ? 1 : 0;

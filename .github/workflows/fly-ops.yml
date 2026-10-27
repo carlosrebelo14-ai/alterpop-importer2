@@ -6,8 +6,11 @@
 #   b2-dry        character-links-backfill.js --mode resolver (dry-run)
 #   census-c      character-census.js (read-only, limiar 1)
 #   verify-base   verify-character-invariants.js --baseline (read-only)
+#   b1-execute    dry-run e depois --execute de B1, no mesmo job. Escreve só em ProductCharacter.
+#   b2-execute    dry-run e depois --execute de B2, no mesmo job, com filtro LOTR. Escreve só em ProductCharacter.
 #
-# Nenhum --execute existe neste workflow. O --execute de B1 e B2 continua manual, com OK do arquiteto.
+# Os dois --execute foram aprovados pelo arquiteto (27/10/2026). Nenhum outro --execute existe aqui.
+# Nenhum dos dois escreve na loja. A aprovação do environment production é o gate.
 #
 # Saída completa no log do job e como artefacto (fly-ops-<comando>, 30 dias).
 # Precisa do secret FLY_API_TOKEN (já existe) e do environment "production".
@@ -26,6 +29,8 @@ on:
           - b2-dry
           - census-c
           - verify-base
+          - b1-execute
+          - b2-execute
 
 permissions:
   contents: read
@@ -59,6 +64,8 @@ jobs:
             b2-dry)     CMD='node scripts/catalog/character-links-backfill.js --mode resolver' ;;
             census-c)   CMD='node scripts/catalog/character-census.js' ;;
             verify-base) CMD='node scripts/verify-character-invariants.js --baseline' ;;
+            b1-execute) CMD='node scripts/catalog/character-links-backfill.js --mode store && node scripts/catalog/character-links-backfill.js --mode store --execute' ;;
+            b2-execute) CMD='node scripts/catalog/character-links-backfill.js --mode resolver && node scripts/catalog/character-links-backfill.js --mode resolver --execute' ;;
             *) echo "comando desconhecido: $COMANDO" >&2; exit 64 ;;
           esac
           mkdir -p "$RUNNER_TEMP/fly-ops"

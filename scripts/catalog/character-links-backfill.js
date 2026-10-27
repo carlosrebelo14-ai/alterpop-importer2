@@ -5,7 +5,12 @@
  *   B2  --mode resolver  resolver sobre todos os produtos ACTIVE, origem "resolver".
  *
  * DRY-RUN por omissão. `--execute` grava no Prisma. Nunca escreve na Shopify.
- * Dry-run de B2 imprime produto → personagens. Sai com erro se o total de linhas não bater.
+ * Dry-run de B2 imprime produto → personagens e a lista de exclusões LOTR. Sai com erro se o
+ * total de linhas não bater.
+ *
+ * Filtro LOTR em B2 (27/10/2026): personagem do universo The Lord of the Rings só entra se já
+ * existir metaobject com esse handle. Os restantes universos não são filtrados.
+ * Idempotente: upsert em ProductCharacter, repetir não duplica linhas.
  *
  * Correr na Fly:  node scripts/catalog/character-links-backfill.js --mode store
  *                 node scripts/catalog/character-links-backfill.js --mode resolver [--execute]
@@ -18,6 +23,7 @@ import {
   storeLinkRows,
   productToCharactersReport,
 } from "../../lib/importer/catalog/productCharacterLinks.js";
+import { fetchExistingCharacters } from "../../lib/importer/shopify/characterPagesSync.server.js";
 import {
   loadLinkInputs,
   loadExistingLinks,
@@ -40,7 +46,7 @@ async function runStore(client) {
   const withChar = [...storeHandlesBySku.values()].filter((h) => h.length).length;
   console.log(`produtos ACTIVE com alterpop.character na loja: ${withChar}`);
   console.log(`linhas store a gravar: ${rows.length}`);
-  for (const r of rows.slice(0, 50)) console.log(`  ${r.sku}  ${r.characterHandle}`);
+  for (const r of rows.slice(0, 50)) console.log(`  ${r.sku}\t${r.characterHandle}`);
   if (EXECUTE) {
     const written = await upsertStoreRows(SHOP, rows);
     if (written !== rows.length) throw new Error(`escritas ${written} de ${rows.length} — parar`);
@@ -54,15 +60,19 @@ async function runResolver(client) {
   const { activeSkus } = await loadActiveAndStoreHandles(client);
   const inputs = await loadLinkInputs(SHOP, activeSkus);
   const existing = await loadExistingLinks(SHOP, activeSkus);
-  const plan = planProductCharacterLinks({ products: inputs, existingLinks: existing });
+  const metaobjectHandles = new Set((await fetchExistingCharacters(client)).keys());
+  const plan = planProductCharacterLinks({ products: inputs, existingLinks: existing, metaobjectHandles });
   const report = productToCharactersReport(plan);
   const toAdd = plan.reduce((n, p) => n + p.add.length, 0);
   const toRemove = plan.reduce((n, p) => n + p.remove.length, 0);
+  const exclusions = plan.flatMap((p) => p.excluded.map((handle) => ({ sku: p.sku, handle })));
 
   console.log(`produtos ACTIVE: ${activeSkus.length} · com Prisma: ${inputs.length}`);
   console.log(`produtos com personagem (resolver): ${report.length}`);
   console.log(`ligações a acrescentar: ${toAdd} · a remover (origem resolver): ${toRemove}`);
-  for (const r of report) console.log(`  ${r.sku}  →  [${r.characters.join(", ")}]`);
+  console.log(`exclusões LOTR sem metaobject: ${exclusions.length}`);
+  for (const e of exclusions) console.log(`  EXCLUÍDO\t${e.sku}\t${e.handle}`);
+  for (const r of report) console.log(`  ${r.sku}\t[${r.characters.join(", ")}]`);
   if (inputs.length !== activeSkus.length) {
     console.log(`AVISO: ${activeSkus.length - inputs.length} SKU(s) ACTIVE sem linha no Prisma`);
   }

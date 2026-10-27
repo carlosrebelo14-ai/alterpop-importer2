@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import {
   decideCharacterCycleAction,
   MAX_CHARACTER_CHANGES_PER_CYCLE,
+  characterCycleEnabled,
 } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
 
 let failures = 0;
@@ -25,6 +26,12 @@ function check(name, fn) {
 function action(handle, act, extra = {}) {
   return { handle, action: act, universo: "One Piece", count: 5, ...extra };
 }
+
+check("ciclo de personagens desligado por defeito (só CHARACTER_CYCLE_ENABLED=true liga)", () => {
+  assert.equal(characterCycleEnabled({}), false);
+  assert.equal(characterCycleEnabled({ CHARACTER_CYCLE_ENABLED: "false" }), false);
+  assert.equal(characterCycleEnabled({ CHARACTER_CYCLE_ENABLED: "true" }), true);
+});
 
 check(`MAX_CHARACTER_CHANGES_PER_CYCLE é ${MAX_CHARACTER_CHANGES_PER_CYCLE}`, () => {
   assert.equal(MAX_CHARACTER_CHANGES_PER_CYCLE, 10);
