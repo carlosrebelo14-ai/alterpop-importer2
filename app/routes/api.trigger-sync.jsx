@@ -30,7 +30,7 @@ import { ensureOciostockMetafieldDefinitions } from "../../lib/importer/shopify/
 import { syncFranchiseCatalog } from "../../lib/importer/shopify/franchiseCatalogSync.server.js";
 import { reconcileNewArrivalsCycle } from "../../lib/importer/shopify/newArrivals.server.js";
 import { reconcileLiveDriftCycle } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
-import { reconcileCharacterPagesCycle } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
+import { reconcileCharacterPagesCycle, characterCycleEnabled } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
 import { reconcileCollectionPublicationCycle } from "../../lib/importer/shopify/collectionPublicationReconcileCycle.server.js";
 import { persistSyncError } from "../../lib/importer/sync/syncErrorLog.server.js";
 import {
@@ -480,14 +480,21 @@ export const action = async ({ request }) => {
       // Characters alterados no ciclo aplica sozinho, acima disso não escreve nada e fica
       // vermelho. Nunca bloqueia o ciclo.
       if (!(await trincoDoCicloAindaTem("as personagens"))) return;
-      try {
-        const characterClient = createShopifyClientFromSession(session);
-        const characterResult = await reconcileCharacterPagesCycle(characterClient, shop);
-        console.log(
-          `[trigger-sync] character-pages: ${characterResult.status} — ${characterResult.changed.length} alterado(s), ${characterResult.blocked.length} bloqueado(s) pelo travão, ${characterResult.invalid.length} inválido(s) (>128 produtos).`
-        );
-      } catch (err) {
-        console.error("[trigger-sync] character-pages falhou:", err?.message || err);
+      // Desligado por defeito até ao PR 4b (decisão do arquiteto, 27/10/2026): o travão de 10
+      // deixa passar 9 mudanças de personagens (census-c), por isso o ciclo não pode correr
+      // sobre `resolvedCharacters`. Liga-se com CHARACTER_CYCLE_ENABLED=true.
+      if (!characterCycleEnabled()) {
+        console.log("[trigger-sync] character-pages desligado (CHARACTER_CYCLE_ENABLED != true) até ao PR 4b.");
+      } else {
+        try {
+          const characterClient = createShopifyClientFromSession(session);
+          const characterResult = await reconcileCharacterPagesCycle(characterClient, shop);
+          console.log(
+            `[trigger-sync] character-pages: ${characterResult.status} — ${characterResult.changed.length} alterado(s), ${characterResult.blocked.length} bloqueado(s) pelo travão, ${characterResult.invalid.length} inválido(s) (>128 produtos).`
+          );
+        } catch (err) {
+          console.error("[trigger-sync] character-pages falhou:", err?.message || err);
+        }
       }
     } catch (err) {
       console.error("[trigger-sync] ciclo falhou:", err?.message || err);
