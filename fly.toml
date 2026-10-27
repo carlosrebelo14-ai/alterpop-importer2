@@ -14,6 +14,8 @@ primary_region = "fra"
   SHOPIFY_SHOP_URL = "jyr17t-wr.myshopify.com"
   SHOPIFY_APP_URL = "https://alterpop-importer-app.fly.dev"
   APP_URL = "https://alterpop-importer-app.fly.dev"
+  # PR 4b (27/10/2026): ciclo de personagens ligado, a ler ProductCharacter, com o filtro LOTR da lista D3.
+  CHARACTER_CYCLE_ENABLED = "true"
   # DRY_RUN removido a 2026-08-04: nunca protegeu o publish (shopifyApprovedSync não
   # consulta a flag), mas bloqueava runImport — o caminho que o daemon de sync usa.
   # envBool("DRY_RUN", false) tem default false, por isso ausente == desligado.

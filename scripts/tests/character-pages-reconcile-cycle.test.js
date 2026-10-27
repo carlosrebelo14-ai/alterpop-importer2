@@ -6,6 +6,7 @@
  * Uso: node scripts/tests/character-pages-reconcile-cycle.test.js
  */
 import assert from "node:assert/strict";
+import { liveCountsFromLinks } from "../../lib/importer/shopify/characterPagesSync.server.js";
 import {
   decideCharacterCycleAction,
   MAX_CHARACTER_CHANGES_PER_CYCLE,
@@ -26,6 +27,17 @@ function check(name, fn) {
 function action(handle, act, extra = {}) {
   return { handle, action: act, universo: "One Piece", count: 5, ...extra };
 }
+
+check("PR 4b: contagens vêm de ProductCharacter; SKU sem franquia não conta; handles múltiplos contam", () => {
+  const active = [{ id: "P1", sku: "S1" }, { id: "P2", sku: "S2" }, { id: "P3", sku: "S3" }];
+  const handles = new Map([["S1", ["luke-skywalker", "grogu"]], ["S2", ["gandalf"]], ["S3", ["legolas"]]]);
+  const franchise = new Map([["S1", "Star Wars"], ["S2", "The Lord of the Rings"]]);
+  const live = liveCountsFromLinks(active, handles, franchise);
+  assert.deepEqual(live.get("luke-skywalker"), { universo: "Star Wars", productSkus: ["S1"], productIds: ["P1"] });
+  assert.deepEqual(live.get("grogu"), { universo: "Star Wars", productSkus: ["S1"], productIds: ["P1"] });
+  assert.deepEqual(live.get("gandalf"), { universo: "The Lord of the Rings", productSkus: ["S2"], productIds: ["P2"] });
+  assert.equal(live.has("legolas"), false);
+});
 
 check("ciclo de personagens desligado por defeito (só CHARACTER_CYCLE_ENABLED=true liga)", () => {
   assert.equal(characterCycleEnabled({}), false);
