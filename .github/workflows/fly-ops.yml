@@ -8,6 +8,7 @@
 #   verify-base   verify-character-invariants.js --baseline (read-only)
 #   b1-execute    dry-run e depois --execute de B1, no mesmo job. Escreve só em ProductCharacter.
 #   b2-execute    dry-run e depois --execute de B2, no mesmo job, com filtro LOTR. Escreve só em ProductCharacter.
+#   candidates-dry    candidatos a personagem por universo, só leitura (28/10/2026). Saída ao arquiteto.
 #   cycle-apply-once  primeiro ciclo de personagens com a trava levantada uma vez (27/10/2026). Imprime o plano,
 #                     aborta sem escrever se houver ação fora das classes autorizadas. Escreve na loja.
 #
@@ -34,6 +35,7 @@ on:
           - b1-execute
           - b2-execute
           - cycle-apply-once
+          - candidates-dry
 
 permissions:
   contents: read
@@ -70,6 +72,7 @@ jobs:
             b1-execute) CMD='node scripts/catalog/character-links-backfill.js --mode store && node scripts/catalog/character-links-backfill.js --mode store --execute' ;;
             b2-execute) CMD='node scripts/catalog/character-links-backfill.js --mode resolver && node scripts/catalog/character-links-backfill.js --mode resolver --execute' ;;
             cycle-apply-once) CMD='node scripts/catalog/character-cycle-apply-once.js' ;;
+            candidates-dry) CMD='node scripts/catalog/character-candidates.js' ;;
             *) echo "comando desconhecido: $COMANDO" >&2; exit 64 ;;
           esac
           mkdir -p "$RUNNER_TEMP/fly-ops"
