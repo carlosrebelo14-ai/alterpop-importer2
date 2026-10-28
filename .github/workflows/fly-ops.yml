@@ -8,14 +8,18 @@
 #   verify-base   verify-character-invariants.js --baseline (read-only)
 #   b1-execute    dry-run e depois --execute de B1, no mesmo job. Escreve só em ProductCharacter.
 #   b2-execute    dry-run e depois --execute de B2, no mesmo job, com filtro LOTR. Escreve só em ProductCharacter.
+#   candidates-dry    candidatos a personagem por universo, só leitura (28/10/2026). Saída ao arquiteto.
 #   cycle-apply-once  primeiro ciclo de personagens com a trava levantada uma vez (27/10/2026). Imprime o plano,
 #                     aborta sem escrever se houver ação fora das classes autorizadas. Escreve na loja.
 #
 # Os dois --execute foram aprovados pelo arquiteto (27/10/2026). cycle-apply-once também.
 # Nenhum dos dois escreve na loja. A aprovação do environment production é o gate.
+# Leitura (b1-dry, b2-dry, census-c, verify-base, candidates-dry) usa o environment production-read,
+# sem required reviewers (decisão do Carlos, 28/10/2026). Escrita (b1-execute, b2-execute,
+# cycle-apply-once) fica em production, com aprovação. Teste: scripts/tests/flyops-environment.test.js.
 #
 # Saída completa no log do job e como artefacto (fly-ops-<comando>, 30 dias).
-# Precisa do secret FLY_API_TOKEN (já existe) e do environment "production".
+# Precisa do secret FLY_API_TOKEN (já existe) e dos environments "production" e "production-read".
 # Só corre a partir de main (ver a guarda do job).
 name: fly-ops
 
@@ -34,6 +38,7 @@ on:
           - b1-execute
           - b2-execute
           - cycle-apply-once
+          - candidates-dry
 
 permissions:
   contents: read
@@ -46,7 +51,8 @@ jobs:
   fly-ops:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: production
+    # Leitura usa production-read (sem required reviewers, mesmo FLY_API_TOKEN). Escrita fica em production.
+    environment: ${{ contains(fromJSON('["b1-dry","b2-dry","census-c","verify-base","candidates-dry"]'), inputs.comando) && 'production-read' || 'production' }}
     timeout-minutes: 60
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -70,6 +76,7 @@ jobs:
             b1-execute) CMD='node scripts/catalog/character-links-backfill.js --mode store && node scripts/catalog/character-links-backfill.js --mode store --execute' ;;
             b2-execute) CMD='node scripts/catalog/character-links-backfill.js --mode resolver && node scripts/catalog/character-links-backfill.js --mode resolver --execute' ;;
             cycle-apply-once) CMD='node scripts/catalog/character-cycle-apply-once.js' ;;
+            candidates-dry) CMD='node scripts/catalog/character-candidates.js' ;;
             *) echo "comando desconhecido: $COMANDO" >&2; exit 64 ;;
           esac
           mkdir -p "$RUNNER_TEMP/fly-ops"
