@@ -69,5 +69,12 @@ check("escrita: b1-execute, b2-execute, cycle-apply-once", () => {
   assert.deepEqual([...escrita].sort(), ["b1-execute", "b2-execute", "cycle-apply-once", "tags-execute"]);
 });
 
+check("anotação: passo com if always() lê o saida.txt e não usa segredos nem variáveis de ambiente", () => {
+  const bloco = src.slice(src.indexOf("name: Anotar resumo na execução"), src.indexOf("name: Guardar saída como artefacto"));
+  assert.ok(bloco.includes("if: always()"), "falta if: always()");
+  assert.ok(bloco.includes("saida.txt"), "não lê o saida.txt");
+  assert.ok(!/secrets\.|\$\{\{/.test(bloco), "o passo não pode usar segredos nem expressões");
+});
+
 console.log(failures ? `\nFALHOU — ${failures} falha(s)` : "\nOK — 0 falha(s)");
 process.exitCode = failures ? 1 : 0;

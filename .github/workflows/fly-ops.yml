@@ -94,6 +94,21 @@ jobs:
           mkdir -p "$RUNNER_TEMP/fly-ops"
           flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && $CMD'" 2>&1 | tee "$RUNNER_TEMP/fly-ops/saida.txt"
 
+      # Resumo legível pela API (check-runs/annotations). Só contagens, nomes de personagem e handles.
+      # Sem GIDs, custos, margens, variáveis de ambiente ou URLs (guarda de 27/10 e 29/10/2026).
+      - name: Anotar resumo na execução
+        if: always()
+        shell: bash
+        run: |
+          f="$RUNNER_TEMP/fly-ops/saida.txt"
+          [ -f "$f" ] || exit 0
+          {
+            grep -E '^(ações|trava|produtos|-- |=== |aplicado|nada a aplicar|FORA|ERRO|  product-update |  (create|reactivate|update|set-draft) |  (✓|✗|!) )' "$f"
+            sed -nE 's/^  ([a-z0-9-]+) · ([a-z]+): .*· (\+[0-9]+ -[0-9]+)$/  \1 · \2 \3/p; s/^  ([a-z0-9-]+) · status: .*depois=([A-Z]+)$/  \1 · status \2/p' "$f"
+          } | while IFS= read -r linha; do
+            echo "::notice title=${COMANDO}::${linha}"
+          done || true
+
       - name: Guardar saída como artefacto
         if: always()
         uses: actions/upload-artifact@v4
