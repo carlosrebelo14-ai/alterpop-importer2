@@ -30,6 +30,7 @@ import {
 } from "../../lib/importer/catalog/characterPages.server.js";
 import {
   fetchActiveProducts,
+  planearCicloCompleto,
   fetchExistingCharacters,
   buildLiveCounts,
   applyCharacterActions,
@@ -103,7 +104,7 @@ async function execute() {
   const activeProducts = await fetchActiveProducts(client);
   const existing = await fetchExistingCharacters(client);
   const liveCounts = await buildLiveCounts(SHOP, activeProducts);
-  const actions = planCharacterMetaobjects({ liveCounts, existing });
+  const actions = await planearCicloCompleto(client, { activeProducts, existing, liveCounts });
   reportActions(actions);
 
   const errors = actions.filter((a) => a.action === "error");
@@ -111,8 +112,8 @@ async function execute() {
     throw new Error(`${errors.length} handle(s) acima do limite de ${CHARACTER_PRODUCTS_MAX} produtos — corrigido à mão antes de --execute`);
   }
 
-  const actionsToApply = actions.filter((a) => a.action !== "skip" && a.action !== "error");
-  const result = await applyCharacterActions(client, { actionsToApply, liveCounts, existing, activeProducts });
+  const actionsToApply = actions.filter((a) => !["skip", "error", "noop"].includes(a.action));
+  const result = await applyCharacterActions(client, { actionsToApply, liveCounts, existing });
 
   for (const a of result.applied) {
     if (a.targetStatus === "ACTIVE") {

@@ -12,13 +12,13 @@
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
-import { planCharacterMetaobjects } from "../../lib/importer/catalog/characterPages.server.js";
 import { classificarAcoesAutorizadas } from "../../lib/importer/catalog/characterCycleAllowlist.js";
 import {
   fetchActiveProducts,
   fetchExistingCharacters,
   buildLiveCounts,
   applyCharacterActions,
+  planearCicloCompleto,
 } from "../../lib/importer/shopify/characterPagesSync.server.js";
 
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
@@ -31,7 +31,7 @@ async function main() {
   const activeProducts = await fetchActiveProducts(client);
   const existing = await fetchExistingCharacters(client);
   const liveCounts = await buildLiveCounts(SHOP, activeProducts);
-  const actions = planCharacterMetaobjects({ liveCounts, existing });
+  const actions = await planearCicloCompleto(client, { activeProducts, existing, liveCounts });
 
   const erros = actions.filter((a) => a.action === "error");
   if (erros.length) throw new Error(`${erros.length} handle(s) com erro no plano (>128 produtos) — nada escrito`);
@@ -47,7 +47,7 @@ async function main() {
   if (!permitidas.length) {
     console.log("nada a aplicar. nada escrito.");
   } else {
-    const result = await applyCharacterActions(client, { actionsToApply: permitidas, liveCounts, existing, activeProducts });
+    const result = await applyCharacterActions(client, { actionsToApply: permitidas, liveCounts, existing });
     console.log(`\naplicado: ${result.applied.length} personagem(ns), ${result.productWrites} produto(s), ${result.collectionWrites} coleção/coleções`);
   }
   await prisma.$disconnect();

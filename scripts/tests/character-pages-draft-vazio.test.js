@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 
 process.env.DATABASE_URL = `file:${path.join(os.tmpdir(), "draft-vazio-unused.sqlite")}`;
-const { applyCharacterActions } = await import(path.join(process.cwd(), "lib/importer/shopify/characterPagesSync.server.js"));
+const { applyCharacterActions, planProductCharacterUpdates } = await import(path.join(process.cwd(), "lib/importer/shopify/characterPagesSync.server.js"));
 
 let failures = 0;
 async function check(name, fn) {
@@ -50,13 +50,19 @@ function fakeClient({ upsertErrorHandles = {} } = {}) {
   };
 }
 
-const draftVazio = (extra = {}) => ({
-  actionsToApply: [{ handle: "luffy", action: "set-draft", targetStatus: "DRAFT", universo: "One Piece", count: 0 }],
-  liveCounts: new Map(),
-  existing: new Map([["luffy", { id: "gid://shopify/Metaobject/luffy", status: "ACTIVE" }]]),
-  activeProducts: [{ id: "gid://shopify/Product/9", currentCharacterGids: ["gid://shopify/Metaobject/luffy"] }],
-  ...extra,
-});
+// A remoção da referência no produto vem do product-update (29/10/2026), não do set-draft.
+const draftVazio = (extra = {}) => {
+  const setDraft = { handle: "luffy", action: "set-draft", targetStatus: "DRAFT", universo: "One Piece", count: 0 };
+  const existing = new Map([["luffy", { id: "gid://shopify/Metaobject/luffy", status: "ACTIVE" }]]);
+  const activeProducts = [{ id: "gid://shopify/Product/9", sku: "SKU-9", currentCharacterGids: ["gid://shopify/Metaobject/luffy"] }];
+  const liveCounts = new Map();
+  return {
+    actionsToApply: [setDraft, ...planProductCharacterUpdates([setDraft], liveCounts, activeProducts, existing)],
+    liveCounts,
+    existing,
+    ...extra,
+  };
+};
 
 await check("0 produtos -> set-draft sem erro, sem enviar products, referência tirada do produto", async () => {
   const client = fakeClient();

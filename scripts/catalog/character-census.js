@@ -9,9 +9,9 @@
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
-import { planCharacterMetaobjects, CHARACTER_THRESHOLD } from "../../lib/importer/catalog/characterPages.server.js";
+import { CHARACTER_THRESHOLD } from "../../lib/importer/catalog/characterPages.server.js";
 import { decideCharacterCycleAction, MAX_CHARACTER_CHANGES_PER_CYCLE } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
-import { fetchActiveProducts, fetchExistingCharacters, buildLiveCounts, marcarUpdatesSemMudanca, resolverUniversosDosUpdates } from "../../lib/importer/shopify/characterPagesSync.server.js";
+import { fetchActiveProducts, fetchExistingCharacters, buildLiveCounts, planearCicloCompleto } from "../../lib/importer/shopify/characterPagesSync.server.js";
 
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
 
@@ -23,9 +23,7 @@ async function main() {
   const activeProducts = await fetchActiveProducts(client);
   const existing = await fetchExistingCharacters(client);
   const liveCounts = await buildLiveCounts(SHOP, activeProducts);
-  const planned = planCharacterMetaobjects({ liveCounts, existing });
-  const universeGidByName = await resolverUniversosDosUpdates(client, planned);
-  const actions = marcarUpdatesSemMudanca(planned, existing, liveCounts, universeGidByName);
+  const actions = await planearCicloCompleto(client, { activeProducts, existing, liveCounts });
   const decision = decideCharacterCycleAction(actions);
 
   const byAction = {};
@@ -35,6 +33,10 @@ async function main() {
   console.log(`\n-- Characters a mudar (create, reactivate, update, set-draft) --`);
   for (const a of actions.filter((x) => ["create", "reactivate", "update", "set-draft"].includes(x.action))) {
     console.log(`  ${a.action.padEnd(10)} ${a.handle.padEnd(24)} ${String(a.count).padStart(4)} produtos`);
+  }
+  console.log(`\n-- Produtos com alterpop.character a corrigir (product-update) --`);
+  for (const a of actions.filter((x) => x.action === "product-update")) {
+    console.log(`  product-update ${a.sku.padEnd(20)} pede [${a.handles.join(", ")}]`);
   }
   for (const a of actions.filter((x) => x.action === "error")) console.log(`ERRO ${a.handle}: ${a.error}`);
   console.log(`\ntrava de ${MAX_CHARACTER_CHANGES_PER_CYCLE}: estado ${decision.status}`);
