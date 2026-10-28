@@ -11,7 +11,7 @@ import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionF
 import { createShopifyClientFromSession } from "../../lib/importer/shopifyClient.js";
 import { planCharacterMetaobjects, CHARACTER_THRESHOLD } from "../../lib/importer/catalog/characterPages.server.js";
 import { decideCharacterCycleAction, MAX_CHARACTER_CHANGES_PER_CYCLE } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
-import { fetchActiveProducts, fetchExistingCharacters, buildLiveCounts } from "../../lib/importer/shopify/characterPagesSync.server.js";
+import { fetchActiveProducts, fetchExistingCharacters, buildLiveCounts, marcarUpdatesSemMudanca, resolverUniversosDosUpdates } from "../../lib/importer/shopify/characterPagesSync.server.js";
 
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
 
@@ -23,7 +23,9 @@ async function main() {
   const activeProducts = await fetchActiveProducts(client);
   const existing = await fetchExistingCharacters(client);
   const liveCounts = await buildLiveCounts(SHOP, activeProducts);
-  const actions = planCharacterMetaobjects({ liveCounts, existing });
+  const planned = planCharacterMetaobjects({ liveCounts, existing });
+  const universeGidByName = await resolverUniversosDosUpdates(client, planned);
+  const actions = marcarUpdatesSemMudanca(planned, existing, liveCounts, universeGidByName);
   const decision = decideCharacterCycleAction(actions);
 
   const byAction = {};
