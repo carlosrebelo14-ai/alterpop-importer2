@@ -9,6 +9,7 @@
 #   b1-execute    dry-run e depois --execute de B1, no mesmo job. Escreve só em ProductCharacter.
 #   b2-execute    dry-run e depois --execute de B2, no mesmo job, com filtro LOTR. Escreve só em ProductCharacter.
 #   candidates-dry    candidatos a personagem por universo, só leitura (28/10/2026). Saída ao arquiteto.
+#   tags-dry      tags-cleanup.js sem --execute: contagem por tag fora da lista, só leitura (28/10/2026).
 #   cycle-apply-once  primeiro ciclo de personagens com a trava levantada uma vez (27/10/2026). Imprime o plano,
 #                     aborta sem escrever se houver ação fora das classes autorizadas. Escreve na loja.
 #
@@ -39,6 +40,7 @@ on:
           - b2-execute
           - cycle-apply-once
           - candidates-dry
+          - tags-dry
 
 permissions:
   contents: read
@@ -52,7 +54,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Leitura usa production-read (sem required reviewers, mesmo FLY_API_TOKEN). Escrita fica em production.
-    environment: ${{ contains(fromJSON('["b1-dry","b2-dry","census-c","verify-base","candidates-dry"]'), inputs.comando) && 'production-read' || 'production' }}
+    environment: ${{ contains(fromJSON('["b1-dry","b2-dry","census-c","verify-base","candidates-dry","tags-dry"]'), inputs.comando) && 'production-read' || 'production' }}
     timeout-minutes: 60
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -77,6 +79,7 @@ jobs:
             b2-execute) CMD='node scripts/catalog/character-links-backfill.js --mode resolver && node scripts/catalog/character-links-backfill.js --mode resolver --execute' ;;
             cycle-apply-once) CMD='node scripts/catalog/character-cycle-apply-once.js' ;;
             candidates-dry) CMD='node scripts/catalog/character-candidates.js' ;;
+            tags-dry)   CMD='node scripts/catalog/tags-cleanup.js' ;;
             *) echo "comando desconhecido: $COMANDO" >&2; exit 64 ;;
           esac
           mkdir -p "$RUNNER_TEMP/fly-ops"
