@@ -28,6 +28,7 @@ const SHOP = valOf("--shop", process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopif
 const TOP = parseInt(valOf("--top", "25"), 10) || 25;
 const EXEMPLOS = 3;
 
+// Uma linha por candidato, colunas com tab: universo, nome, piscina, ACTIVE, estado, 3 títulos.
 const norm = (s) => String(s ?? "").normalize("NFC").toLowerCase().trim();
 
 function jaNoVocabulario(universoNome, candidato) {
@@ -72,13 +73,12 @@ async function main() {
     }
     const ordenados = [...porNome.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, TOP);
     const comVocab = CHARACTER_VOCABULARY.some((e) => e.universo === u.name);
-    console.log(`── ${u.name} · piscina ${deste.length} · ${comVocab ? "vocabulário existe" : "sem vocabulário"}`);
-    console.log(`nome\ttotal\tactive\tmarca\texemplos`);
+    console.log(`# ${u.name}\tpiscina ${deste.length}\t${comVocab ? "vocabulário existe" : "sem vocabulário"}`);
     for (const [nome, e] of ordenados) {
-      const marca = jaNoVocabulario(u.name, nome) ? "já no vocabulário" : "novo";
-      console.log(`${nome}\t${e.total}\t${e.active}\t${marca}\t${e.exemplos.join(" | ")}`);
+      const estado = jaNoVocabulario(u.name, nome) ? "vocabulário" : "novo";
+      const exemplos = [0, 1, 2].map((i) => e.exemplos[i] ?? "");
+      console.log([u.name, nome, e.total, e.active, estado, ...exemplos].join("\t"));
     }
-    console.log("");
   }
   console.log("(nada escrito — só leitura.)");
   await prisma.$disconnect();
