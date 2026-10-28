@@ -10,6 +10,7 @@
 #   b2-execute    dry-run e depois --execute de B2, no mesmo job, com filtro LOTR. Escreve só em ProductCharacter.
 #   candidates-dry    candidatos a personagem por universo, só leitura (28/10/2026). Saída ao arquiteto.
 #   tags-dry      tags-cleanup.js sem --execute: contagem por tag fora da lista, só leitura (28/10/2026).
+#   tags-execute  tags-cleanup.js --execute: remove só TAGS_PARA_REMOVER; recusa se houver tags fora (28/10/2026).
 #   cycle-apply-once  primeiro ciclo de personagens com a trava levantada uma vez (27/10/2026). Imprime o plano,
 #                     aborta sem escrever se houver ação fora das classes autorizadas. Escreve na loja.
 #
@@ -41,6 +42,7 @@ on:
           - cycle-apply-once
           - candidates-dry
           - tags-dry
+          - tags-execute
 
 permissions:
   contents: read
@@ -80,6 +82,7 @@ jobs:
             cycle-apply-once) CMD='node scripts/catalog/character-cycle-apply-once.js' ;;
             candidates-dry) CMD='node scripts/catalog/character-candidates.js' ;;
             tags-dry)   CMD='node scripts/catalog/tags-cleanup.js' ;;
+            tags-execute) CMD='node scripts/catalog/tags-cleanup.js --execute' ;;
             *) echo "comando desconhecido: $COMANDO" >&2; exit 64 ;;
           esac
           mkdir -p "$RUNNER_TEMP/fly-ops"

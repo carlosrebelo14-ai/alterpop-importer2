@@ -66,7 +66,7 @@ check("todo comando da lista tem environment: leitura ou escrita (fica em produc
 });
 
 check("escrita: b1-execute, b2-execute, cycle-apply-once", () => {
-  assert.deepEqual([...escrita].sort(), ["b1-execute", "b2-execute", "cycle-apply-once"]);
+  assert.deepEqual([...escrita].sort(), ["b1-execute", "b2-execute", "cycle-apply-once", "tags-execute"]);
 });
 
 console.log(failures ? `\nFALHOU — ${failures} falha(s)` : "\nOK — 0 falha(s)");
