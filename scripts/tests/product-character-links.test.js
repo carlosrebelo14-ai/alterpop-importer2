@@ -13,6 +13,8 @@ import {
   ORIGEM_RESOLVER,
 } from "../../lib/importer/catalog/productCharacterLinks.js";
 
+const semUniverso = (l) => l.map(({ characterHandle, origem }) => ({ characterHandle, origem }));
+
 let failures = 0;
 function check(name, fn) {
   try {
@@ -33,7 +35,7 @@ const LIGHTSABER = {
 
 check("lightsaber (SKU 5010994186340) -> luke-skywalker no dry-run de B2", () => {
   const plan = planProductCharacterLinks({ products: [LIGHTSABER], existingLinks: new Map() });
-  assert.deepEqual(plan[0].add, [{ characterHandle: "luke-skywalker", origem: ORIGEM_RESOLVER }]);
+  assert.deepEqual(semUniverso(plan[0].add), [{ characterHandle: "luke-skywalker", origem: ORIGEM_RESOLVER }]);
   const report = productToCharactersReport(plan);
   assert.deepEqual(report, [{ sku: "5010994186340", characters: ["luke-skywalker"] }]);
 });
@@ -44,7 +46,7 @@ check("sem franchise resolvida -> nada a acrescentar, nada a remover", () => {
     existingLinks: new Map(),
   });
   assert.equal(plan[0].resolved, null);
-  assert.deepEqual(plan[0].add, []);
+  assert.deepEqual(semUniverso(plan[0].add), []);
   assert.equal(plan[0].unchanged, true);
 });
 
@@ -77,7 +79,7 @@ check("titleOverride manda sobre originalTitle", () => {
     existingLinks: new Map(),
   });
   assert.equal(plan[0].resolved, null);
-  assert.deepEqual(plan[0].add, []);
+  assert.deepEqual(semUniverso(plan[0].add), []);
 });
 
 check("store já ligado e resolver igual -> sem alteração", () => {
@@ -85,7 +87,7 @@ check("store já ligado e resolver igual -> sem alteração", () => {
     ["5010994186340", [{ characterHandle: "luke-skywalker", origem: ORIGEM_STORE }]],
   ]);
   const plan = planProductCharacterLinks({ products: [LIGHTSABER], existingLinks: existing });
-  assert.deepEqual(plan[0].add, []);
+  assert.deepEqual(semUniverso(plan[0].add), []);
   assert.equal(plan[0].unchanged, true);
 });
 
@@ -99,7 +101,7 @@ check("filtro LOTR: legolas (lista D3) entra", () => {
     products: [{ sku: "L1", originalTitle: "Legolas bow replica", resolvedFranchise: "The Lord of the Rings" }],
     existingLinks: new Map(),
   });
-  assert.deepEqual(plan[0].add, [{ characterHandle: "legolas", origem: ORIGEM_RESOLVER }]);
+  assert.deepEqual(semUniverso(plan[0].add), [{ characterHandle: "legolas", origem: ORIGEM_RESOLVER }]);
   assert.deepEqual(plan[0].excluded, []);
 });
 
@@ -109,7 +111,7 @@ check("filtro LOTR: personagem fora da lista aprovada fica de fora e aparece em 
     existingLinks: new Map(),
     aprovadosFiltrado: new Set(["gandalf"]),
   });
-  assert.deepEqual(plan[0].add, []);
+  assert.deepEqual(semUniverso(plan[0].add), []);
   assert.deepEqual(plan[0].excluded, ["legolas"]);
 });
 
@@ -118,7 +120,7 @@ check("filtro LOTR: gandalf (lista D3) entra", () => {
     products: [{ sku: "G1", originalTitle: "Gandalf the Grey statue", resolvedFranchise: "The Lord of the Rings" }],
     existingLinks: new Map(),
   });
-  assert.deepEqual(plan[0].add, [{ characterHandle: "gandalf", origem: ORIGEM_RESOLVER }]);
+  assert.deepEqual(semUniverso(plan[0].add), [{ characterHandle: "gandalf", origem: ORIGEM_RESOLVER }]);
   assert.deepEqual(plan[0].excluded, []);
 });
 
@@ -128,7 +130,7 @@ check("filtro LOTR: ahsoka-tano (Star Wars) não passa pelo filtro", () => {
     existingLinks: new Map(),
     aprovadosFiltrado: new Set(),
   });
-  assert.deepEqual(plan[0].add, [{ characterHandle: "ahsoka-tano", origem: ORIGEM_RESOLVER }]);
+  assert.deepEqual(semUniverso(plan[0].add), [{ characterHandle: "ahsoka-tano", origem: ORIGEM_RESOLVER }]);
   assert.deepEqual(plan[0].excluded, []);
 });
 

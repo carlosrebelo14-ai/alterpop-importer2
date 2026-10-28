@@ -76,12 +76,12 @@ check("nome da lista dos epónimos nunca aparece (Harry Potter)", () => {
   assert.ok(out == null || !out.includes("harry"));
 });
 
-check("nome da lista dos epónimos nunca aparece (Zelda), mesmo com outro nome do universo presente", () => {
+check("The Legend of Zelda saiu do vocabulário (ronda 1, 28/10/2026): nenhum nome resolve", () => {
   const out = resolveCharacters({
     originalTitle: "The Legend of Zelda Link and Zelda figure set",
     resolvedFranchise: "The Legend of Zelda",
   });
-  assert.deepEqual(out, ["link"]);
+  assert.equal(out, null);
 });
 
 check("Batman é exceção à régua dos epónimos e aparece", () => {

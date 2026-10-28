@@ -123,7 +123,7 @@ check("nome epónimo bloqueado nunca aparece no catálogo de handles (Harry)", (
 
 check("Batman (override) aparece no catálogo de handles", () => {
   const catalog = buildCharacterCatalog();
-  assert.deepEqual(catalog.get("batman"), { nome: "Batman", universo: "Batman" });
+  assert.deepEqual(catalog.get("batman"), { nome: "Batman", universos: ["Batman"] });
 });
 
 check("planUniverseCharacterCollections agrupa por universo, maior contagem primeiro", () => {

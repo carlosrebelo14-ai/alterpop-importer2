@@ -63,9 +63,9 @@ check("todos os universos do vocabulário batem exatamente com FRANCHISE_UNIVERS
 });
 
 check("os 15 nomes do piloto (PR #71) entram no vocabulário", () => {
-  assert.deepEqual(byUniverso["Star Wars"], ["Darth Vader", "Luke Skywalker", "Ahsoka Tano", "Grogu", "Din Djarin"]);
-  assert.deepEqual(byUniverso["Dragon Ball"], ["Goku", "Vegeta", "Gohan", "Frieza", "Piccolo"]);
-  assert.deepEqual(byUniverso["Batman"], ["Batman", "Joker", "Harley Quinn", "Catwoman", "Robin"]);
+  for (const n of ["Darth Vader", "Luke Skywalker", "Ahsoka Tano", "Grogu", "Din Djarin"]) assert.ok(byUniverso["Star Wars"].includes(n), n);
+  for (const n of ["Goku", "Vegeta", "Gohan", "Frieza", "Piccolo"]) assert.ok(byUniverso["Dragon Ball"].includes(n), n);
+  for (const n of ["Batman", "Joker", "Harley Quinn", "Catwoman", "Robin"]) assert.ok(byUniverso["Batman"].includes(n), n);
 });
 
 check("Din Djarin fica sem o alias The Mandalorian (colisão com a Line)", () => {
@@ -95,16 +95,11 @@ check("Batman tem exceção registada à régua dos epónimos, com a data da dec
   assert.equal(override.decisao, "2026-09-17");
 });
 
-check("a régua dos epónimos continua a valer, sem exceção, para os outros 8 candidatos", () => {
-  const overridden = new Set(EPONYM_OVERRIDES.map((o) => o.nome));
-  // Spider-Man já fica fora por não bater o limiar (nota do arranque) — não é uma
-  // exceção à régua, é o resultado normal dela. Só Batman tem override.
-  const outros = EPONYM_CANDIDATES.map((c) => c.nome).filter((n) => n !== "Batman" && n !== "Spider-Man");
-  assert.equal(outros.length, 8);
-  for (const nome of outros) {
-    assert.ok(!overridden.has(nome), `"${nome}" não devia ter exceção à régua dos epónimos`);
-  }
+check("exclusão dos epónimos revogada (ronda 1, 28/10/2026): lista de candidatos vazia; Batman continua registado", () => {
+  assert.equal(EPONYM_CANDIDATES.length, 0);
+  assert.ok(EPONYM_OVERRIDES.some((o) => o.nome === "Batman"));
 });
+
 
 console.log(`\n${failures === 0 ? "OK" : "FALHOU"} — ${failures} falha(s)\n`);
 process.exit(failures === 0 ? 0 : 1);
