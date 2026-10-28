@@ -75,13 +75,18 @@ async function main() {
     }
     const ordenados = [...porNome.entries()].sort((a, b) => b[1].total - a[1].total);
     const comVocab = CHARACTER_VOCABULARY.some((e) => e.universo === u.name);
-    console.log(`# ${u.name}\tpiscina ${deste.length}\t${comVocab ? "vocabulário existe" : "sem vocabulário"}`);
+    const linhas = [];
     for (const [nome, e] of ordenados) {
       const estado = jaNoVocabulario(u.name, nome) ? "vocabulário" : "novo";
-      if (NOVOS_MIN && estado === "novo" && e.total < NOVOS_MIN) continue;
+      // Com --novos-min só saem os novos com N ou mais produtos; o resto não é reportado.
+      if (NOVOS_MIN && (estado !== "novo" || e.total < NOVOS_MIN)) continue;
       const exemplos = [0, 1, 2].map((i) => e.exemplos[i] ?? "");
-      console.log([u.name, nome, e.total, e.active, estado, ...exemplos].join("\t"));
+      linhas.push([u.name, nome, e.total, e.active, estado, ...exemplos].join("\t"));
     }
+    // Cabeçalho só quando há linhas, para o dia sem novos não produzir nada.
+    if (!linhas.length) continue;
+    console.log(`# ${u.name}\tpiscina ${deste.length}\t${comVocab ? "vocabulário existe" : "sem vocabulário"}`);
+    for (const l of linhas) console.log(l);
   }
   console.log("(nada escrito — só leitura.)");
   await prisma.$disconnect();

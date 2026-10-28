@@ -37,8 +37,13 @@ check("a rotina só mostra novos com 2 ou mais produtos", () => {
   assert.match(yml, /--novos-min 2/);
 });
 
-check("o script aplica --novos-min aos candidatos \"novo\"", () => {
-  assert.match(script, /NOVOS_MIN && estado === "novo" && e\.total < NOVOS_MIN/);
+check("o script só reporta novos com --novos-min (vocabulário e abaixo do mínimo saem)", () => {
+  assert.match(script, /NOVOS_MIN && \(estado !== "novo" \|\| e\.total < NOVOS_MIN\)/);
+});
+
+check("dia sem novos não produz artefacto (upload condicionado a novos=sim)", () => {
+  assert.match(yml, /if: steps\.candidatos\.outputs\.novos == 'sim'/);
+  assert.match(yml, /novos=nao/);
 });
 
 console.log(failures ? `\nFALHOU — ${failures} falha(s)` : "\nOK — 0 falha(s)");
