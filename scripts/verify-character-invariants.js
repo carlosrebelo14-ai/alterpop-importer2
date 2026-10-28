@@ -16,7 +16,7 @@ import { createShopifyClientFromSession } from "../lib/importer/shopifyClient.js
 import { checkCharacterInvariants } from "../lib/importer/catalog/characterInvariants.js";
 import { buildInvariantInput } from "../lib/importer/catalog/characterInvariantInput.js";
 import { FRANCHISE_UNIVERSES } from "../lib/importer/catalog/franchiseUniverses.js";
-import { MANUFACTURER_TIERS } from "../lib/importer/catalog/manufacturerTiers.js";
+import { BRAND_DISPLAY_NAMES } from "../lib/importer/catalog/brandDisplayNames.js";
 import { CHARACTER_METAOBJECT_TYPE } from "../lib/importer/shopify/characterMetaobjectSetup.js";
 
 const SHOP = process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com";
@@ -101,7 +101,8 @@ async function main() {
     universeCollections,
   });
 
-  const canonicalVendors = new Set(MANUFACTURER_TIERS.map((m) => m.name));
+  // I6 (lote de 28/10/2026): o mapa canónico de vendor é o de marcas, não a taxonomia de tiers.
+  const canonicalVendors = new Set(Object.values(BRAND_DISPLAY_NAMES));
   const { red, yellow } = checkCharacterInvariants({ characters, products, universeCharacters, canonicalVendors });
 
   console.log(`produtos ACTIVE publicados: ${products.length} · characters: ${characters.size}`);

@@ -40,6 +40,26 @@ check("hífen dentro do nome fica (Witch-King)", () => {
   assert.equal(extractCandidateName("The Lord of the Rings Witch-King with Fellbeast", { franchisePatterns: LOTR, vendor: "Diamond Select" }), "Witch-King");
 });
 
+check("partícula dentro do nome fica (Mouth of Sauron, não 'Mouth')", () => {
+  assert.equal(extractCandidateName("POP figure The Lord of the Rings Mouth of Sauron", { franchisePatterns: LOTR, vendor: "Funko" }), "Mouth of Sauron");
+});
+
+check("partícula no fim não entra (Ring of Power, sem 'of' pendurado)", () => {
+  assert.equal(extractCandidateName("POP figure Lord of the Rings Gollum of", { franchisePatterns: LOTR, vendor: "Funko" }), "Gollum");
+});
+
+check("descritores novos da ronda 2 não viram nome (Premium, Tee, Pocket, Bitty, Plus, Town)", () => {
+  assert.equal(extractCandidateName("Funko Pop Premium Gollum", { franchisePatterns: LOTR, vendor: "Funko" }), "Gollum");
+  assert.equal(extractCandidateName("Tee Leaping Chainsaw Man", { franchisePatterns: [], vendor: "Funko" }), "Leaping Chainsaw Man");
+  assert.equal(extractCandidateName("Pocket POP Keychain Stitch", { franchisePatterns: [], vendor: "Funko" }), "Stitch");
+  assert.equal(extractCandidateName("Bitty POP figure Town Frodo", { franchisePatterns: LOTR, vendor: "Funko" }), "Frodo");
+  assert.equal(extractCandidateName("Plus The Lord of the Rings Gollum", { franchisePatterns: LOTR, vendor: "Funko" }), "Gollum");
+});
+
+check("UNO Card Game não dá candidato", () => {
+  assert.equal(extractCandidateName("UNO Lord of the Rings card game", { franchisePatterns: LOTR, vendor: "Mattel" }), null);
+});
+
 check("título vazio ou nulo não rebenta", () => {
   assert.equal(extractCandidateName("", {}), null);
   assert.equal(extractCandidateName(null, {}), null);
