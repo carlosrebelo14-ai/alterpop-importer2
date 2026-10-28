@@ -34,9 +34,9 @@ check("classes autorizadas passam", () => {
   assert.equal(r.permitidas.length, 9);
 });
 
-check("uma ação fora das classes aborta: create de nome fora da D3", () => {
-  const r = classificarAcoesAutorizadas([a("create", "batman"), a("update", "frodo")]);
-  assert.deepEqual(r.fora.map((f) => f.handle), ["batman"]);
+check("uma ação fora das classes aborta: create de handle fora do vocabulário", () => {
+  const r = classificarAcoesAutorizadas([a("create", "qa-fora-do-vocabulario"), a("update", "frodo")]);
+  assert.deepEqual(r.fora.map((f) => f.handle), ["qa-fora-do-vocabulario"]);
 });
 
 check("reativar um personagem fora da lista fica de fora", () => {

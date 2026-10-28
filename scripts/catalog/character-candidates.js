@@ -8,7 +8,7 @@
  * Saída com colunas separadas por tab (SKU pode ter espaço).
  *
  * Correr na Fly:  node scripts/catalog/character-candidates.js
- *                 node scripts/catalog/character-candidates.js --top 40
+ * Sem limite de linhas por universo (ronda 1, 28/10/2026).
  */
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
@@ -25,7 +25,6 @@ const valOf = (f, d) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : d;
 };
 const SHOP = valOf("--shop", process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com");
-const TOP = parseInt(valOf("--top", "25"), 10) || 25;
 const EXEMPLOS = 3;
 
 // Uma linha por candidato, colunas com tab: universo, nome, piscina, ACTIVE, estado, 3 títulos.
@@ -71,7 +70,7 @@ async function main() {
       if (activeSkus.has(r.sku)) e.active += 1;
       if (e.exemplos.length < EXEMPLOS) e.exemplos.push(titulo);
     }
-    const ordenados = [...porNome.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, TOP);
+    const ordenados = [...porNome.entries()].sort((a, b) => b[1].total - a[1].total);
     const comVocab = CHARACTER_VOCABULARY.some((e) => e.universo === u.name);
     console.log(`# ${u.name}\tpiscina ${deste.length}\t${comVocab ? "vocabulário existe" : "sem vocabulário"}`);
     for (const [nome, e] of ordenados) {
