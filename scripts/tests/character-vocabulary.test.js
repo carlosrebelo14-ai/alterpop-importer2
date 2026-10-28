@@ -77,7 +77,7 @@ check("Din Djarin fica sem o alias The Mandalorian (colisão com a Line)", () =>
 
 check("aliases copiados do censo do PR #71 (Ahsoka, Grogu, Frieza)", () => {
   assert.deepEqual(CHARACTER_ALIASES["Ahsoka Tano"], ["Ahsoka"]);
-  assert.deepEqual(CHARACTER_ALIASES["Grogu"], ["Baby Yoda", "The Child"]);
+  assert.deepEqual(CHARACTER_ALIASES["Grogu"], ["Baby Yoda", "The Child", "Yoda the Child"]); // ronda 2, 28/10/2026
   assert.deepEqual(CHARACTER_ALIASES["Frieza"], ["Freezer"]);
 });
 
