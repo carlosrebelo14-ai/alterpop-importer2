@@ -1,0 +1,49 @@
+# Candidatos a personagem, em rotina (decisão do arquiteto, 28/10/2026, ronda 2).
+#
+# Só leitura. Corre candidates-dry com --novos-min 2: só candidatos "novo" com pelo menos 2 produtos
+# na piscina. Environment production-read (sem required reviewers). Nunca escreve na loja.
+#
+# Cadência: diária, em cron. O GitHub não vê o fim de um lote de importação, que corre no Fly. Por isso
+# a rotina não é "depois de cada lote" mas diária; a janela mede-se pela data do artefacto.
+name: candidates-schedule
+
+on:
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidates-schedule
+  cancel-in-progress: false
+
+jobs:
+  candidates:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production-read
+    timeout-minutes: 60
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: candidates-dry (só novos com 2 ou mais produtos)
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/candidates"
+          flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && node scripts/catalog/character-candidates.js --novos-min 2'" 2>&1 | tee "$RUNNER_TEMP/candidates/saida.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidates-novos-${{ github.run_id }}
+          path: ${{ runner.temp }}/candidates/saida.txt
+          retention-days: 30
+          if-no-files-found: warn
