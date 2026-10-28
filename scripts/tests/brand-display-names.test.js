@@ -37,9 +37,16 @@ async function check(name, fn) {
 }
 
 // ── mapa ──
+// Lote I6 (28/10/2026): todos os vendors do verify-base entram no mapa, em grafia normal.
+for (const [feed, nome] of [["GENTLE GIANT", "Gentle Giant"], ["JADA TOYS", "Jada Toys"], ["3D LIGHT FX", "3D Light FX"], ["TAMASHII NATIONS", "Tamashii Nations"], ["MINIX", "Minix"]]) {
+  await check(`I6: ${feed} -> ${nome}`, () => {
+    assert.equal(resolveBrandDisplayName(feed).name, nome);
+    assert.equal(resolveBrandDisplayName(feed).mapped, true);
+  });
+}
 
-await check("mapa do briefing — 12 marcas + 2 do P4 (28/10/2026); FUNKO e HASBRO já estavam", () => {
-  assert.equal(Object.keys(BRAND_DISPLAY_NAMES).length, 14);
+await check("mapa do briefing — 12 marcas + 2 do P4 + 3 do lote I6 (28/10/2026)", () => {
+  assert.equal(Object.keys(BRAND_DISPLAY_NAMES).length, 17); // 14 + 3 do lote I6 (28/10/2026)
 });
 
 await check("SD TOYS → SD Toys (nunca Title Case automático, que daria \"Sd Toys\")", () => {
