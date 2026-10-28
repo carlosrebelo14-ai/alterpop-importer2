@@ -1,7 +1,7 @@
 # Candidatos a personagem, em rotina (decisão do arquiteto, 28/10/2026, ronda 2).
 #
 # Só leitura. Corre candidates-dry com --novos-min 2: só candidatos "novo" com pelo menos 2 produtos
-# na piscina. Environment production-read (sem required reviewers). Nunca escreve na loja.
+# na piscina. Dia sem novos não produz saída nem artefacto. Environment production-read (sem required reviewers). Nunca escreve na loja.
 #
 # Cadência: diária, em cron. O GitHub não vê o fim de um lote de importação, que corre no Fly. Por isso
 # a rotina não é "depois de cada lote" mas diária; a janela mede-se pela data do artefacto.
@@ -35,13 +35,21 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: candidates-dry (só novos com 2 ou mais produtos)
+        id: candidatos
         shell: bash
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/candidates"
           flyctl ssh console -a alterpop-importer-app -C "sh -lc 'cd /app && node scripts/catalog/character-candidates.js --novos-min 2'" 2>&1 | tee "$RUNNER_TEMP/candidates/saida.txt"
+          # Dia sem novos com 2 ou mais produtos não produz saída: sem linha de novo, não há artefacto.
+          if grep -q $'\tnovo\t' "$RUNNER_TEMP/candidates/saida.txt"; then
+            echo "novos=sim" >> "$GITHUB_OUTPUT"
+          else
+            echo "novos=nao" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/upload-artifact@v4
+        if: steps.candidatos.outputs.novos == 'sim'
         with:
           name: candidates-novos-${{ github.run_id }}
           path: ${{ runner.temp }}/candidates/saida.txt
