@@ -38,8 +38,8 @@ async function check(name, fn) {
 
 // ── mapa ──
 
-await check("mapa inicial do briefing — 12 marcas", () => {
-  assert.equal(Object.keys(BRAND_DISPLAY_NAMES).length, 12);
+await check("mapa do briefing — 12 marcas + 2 do P4 (28/10/2026); FUNKO e HASBRO já estavam", () => {
+  assert.equal(Object.keys(BRAND_DISPLAY_NAMES).length, 14);
 });
 
 await check("SD TOYS → SD Toys (nunca Title Case automático, que daria \"Sd Toys\")", () => {
@@ -52,7 +52,7 @@ await check("chave tolera espaços e maiúsculas do feed", () => {
 });
 
 await check("vendor desconhecido → fora do mapa, fica o valor do feed", () => {
-  assert.deepEqual(resolveBrandDisplayName("TAMASHII NATIONS"), { key: "TAMASHII NATIONS", name: "TAMASHII NATIONS", mapped: false });
+  assert.deepEqual(resolveBrandDisplayName("MARCA SEM MAPA"), { key: "MARCA SEM MAPA", name: "MARCA SEM MAPA", mapped: false });
 });
 
 await check("sem vendor → sem nome", () => {
@@ -63,9 +63,9 @@ await check("sem vendor → sem nome", () => {
 // ── VENDOR_UNMAPPED ──
 
 await check("VENDOR_UNMAPPED — vendor desconhecido dispara, com o valor do feed", () => {
-  const w = checkVendorUnmapped({ vendor: "TAMASHII NATIONS" });
+  const w = checkVendorUnmapped({ vendor: "MARCA SEM MAPA" });
   assert.equal(w?.code, "VENDOR_UNMAPPED");
-  assert.equal(w.evidence.vendor, "TAMASHII NATIONS");
+  assert.equal(w.evidence.vendor, "MARCA SEM MAPA");
 });
 
 await check("VENDOR_UNMAPPED — vendor do mapa e produto sem vendor não disparam", () => {
@@ -75,7 +75,7 @@ await check("VENDOR_UNMAPPED — vendor do mapa e produto sem vendor não dispar
 
 await check("VENDOR_UNMAPPED — está em PRE_PUBLISH_CHECKS e chega pelo agregador", () => {
   assert.equal(PRE_PUBLISH_CHECKS.includes(checkVendorUnmapped), true);
-  const codes = runPrePublishChecks({ sku: "X", title: "Goku", vendor: "TAMASHII NATIONS", resolvedFranchise: "Dragon Ball", resolvedFormat: "Action Figure", descriptionHtml: "" }).map((w) => w.code);
+  const codes = runPrePublishChecks({ sku: "X", title: "Goku", vendor: "MARCA SEM MAPA", resolvedFranchise: "Dragon Ball", resolvedFormat: "Action Figure", descriptionHtml: "" }).map((w) => w.code);
   assert.deepEqual(codes, ["VENDOR_UNMAPPED"]);
 });
 
@@ -97,8 +97,8 @@ await check("publisher — a chave do feed continua disponível (sourceVendor) e
 });
 
 await check("publisher — vendor fora do mapa publica com o valor do feed", async () => {
-  const m = await mapCatalogProductToShopifyPayload({ ...ROW, vendor: "TAMASHII NATIONS" });
-  assert.equal(m.vendor, "TAMASHII NATIONS");
+  const m = await mapCatalogProductToShopifyPayload({ ...ROW, vendor: "MARCA SEM MAPA" });
+  assert.equal(m.vendor, "MARCA SEM MAPA");
 });
 
 await check("descrição — texto e link filter.p.vendor com o nome do mapa (bate com o campo vendor)", () => {
@@ -128,7 +128,7 @@ await check("backfill — idempotente: já com o nome do mapa não entra", () =>
 });
 
 await check("backfill — fora do mapa não toca (VENDOR_UNMAPPED)", () => {
-  const plan = planVendorBackfill([P({ liveVendor: "TAMASHII NATIONS", feedVendor: "TAMASHII NATIONS" })]);
+  const plan = planVendorBackfill([P({ liveVendor: "MARCA SEM MAPA", feedVendor: "MARCA SEM MAPA" })]);
   assert.equal(plan.updates.length, 0);
   assert.equal(plan.unmapped.length, 1);
 });
