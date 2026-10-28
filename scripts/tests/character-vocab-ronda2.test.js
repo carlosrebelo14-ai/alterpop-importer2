@@ -71,5 +71,9 @@ check("os novos personagens de ronda 2 resolvem no universo certo", () => {
   assert.deepEqual(resolve("One Piece Monkey D. Garp figure", "One Piece"), ["monkey-d-garp"]);
 });
 
+check("Bo-Katan é Bo-Katan Kryze, com alias Bo-Katan (decisão de 28/10/2026)", () => {
+  assert.deepEqual(resolve("Star Wars Bo-Katan figure 15cm", "Star Wars"), ["bo-katan-kryze"]);
+});
+
 console.log(failures ? `\nFALHOU — ${failures} falha(s)` : "\nOK — 0 falha(s)");
 process.exitCode = failures ? 1 : 0;

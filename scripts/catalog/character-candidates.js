@@ -8,6 +8,7 @@
  * Saída com colunas separadas por tab (SKU pode ter espaço).
  *
  * Correr na Fly:  node scripts/catalog/character-candidates.js
+ *                 node scripts/catalog/character-candidates.js --novos-min 2
  * Sem limite de linhas por universo (ronda 1, 28/10/2026).
  */
 import { prisma } from "../../lib/prisma/prismaSafe.server.js";
@@ -26,6 +27,8 @@ const valOf = (f, d) => {
 };
 const SHOP = valOf("--shop", process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com");
 const EXEMPLOS = 3;
+// --novos-min N: só mostra candidatos "novo" com pelo menos N produtos na piscina (28/10/2026, ronda 2).
+const NOVOS_MIN = Number(valOf("--novos-min", "0"));
 
 // Uma linha por candidato, colunas com tab: universo, nome, piscina, ACTIVE, estado, 3 títulos.
 const norm = (s) => String(s ?? "").normalize("NFC").toLowerCase().trim();
@@ -75,6 +78,7 @@ async function main() {
     console.log(`# ${u.name}\tpiscina ${deste.length}\t${comVocab ? "vocabulário existe" : "sem vocabulário"}`);
     for (const [nome, e] of ordenados) {
       const estado = jaNoVocabulario(u.name, nome) ? "vocabulário" : "novo";
+      if (NOVOS_MIN && estado === "novo" && e.total < NOVOS_MIN) continue;
       const exemplos = [0, 1, 2].map((i) => e.exemplos[i] ?? "");
       console.log([u.name, nome, e.total, e.active, estado, ...exemplos].join("\t"));
     }
