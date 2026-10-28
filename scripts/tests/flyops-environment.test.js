@@ -45,14 +45,14 @@ check("a linha de environment usa production-read para leitura e production como
 });
 
 check("mutação: se cycle-apply-once for para production-read, a verificação falha", () => {
-  const mutado = src.replace(/\["b1-dry","b2-dry","census-c","verify-base","candidates-dry"\]/, '["b1-dry","b2-dry","census-c","verify-base","candidates-dry","cycle-apply-once"]');
+  const mutado = src.replace(/\["b1-dry","b2-dry","census-c","verify-base","candidates-dry","tags-dry"\]/, '["b1-dry","b2-dry","census-c","verify-base","candidates-dry","tags-dry","cycle-apply-once"]');
   assert.notEqual(mutado, src, "mutação não aplicada");
   const r = classificar(mutado);
   assert.ok(r.escrita.some((c) => r.leitura.includes(c)), "a verificação deveria apanhar a escrita em leitura");
 });
 
-check("leitura é exatamente b1-dry, b2-dry, census-c, verify-base, candidates-dry", () => {
-  assert.deepEqual([...leitura].sort(), ["b1-dry", "b2-dry", "candidates-dry", "census-c", "verify-base"].sort());
+check("leitura é exatamente b1-dry, b2-dry, census-c, verify-base, candidates-dry, tags-dry", () => {
+  assert.deepEqual([...leitura].sort(), ["b1-dry", "b2-dry", "candidates-dry", "census-c", "tags-dry", "verify-base"].sort());
 });
 
 check("nenhum comando com escrita está mapeado para production-read", () => {
