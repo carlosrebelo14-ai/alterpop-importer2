@@ -38,8 +38,8 @@ function check(name, fn) {
 
 // ── builder ──
 
-check("V18 é amarelo (warn) até ao tags-cleanup execute, decisão de 27/10/2026", () => {
-  assert.equal(V18_NIVEL, "warn");
+check("V18 é vermelho (fail) desde 28/10/2026, com o escritor de new-arrival fora", () => {
+  assert.equal(V18_NIVEL, "fail"); // 28/10/2026: volta a vermelho com a remoção do escritor de new-arrival
 });
 
 check("lista permitida = [\"alterpop\"], a mesma marca que o shopifyReset usa", () => {
