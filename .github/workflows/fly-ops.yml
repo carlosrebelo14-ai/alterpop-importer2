@@ -8,8 +8,10 @@
 #   verify-base   verify-character-invariants.js --baseline (read-only)
 #   b1-execute    dry-run e depois --execute de B1, no mesmo job. Escreve só em ProductCharacter.
 #   b2-execute    dry-run e depois --execute de B2, no mesmo job, com filtro LOTR. Escreve só em ProductCharacter.
+#   cycle-apply-once  primeiro ciclo de personagens com a trava levantada uma vez (27/10/2026). Imprime o plano,
+#                     aborta sem escrever se houver ação fora das classes autorizadas. Escreve na loja.
 #
-# Os dois --execute foram aprovados pelo arquiteto (27/10/2026). Nenhum outro --execute existe aqui.
+# Os dois --execute foram aprovados pelo arquiteto (27/10/2026). cycle-apply-once também.
 # Nenhum dos dois escreve na loja. A aprovação do environment production é o gate.
 #
 # Saída completa no log do job e como artefacto (fly-ops-<comando>, 30 dias).
@@ -31,6 +33,7 @@ on:
           - verify-base
           - b1-execute
           - b2-execute
+          - cycle-apply-once
 
 permissions:
   contents: read
@@ -66,6 +69,7 @@ jobs:
             verify-base) CMD='node scripts/verify-character-invariants.js --baseline' ;;
             b1-execute) CMD='node scripts/catalog/character-links-backfill.js --mode store && node scripts/catalog/character-links-backfill.js --mode store --execute' ;;
             b2-execute) CMD='node scripts/catalog/character-links-backfill.js --mode resolver && node scripts/catalog/character-links-backfill.js --mode resolver --execute' ;;
+            cycle-apply-once) CMD='node scripts/catalog/character-cycle-apply-once.js' ;;
             *) echo "comando desconhecido: $COMANDO" >&2; exit 64 ;;
           esac
           mkdir -p "$RUNNER_TEMP/fly-ops"

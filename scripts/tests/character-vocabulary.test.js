@@ -45,6 +45,12 @@ check("resolver: Frodo Baggins & Gollum dá os dois (trechos não se sobrepõem)
   assert.deepEqual(resolveCharacters({ originalTitle: "LOTR Frodo Baggins & Gollum set", resolvedFranchise: "The Lord of the Rings" }), ["frodo", "gollum"]);
 });
 
+check("Witch-King: títulos com e sem hífen ligam a witch-king (os dois produtos ACTIVE de 27/10/2026)", () => {
+  for (const t of ["The Lord of the Rings Witch King", "The Lord of the Rings Witch King with Fellbeast", "The Lord of the Rings Witch-King", "The Lord of the Rings Witch-King with Fellbeast"]) {
+    assert.deepEqual(resolveCharacters({ originalTitle: t, resolvedFranchise: "The Lord of the Rings" }), ["witch-king"], t);
+  }
+});
+
 check("LOTR: aliases D3 resolvem para o handle do personagem", () => {
   assert.deepEqual(resolveCharacters({ originalTitle: "LOTR Samwise Gamgee figure", resolvedFranchise: "The Lord of the Rings" }), ["sam"]);
   assert.deepEqual(resolveCharacters({ originalTitle: "LOTR Eowyn figure", resolvedFranchise: "The Lord of the Rings" }), ["eowyn"]);
