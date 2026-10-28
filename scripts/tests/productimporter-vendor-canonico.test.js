@@ -37,5 +37,19 @@ check("mapa canónico: vendor do feed em maiúsculas vira o nome canónico (Diam
   assert.equal(resolveBrandDisplayName("DIAMOND SELECT").name, "Diamond Select");
 });
 
+check("mapa P4 (28/10/2026): as quatro entradas do briefing resolvem para o nome canónico", () => {
+  const esperado = {
+    "TAMASHII NATIONS": "Tamashii Nations",
+    "THE LOYAL SUBJECTS": "The Loyal Subjects",
+    FUNKO: "Funko",
+    HASBRO: "Hasbro",
+  };
+  for (const [feed, canonico] of Object.entries(esperado)) {
+    const r = resolveBrandDisplayName(feed);
+    assert.equal(r.name, canonico, feed);
+    assert.equal(r.mapped, true, feed);
+  }
+});
+
 console.log(failures ? `\nFALHOU — ${failures} falha(s)` : "\nOK — 0 falha(s)");
 process.exitCode = failures ? 1 : 0;
