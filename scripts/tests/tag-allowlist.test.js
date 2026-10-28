@@ -118,14 +118,33 @@ check("portão — verde só com tags permitidas", () => {
   assert.equal(findTagsOutsideAllowlist([{ handle: "a", tags: ["alterpop"] }, { handle: "b", tags: [] }]).ok, true);
 });
 
-// ── plano do tags-cleanup ──
+// ── plano do tags-cleanup (lista explícita, 28/10/2026) ──
 
-const P = (over) => ({ productId: "gid://shopify/Product/1", handle: "h", sku: "S", tags: ["alterpop", "Xoff", "Offers"], syncLocked: false, ...over });
+const P = (over) => ({ productId: "gid://shopify/Product/1", handle: "h", sku: "S", tags: ["alterpop", "new-arrival", "Funko"], syncLocked: false, ...over });
 
-check("limpeza — remove só as tags fora da lista, nunca \"alterpop\"", () => {
-  const plan = planTagsCleanup([P()]);
-  assert.deepEqual(plan.removals[0].tags, ["Xoff", "Offers"]);
+check("limpeza — remove só a lista explícita, nunca \"alterpop\" nem marcas", () => {
+  const plan = planTagsCleanup([P({ tags: ["alterpop", "Tamashii Nations", "new-arrival", "Funko"] })]);
+  assert.deepEqual(plan.removals[0].tags, ["new-arrival", "Funko"]);
   assert.equal(plan.tagsToRemove, 2);
+  assert.equal(plan.blocked.length, 0);
+});
+
+check("limpeza — tag de marca de admin nunca entra no plano", () => {
+  const plan = planTagsCleanup([P({ tags: ["alterpop", "Diamond Select", "Gentle Giant", "Jada Toys", "Banpresto"] })]);
+  assert.equal(plan.removals.length, 0);
+  assert.equal(plan.clean, 1);
+});
+
+check("limpeza — qualquer tag fora das duas listas bloqueia o produto", () => {
+  const plan = planTagsCleanup([P({ tags: ["alterpop", "Onepiece", "new-arrival"] })]);
+  assert.equal(plan.removals.length, 0);
+  assert.equal(plan.blocked.length, 1);
+  assert.deepEqual(plan.blocked[0].tags, ["Onepiece"]);
+});
+
+check("limpeza — a lista de remoção não distingue maiúsculas", () => {
+  const plan = planTagsCleanup([P({ tags: ["alterpop", "FUNKO", "Action Figures"] })]);
+  assert.deepEqual(plan.removals[0].tags, ["FUNKO", "Action Figures"]);
 });
 
 check("limpeza — sync_locked fica marcado e de fora sem OK", () => {
@@ -140,10 +159,11 @@ check("limpeza — sync_locked entra com includeLocked (OK explícito)", () => {
   assert.equal(plan.lockedSkipped.length, 0);
 });
 
-check("limpeza — produto limpo não entra; processed = total", () => {
-  const plan = planTagsCleanup([P(), P({ productId: "2", tags: ["alterpop"] }), P({ productId: "3", syncLocked: true })]);
+check("limpeza — produto limpo não entra; processed = total (inclui bloqueados)", () => {
+  const plan = planTagsCleanup([P(), P({ productId: "2", tags: ["alterpop"] }), P({ productId: "3", syncLocked: true }), P({ productId: "4", tags: ["X1"] })]);
   assert.equal(plan.clean, 1);
-  assert.equal(plan.processed, 3);
+  assert.equal(plan.blocked.length, 1);
+  assert.equal(plan.processed, 4);
 });
 
 // ── A2: custom tags fora do painel, recusados no endpoint ──

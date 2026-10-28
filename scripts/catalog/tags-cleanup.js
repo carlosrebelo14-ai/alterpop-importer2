@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * N4, opção A (decisão do Carlos, 29/09/2026) — remove as tags fora da lista permitida
- * (ALLOWED_PRODUCT_TAGS = ["alterpop"], tagAllowlist.js) nos produtos da loja.
+ * N4, opção A (decisão do Carlos, 29/09/2026). Remove só a lista explícita TAGS_PARA_REMOVER
+ * (tagAllowlist.js): new-arrival e os productType como tag. Tags de marca ficam; qualquer outra
+ * tag fora da lista permitida bloqueia a limpeza (28/10/2026, decisão do arquiteto).
  *
  * Dry-run por omissão. Escreve só com --execute, e só com tagsRemove (exceção explícita
  * à regra de escrita, decidida para a opção A). Nunca productUpdate, nunca tagsAdd.
@@ -85,6 +86,11 @@ async function main() {
   console.log(`tags distintas fora da lista: ${summary.distinctTags.length}`);
   for (const t of summary.distinctTags) console.log(`  ${String(t.count).padStart(4)}  ${t.tag}`);
 
+  if (plan.blocked.length) {
+    console.log(`\nBLOQUEADOS — tags fora da lista de remoção (a limpeza não corre enquanto houver):`);
+    for (const b of plan.blocked) console.log(`  ${b.sku}  ${b.handle}: ${b.tags.join(", ")}`);
+  }
+
   if (plan.lockedSkipped.length) {
     console.log(`\nsync_locked — NÃO tocados sem --include-locked:`);
     for (const l of plan.lockedSkipped) console.log(`  ${l.sku}  ${l.handle}: ${l.tags.join(", ")}`);
@@ -108,6 +114,8 @@ async function main() {
     });
     return;
   }
+
+  if (plan.blocked.length) fatal(`${plan.blocked.length} produto(s) com tags fora da lista de remoção — parar e reportar ao arquiteto.`);
 
   let done = 0;
   const errors = [];
