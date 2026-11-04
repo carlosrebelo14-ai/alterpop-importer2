@@ -20,6 +20,10 @@ import {
   assertAllHaveFranchise,
   BRIEFING_ALIASES,
   RISK_NAMES,
+  detectTextile,
+  removeFirstPhrase,
+  buildLogTables,
+  FRANCHISE_PHRASES,
   ORIGIN,
   buildApprovalSummary,
   applyApproval,
@@ -137,6 +141,58 @@ check("Spy × Family: universo aceita x e ×", () => {
   const r = row({ title: "Figure Anya", resolvedFranchise: "Spy x Family" });
   const c = classifyRow(r, match(r.title), SCOPES, pending(r));
   assert.equal(c.reason, null);
+});
+
+console.log("epónimos dentro da frase da franquia (bloqueador 1)");
+check("FRANCHISE_PHRASES: Harry e Naruto", () => {
+  assert.deepEqual(Object.keys(FRANCHISE_PHRASES).sort(), ["Harry", "Naruto"]);
+});
+check("os cinco casos do arquiteto", () => {
+  const casos = [
+    ["Harry Potter Harry with Hedwig", "Harry Potter", ["Harry", "Hedwig"]],
+    ["Harry Potter Harry Potter", "Harry Potter", ["Harry"]],
+    ["Harry Potter Hogwarts Express", "Harry Potter", []],
+    ["Naruto Shippuden Naruto Uzumaki", "Naruto", ["Naruto"]],
+    ["Naruto Shippuden Konoha mug", "Naruto", []],
+  ];
+  for (const [title, universe, want] of casos) {
+    const r = row({ title, resolvedFranchise: universe });
+    const hits = match(title);
+    assert.deepEqual([...hits.values()].map((e) => e.name).sort(), want.slice().sort(), title);
+    const c = classifyRow(r, hits, SCOPES, pending(r));
+    assert.equal(c.reason, want.length ? null : "sem_correspondencia", title);
+  }
+});
+check("os outros nomes contam no título completo", () => {
+  assert.deepEqual(names({ title: "Harry Potter Hermione Granger" }), ["Hermione"]);
+  assert.deepEqual(names({ title: "Naruto Shippuden Kakashi" }), ["Kakashi"]);
+  assert.deepEqual(names({ title: "Naruto Shippuuden Naruto Sage Mode" }), ["Naruto"]);
+  assert.deepEqual(names({ title: "Naruto Uzumaki figure" }), ["Naruto"], "sem Shippuden, o universo é o personagem");
+});
+check("nome igual ao universo fica como está", () => {
+  assert.ok(names({ title: "DC Comics Batman" }).includes("Batman"));
+  assert.ok(names({ title: "Disney Stitch plush" }).includes("Stitch"));
+  assert.ok(names({ title: "Marvel Spider-Man figure" }).includes("Spider-Man"));
+});
+check("removeFirstPhrase tira só a primeira ocorrência", () => {
+  assert.equal(removeFirstPhrase(" harry potter harry potter ", ["harry potter"]).trim().replace(/ +/g, " "), "harry potter");
+  assert.equal(removeFirstPhrase(" x ", ["harry potter"]), " x ");
+});
+
+console.log("têxtil (bloqueador 2)");
+check("palavra inteira e tamanho no fim", () => {
+  for (const t of ["POP & Tee Dragon Ball Z Perfect Cell L", "Marvel Hoodie", "Star Wars T-Shirt", "Naruto Socks pack", "Pokemon Cap", "Beanie Stitch", "Harry Potter Sweatshirt", "One Piece Luffy XXL", "Batman Logo S"]) {
+    assert.equal(detectTextile({ title: t }).textile, true, t);
+  }
+  for (const t of ["Captain America figure", "Teenage Mutant Leonardo", "Stitch plush 25cm", "Batman Mug", "Cell figure 16cm", "Steeve"]) {
+    assert.equal(detectTextile({ title: t }).textile, false, t);
+  }
+});
+check("têxtil sai antes do âmbito; Loungefly não é afetada", () => {
+  const tee = row({ title: "POP & Tee Dragon Ball Z Cell L", resolvedFranchise: "Dragon Ball", vendor: "FUNKO" });
+  assert.equal(classifyRow(tee, match(tee.title), SCOPES, pending(tee)).reason, "textil");
+  const lf = row({ title: "Loungefly Disney Stitch Cap", originalTitle: "Loungefly Disney Stitch Cap", resolvedFranchise: "Stitch", vendor: "LOUNGEFLY" });
+  assert.equal(classifyRow(lf, match(lf.title), SCOPES, pending(lf)).reason, null);
 });
 
 console.log("universo");
@@ -337,6 +393,34 @@ check("revertApproval: só APPROVED desta origem volta ao estado anterior", () =
   assert.deepEqual(a.metadata, { origem: "regra", vendor: "FUNKO" });
   assert.equal(fila.items[2].status, "APPROVED", "APPROVED de outra origem fica");
   assert.deepEqual(revertApproval(fila, { origin: ORIGIN }).reverted, [], "segunda corrida não faz nada");
+});
+
+console.log("log (bloqueador 3)");
+check("tabelas por personagem, órfãos e detalhe LOTR/Ghibli, sem custos", () => {
+  const rows = [
+    row({ title: "Figure Gandalf", resolvedFranchise: "The Lord of the Rings", vendor: "CERDA", distributorPrice: 12.34 }),
+    row({ title: "Figure Gollum", resolvedFranchise: "The Lord of the Rings", distributorPrice: 3 }),
+    row({ title: "Figure Frodo", resolvedFranchise: null }),
+    row({ title: "Figure Totoro", resolvedFranchise: "Studio Ghibli", vendor: "FUNKO" }),
+    row({ title: "Figure Hulk", resolvedFranchise: null, distributorPrice: 12.34 }),
+    row({ title: "POP & Tee Goku M", resolvedFranchise: "Dragon Ball", distributorPrice: 12.34 }),
+  ];
+  const col = createApprovalCollector({ scopes: SCOPES, queueBySku: pending(...rows) });
+  for (const x of rows) col.addRow(x);
+  const res = col.finalize();
+  const lines = buildLogTables(res);
+  const txt = lines.join("\n");
+  assert.ok(!/12[.,]34|9[.,]50|€/.test(txt), "sem custos no log");
+  assert.ok(txt.includes("têxtil excluído: 1"));
+  assert.ok(txt.includes("POP & Tee Goku M (tee)"));
+  assert.ok(lines.some((l) => /^ {2}Avengers · Hulk: +1 · +1$/.test(l)), "órfão por personagem");
+  assert.ok(lines.some((l) => l === "  Gandalf: 1 · 0 · 1 · 0 · 0 · 0 · 0 · 0"), "Gandalf cai no âmbito");
+  assert.ok(lines.some((l) => l === "  Gollum: 1 · 0 · 0 · 1 · 0 · 0 · 0 · 0"), "Gollum cai no preço");
+  assert.ok(lines.some((l) => l === "  Frodo: 1 · 0 · 0 · 0 · 0 · 0 · 1 · 0"), "Frodo sem universo");
+  assert.ok(lines.some((l) => l === "  Totoro: 1 · 1 · 0 · 0 · 0 · 0 · 0 · 0"));
+  assert.ok(lines.some((l) => l.startsWith("por personagem — P1")) && lines.some((l) => l.startsWith("por personagem — P2")));
+  assert.equal(res.textileSamples.length, 1);
+  assert.ok(buildApprovalSummary(res).includes("## Têxtil"));
 });
 
 console.log(failures ? `\nFALHOU — ${failures} falha(s)` : "\nOK — 0 falha(s)");

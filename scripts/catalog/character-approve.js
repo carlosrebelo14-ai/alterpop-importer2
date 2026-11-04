@@ -43,6 +43,7 @@ import {
   buildOrphanCsv,
   assertAllHaveFranchise,
   ORIGIN,
+  buildLogTables,
   buildApprovalSummary,
   applyApproval,
   formatDuration,
@@ -163,6 +164,8 @@ function printConsole(result) {
   const zeros = result.perName.filter((n) => n.candidates === 0);
   console.log(`\npersonagens com zero candidatos (${zeros.length}):`);
   for (const n of zeros) console.log(`  ${n.scope} · ${n.name} (P${n.priority})`);
+  console.log("");
+  for (const l of buildLogTables(result)) console.log(l);
   console.log(`\naliases do B7 fora do briefing (no universo · candidatos · só por este alias):`);
   for (const b of result.b7Aliases) console.log(`  ${b.scope} · ${b.name} · "${b.alias}": ${b.inUniverse} · ${b.candidates} · ${b.onlyVia}`);
   if (!result.b7Aliases.length) console.log(`  (nenhuma correspondência)`);

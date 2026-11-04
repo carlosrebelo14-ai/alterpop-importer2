@@ -54,3 +54,11 @@ node scripts/catalog/character-approve-revert.js --execute --confirm-count N
 3. **Loungefly.** Aceite. O `CatalogProduct` não tem coluna de marca.
 4. **Órfãos.** Nada grava `resolvedFranchise` pela via do personagem. O B7 só aplica a passagem A (`characterResolver.server.js`), e o `franchiseResolver` não tem camada de personagem. Os órfãos dos 9 nomes saem do execute e ficam no CSV de órfãos, com a franquia do personagem e se passariam os outros filtros. O execute recusa qualquer candidato sem `resolvedFranchise`.
 5. **Aliases do B7.** Aceite. O dry-run lista cada alias do B7 que não está na lista nem no briefing, com correspondências no universo, candidatos e candidatos que só entram por esse alias.
+
+## Revisão do approve-dry (04/11, 19:04)
+
+O N = 2584 foi recusado. Correções antes do novo dry-run:
+
+1. **Epónimos dentro da frase da franquia.** Para Harry ("Harry Potter") e Naruto ("Naruto Shippuden", "Naruto Shippuuden"), retira-se uma vez a primeira ocorrência da frase e procura-se o nome no resto. Os outros nomes contam no título completo. Batman, Superman, Spider-Man, Stitch e Naruto sem Shippuden ficam como estão: o universo é o personagem. Constante `FRANCHISE_PHRASES`.
+2. **Têxtil.** Sai por palavra inteira no título (Tee, T-Shirt, Tshirt, Hoodie, Sweatshirt, Socks, Cap, Beanie) ou por tamanho no fim (XS, S, M, L, XL, XXL, XXXL). "POP & Tee" sai por "Tee". A Loungefly não é afetada. O dry-run conta os excluídos e mostra 10 títulos. "Tshirt" é acrescento à lista do arquiteto, como grafia do feed.
+3. **Tabelas no log.** Contagem por personagem com P1 e P2 separados, órfãos por personagem e, para The Lord of the Rings e Studio Ghibli, o motivo por personagem (âmbito, preço, têxtil, universo errado, sem universo). Sem custos.
