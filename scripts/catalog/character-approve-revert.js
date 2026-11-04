@@ -16,7 +16,7 @@
  */
 import { loadCurationQueue, mutateCurationQueue } from "../../lib/curation/curationQueue.server.js";
 import { recusarSeAtividadeApp } from "../../lib/curation/atividadeApp.js";
-import { revertApproval } from "../../lib/importer/catalog/characterApproval.js";
+import { revertApproval, ORIGIN as DEFAULT_ORIGIN } from "../../lib/importer/catalog/characterApproval.js";
 
 const args = process.argv.slice(2);
 const KNOWN_FLAGS = new Set(["--origin", "--execute", "--confirm-count"]);
@@ -25,7 +25,7 @@ const valOf = (f, d = null) => {
   const i = args.indexOf(f);
   return i >= 0 && args[i + 1] && !args[i + 1].startsWith("--") ? args[i + 1] : d;
 };
-const ORIGIN = valOf("--origin", "character-import-2026-11-04");
+const ORIGIN = valOf("--origin", DEFAULT_ORIGIN);
 const EXECUTE = args.includes("--execute");
 
 function die(msg) {

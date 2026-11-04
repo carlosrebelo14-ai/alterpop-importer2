@@ -14,12 +14,14 @@
  *   --execute --confirm-count N      Só com OK do arquiteto. Recalcula a seleção, exige N igual
  *                                    ao total de agora, e grava sob o lock da fila:
  *                                    status APPROVED, metadata.approvedAt e
- *                                    metadata.importOrigin = <id da lista>. Revalida cada SKU
- *                                    (PENDING, não apagado no admin). Idempotente.
+ *                                    metadata.importOrigin = character-import-2026-11-04. Revalida cada SKU
+ *                                    (PENDING; apagado no admin entra). Recusa candidato sem
+ *                                    resolvedFranchise. Órfãos ficam fora. Idempotente.
  *   Reversão: scripts/catalog/character-approve-revert.js (mesma origem).
  *
  * FLAGS
- *   --input <ficheiro>   lista (omissão: character-approve-2026-11-04.json)
+ *   --input <ficheiro>   lista (omissão: character-import-2026-10-09.json — a lista de hoje;
+ *                        aliases do briefing, nomes de risco e origem vêm de characterApproval.js)
  *   --out <csv>          caminho do CSV (omissão: reports/character-approve/)
  *   --shop <loja>
  *
@@ -38,6 +40,9 @@ import {
   buildApprovalScopes,
   createApprovalCollector,
   buildApprovalCsv,
+  buildOrphanCsv,
+  assertAllHaveFranchise,
+  ORIGIN,
   buildApprovalSummary,
   applyApproval,
   formatDuration,
@@ -54,7 +59,7 @@ const valOf = (f, d = null) => {
   return i >= 0 && args[i + 1] && !args[i + 1].startsWith("--") ? args[i + 1] : d;
 };
 const SHOP = valOf("--shop", process.env.SHOPIFY_SHOP_URL || "jyr17t-wr.myshopify.com");
-const INPUT = valOf("--input", path.join(HERE, "character-approve-2026-11-04.json"));
+const INPUT = valOf("--input", path.join(HERE, "character-import-2026-10-09.json"));
 const EXECUTE = args.includes("--execute");
 const PAGE = 500;
 
@@ -97,7 +102,7 @@ function loadData() {
   } catch (err) {
     die(`Não consegui ler a lista (${INPUT}): ${err?.message || err}`);
   }
-  if (!Array.isArray(data?.universes) || !data.id) die(`${INPUT} sem "id" ou "universes".`);
+  if (!Array.isArray(data?.universes)) die(`${INPUT} sem "universes".`);
   return data;
 }
 
@@ -144,7 +149,9 @@ async function select(scopes) {
 function printConsole(result) {
   const t = result.totals;
   console.log(`\nlinhas de catálogo lidas: ${result.rowsSeen}`);
-  console.log(`candidatos (com filtro de âmbito): ${t.total} · P1 ${t.p1} · P2 ${t.p2} · órfãos (B) ${t.orfaos}`);
+  console.log(`candidatos (com filtro de âmbito): ${t.total} · P1 ${t.p1} · P2 ${t.p2}`);
+  console.log(`PENDING apagados no admin incluídos: ${t.apagados}`);
+  console.log(`órfãos da passagem B, fora do execute: ${t.orfaos} (passariam os outros filtros: ${t.orfaosElegiveis})`);
   console.log(`sem filtro de âmbito: ${t.semFiltro} · só filtro base: ${t.soBase} · base + Loungefly: ${t.total}`);
   console.log(`Loungefly: ${t.loungefly} (via base FUNKO ${t.loungeflyBase}; só pela exceção ${t.loungeflyExcecao})`);
   console.log(`sem stock: ${t.semStock}`);
@@ -156,6 +163,9 @@ function printConsole(result) {
   const zeros = result.perName.filter((n) => n.candidates === 0);
   console.log(`\npersonagens com zero candidatos (${zeros.length}):`);
   for (const n of zeros) console.log(`  ${n.scope} · ${n.name} (P${n.priority})`);
+  console.log(`\naliases do B7 fora do briefing (no universo · candidatos · só por este alias):`);
+  for (const b of result.b7Aliases) console.log(`  ${b.scope} · ${b.name} · "${b.alias}": ${b.inUniverse} · ${b.candidates} · ${b.onlyVia}`);
+  if (!result.b7Aliases.length) console.log(`  (nenhuma correspondência)`);
   console.log(`\ntop fabricantes excluídos pelo filtro de âmbito:`);
   for (const v of result.topExcludedVendors) console.log(`  ${String(v.count).padStart(6)}  ${v.vendor}`);
   console.log(`\nnomes de risco (candidatos · no universo · fora do universo):`);
@@ -166,29 +176,37 @@ function printConsole(result) {
 }
 
 async function runDryRun(data, scopes) {
-  const out = valOf("--out") || reportPath("character-approve", `candidates-${data.id}.csv`);
+  const out = valOf("--out") || reportPath("character-approve", `candidates-${ORIGIN}.csv`);
   console.log(`\n=== character-approve · DRY-RUN (${SHOP}) — nada é escrito na fila nem na loja ===`);
-  console.log(`lista: ${path.basename(INPUT)} (${scopes.length} âmbitos, ${scopes.reduce((n, s) => n + s.names.length, 0)} nomes) · origem ${data.id}`);
+  console.log(`lista: ${path.basename(INPUT)} (${scopes.length} âmbitos, ${scopes.reduce((n, s) => n + s.names.length, 0)} nomes) · origem ${ORIGIN}`);
   await assertNoIndexingRunning("o dry-run leria uma fila e um catálogo a meio de mudar");
   const result = await select(scopes);
 
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, buildApprovalCsv(result, scopes), "utf8");
+  const orphansPath = out.replace(/\.csv$/i, "") + "-orfaos.csv";
+  fs.writeFileSync(orphansPath, buildOrphanCsv(result, scopes), "utf8");
   const summaryPath = out.replace(/\.csv$/i, "") + ".summary.md";
-  fs.writeFileSync(summaryPath, buildApprovalSummary(result, { meta: { lista: path.basename(INPUT), origem: data.id, loja: SHOP } }), "utf8");
+  fs.writeFileSync(summaryPath, buildApprovalSummary(result, { meta: { lista: path.basename(INPUT), origem: ORIGIN, loja: SHOP } }), "utf8");
 
   printConsole(result);
   console.log(`\nCSV:    ${out}`);
+  console.log(`Órfãos: ${orphansPath}`);
   console.log(`Resumo: ${summaryPath}`);
   console.log(`Próximo (só com OK do arquiteto): node scripts/catalog/character-approve.js --execute --confirm-count ${result.totals.total}\n`);
 }
 
 async function runExecute(data, scopes) {
   const confirm = Number(valOf("--confirm-count"));
-  console.log(`\n=== character-approve · EXECUTE (${SHOP}) — origem ${data.id} ===`);
+  console.log(`\n=== character-approve · EXECUTE (${SHOP}) — origem ${ORIGIN} ===`);
   await assertNoIndexingRunning("o worker trabalha sobre uma cópia da fila e desfazia a aprovação");
   const result = await select(scopes);
   printConsole(result);
+  try {
+    assertAllHaveFranchise(result.candidates);
+  } catch (err) {
+    die(`PARADO: ${err.message}`);
+  }
   const skus = result.candidates.map((c) => c.sku);
   if (!Number.isInteger(confirm) || confirm !== skus.length) {
     die(`PARADO: --confirm-count ${valOf("--confirm-count")} ≠ ${skus.length} candidatos de agora. Nada escrito. Revê o dry-run e volta a correr.`);
@@ -200,7 +218,7 @@ async function runExecute(data, scopes) {
 
   const now = new Date().toISOString();
   const res = await mutateCurationQueue((fila) => {
-    const r = applyApproval(fila, skus, { origin: data.id, now });
+    const r = applyApproval(fila, skus, { origin: ORIGIN, now });
     return { gravar: r.approved.length > 0, valor: r };
   });
 
@@ -208,7 +226,7 @@ async function runExecute(data, scopes) {
   console.log(`já aprovados por esta origem: ${res.already.length}`);
   console.log(`caíram na revalidação: ${res.dropped.length}`);
   for (const d of res.dropped) console.log(`  ✗ ${d.sku} — ${d.reason}`);
-  console.log(`metadata.approvedAt = ${now} · metadata.importOrigin = ${data.id}`);
+  console.log(`metadata.approvedAt = ${now} · metadata.importOrigin = ${ORIGIN}`);
   console.log(`publish estimado: ${formatDuration(res.approved.length * PUBLISH_SECONDS_PER_PRODUCT)}`);
   console.log(`\nPublicar: é do Carlos, no painel. Reverter: node scripts/catalog/character-approve-revert.js\n`);
 }

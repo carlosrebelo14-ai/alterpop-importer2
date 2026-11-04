@@ -16,6 +16,11 @@ import {
   classifyRow,
   createApprovalCollector,
   buildApprovalCsv,
+  buildOrphanCsv,
+  assertAllHaveFranchise,
+  BRIEFING_ALIASES,
+  RISK_NAMES,
+  ORIGIN,
   buildApprovalSummary,
   applyApproval,
   revertApproval,
@@ -28,9 +33,8 @@ import {
 } from "../../lib/importer/catalog/characterApproval.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REAL = JSON.parse(fs.readFileSync(path.join(HERE, "../catalog/character-approve-2026-11-04.json"), "utf8"));
+const REAL = JSON.parse(fs.readFileSync(path.join(HERE, "../catalog/character-import-2026-10-09.json"), "utf8"));
 const SCOPES = buildApprovalScopes(REAL);
-const ORIGIN = REAL.id;
 
 let failures = 0;
 function check(name, fn) {
@@ -53,9 +57,14 @@ const match = buildMatcher(SCOPES);
 const names = (r) => [...match(r.cleanTitle || r.title).values()].map((e) => e.name);
 
 console.log("ficheiro de dados");
-check("27 âmbitos, origem character-import-2026-11-04", () => {
+check("fonte é a lista de 09/10: 27 âmbitos; origem character-import-2026-11-04", () => {
+  assert.equal(REAL.id, "character-import-2026-10-09");
   assert.equal(REAL.universes.length, 27);
-  assert.equal(REAL.id, "character-import-2026-11-04");
+  assert.equal(ORIGIN, "character-import-2026-11-04");
+});
+check("todos os nomes da tabela de aliases do briefing existem na lista", () => {
+  const all = new Set(SCOPES.flatMap((s) => s.names).map((e) => e.name));
+  for (const k of Object.keys(BRIEFING_ALIASES)) assert.ok(all.has(k), k);
 });
 check("todos os universos existem na tabela canónica", () => {
   const canon = new Set(FRANCHISE_UNIVERSES.map((u) => u.name.normalize("NFC")));
@@ -66,9 +75,9 @@ check("passagem B: só os 9 nomes do briefing", () => {
   assert.deepEqual(b, ["Captain America", "Catwoman", "Harley Quinn", "Hulk", "Joker", "Supergirl", "Thor", "Venom", "Wolverine"]);
 });
 check("27 nomes de risco, todos na lista", () => {
-  assert.equal(REAL.riskNames.length, 27);
+  assert.equal(RISK_NAMES.length, 27);
   const all = new Set(SCOPES.flatMap((s) => s.names).map((e) => e.name));
-  for (const r of REAL.riskNames) assert.ok(all.has(r), r);
+  for (const r of RISK_NAMES) assert.ok(all.has(r), r);
 });
 
 console.log("correspondência e aliases");
@@ -154,11 +163,16 @@ check("Star Wars não exclui a Line The Mandalorian", () => {
   const r = row({ title: "Figure Darth Vader", resolvedFranchise: "Star Wars", resolvedLine: "The Mandalorian" });
   assert.equal(classifyRow(r, match(r.title), SCOPES, pending(r)).reason, null);
 });
-check("órfão: só os 9 nomes da passagem B", () => {
+check("órfão da passagem B nunca é candidato: lista à parte", () => {
   const joker = row({ title: "Figure Joker", resolvedFranchise: null });
   const c = classifyRow(joker, match(joker.title), SCOPES, pending(joker));
-  assert.equal(c.reason, null);
+  assert.equal(c.reason, "orfao_sem_franquia");
   assert.equal(c.source, "B");
+  assert.equal(c.orphanEligible, true);
+  const barato = row({ title: "Figure Joker", resolvedFranchise: null, distributorPrice: 2 });
+  const cb = classifyRow(barato, match(barato.title), SCOPES, pending(barato));
+  assert.equal(cb.orphanEligible, false);
+  assert.equal(cb.orphanReason, "preco");
   const goku = row({ title: "Figure Goku", resolvedFranchise: null });
   assert.equal(classifyRow(goku, match(goku.title), SCOPES, pending(goku)).reason, "universo_errado");
 });
@@ -171,7 +185,9 @@ check("só PENDING; REJECTED contado à parte", () => {
   assert.equal(classifyRow(r, match(r.title), SCOPES, q("APPROVED")).reason, "estado_approved");
   assert.equal(classifyRow(r, match(r.title), SCOPES, q("PUBLISHED")).reason, "estado_published");
   assert.equal(classifyRow(r, match(r.title), SCOPES, new Map()).reason, "fora_da_fila");
-  assert.equal(classifyRow(r, match(r.title), SCOPES, new Map([[r.sku, { status: "PENDING", deletedAt: "2026-10-01" }]])).reason, "apagado_no_admin");
+  const apagado = classifyRow(r, match(r.title), SCOPES, new Map([[r.sku, { status: "PENDING", deletedAt: "2026-10-01" }]]));
+  assert.equal(apagado.reason, null, "PENDING apagado no admin entra");
+  assert.equal(apagado.deletedInAdmin, true);
 });
 check("custo bruto > 5,00 €, exclusivo", () => {
   for (const [cost, want] of [[5, "preco"], [4.99, "preco"], [null, "preco"], [5.01, null]]) {
@@ -206,13 +222,27 @@ check("um SKU conta uma vez; contagens e Loungefly", () => {
     row({ title: "Figure Goku", resolvedFranchise: "Naruto" }),
   ];
   const queue = pending(...rows);
+  const orfao = row({ title: "Figure Hulk", resolvedFranchise: null });
+  const apagado = row({ title: "Figure Gohan", resolvedFranchise: "Dragon Ball" });
+  queue.set(orfao.sku, { status: "PENDING", deletedAt: null });
+  queue.set(apagado.sku, { status: "PENDING", deletedAt: "2026-10-01" });
+  rows.push(orfao, apagado);
   const col = createApprovalCollector({ scopes: SCOPES, queueBySku: queue });
   for (const r of rows) col.addRow(r);
   col.addRow(rows[0]); // repetido: ignorado
   const res = col.finalize();
-  assert.equal(res.totals.total, 3);
-  assert.equal(res.totals.semFiltro, 4);
-  assert.equal(res.totals.soBase, 2);
+  assert.equal(res.totals.total, 4);
+  assert.equal(res.totals.semFiltro, 5);
+  assert.equal(res.totals.soBase, 3);
+  assert.equal(res.totals.apagados, 1);
+  assert.equal(res.totals.orfaos, 1);
+  assert.equal(res.totals.orfaosElegiveis, 1);
+  assert.equal(res.excluded.orfao_sem_franquia, 1);
+  assert.ok(!res.candidates.some((c) => c.sku === orfao.sku), "órfão fora dos candidatos");
+  assert.doesNotThrow(() => assertAllHaveFranchise(res.candidates));
+  const orf = buildOrphanCsv(res, SCOPES).split("\r\n").filter(Boolean);
+  assert.equal(orf.length, 2);
+  assert.ok(orf[1].startsWith(`${orfao.sku},Figure Hulk,Avengers,Hulk,`));
   assert.equal(res.totals.loungefly, 2);
   assert.equal(res.totals.loungeflyBase, 1);
   assert.equal(res.totals.loungeflyExcecao, 1);
@@ -222,18 +252,39 @@ check("um SKU conta uma vez; contagens e Loungefly", () => {
   assert.equal(res.excluded.universo_errado, 1);
   assert.deepEqual(res.topExcludedVendors, [{ vendor: "CERDA", count: 1 }]);
   const db = res.perScope.find((s) => s.universe === "Dragon Ball");
-  assert.equal(db.total, 1);
+  assert.equal(db.total, 2);
+  assert.equal(db.apagados, 1);
   assert.equal(res.perName.find((x) => x.name === "Vegeta").candidates, 1);
   assert.equal(res.perName.find((x) => x.name === "Goku").candidates, 1);
-  assert.equal(res.totals.publishSeconds, Math.round(3 * 5.3));
+  assert.equal(res.totals.publishSeconds, Math.round(4 * 5.3));
   const csv = buildApprovalCsv(res, SCOPES).split("\r\n");
   assert.equal(csv[0], CSV_COLUMNS.join(","));
-  assert.equal(csv.filter(Boolean).length, 4);
+  assert.equal(csv.filter(Boolean).length, 5);
   assert.ok(csv.some((l) => l.includes("Goku | Vegeta")));
   const md = buildApprovalSummary(res);
   assert.ok(md.includes("Nomes de risco"));
   assert.ok(md.includes("Top 20 fabricantes"));
+  assert.ok(md.includes("PENDING apagados no admin incluídos nos candidatos | 1"));
+  assert.ok(md.includes("Aliases do B7 fora do briefing"));
   assert.ok(!/9\.50|9,50/.test(md), "o resumo não leva custos");
+});
+check("aliases do B7 fora do briefing: contagem por alias e 'só por este alias'", () => {
+  const vocab = { Goku: ["Kakarot"], Vegeta: ["Vegeta"] };
+  const scopes = buildApprovalScopes(REAL, { vocabAliases: vocab });
+  const goku = scopes.flatMap((s) => s.names).find((e) => e.name === "Goku");
+  assert.equal(goku.phraseInfo.get("kakarot").via, "b7");
+  assert.equal(goku.phraseInfo.get("goku").via, "lista");
+  const a = row({ title: "Figure Kakarot", resolvedFranchise: "Dragon Ball" });
+  const b = row({ title: "Figure Goku Kakarot", resolvedFranchise: "Dragon Ball" });
+  const c = row({ title: "Figure Kakarot", resolvedFranchise: "Naruto" });
+  const col = createApprovalCollector({ scopes, queueBySku: pending(a, b, c) });
+  for (const x of [a, b, c]) col.addRow(x);
+  const res = col.finalize();
+  assert.deepEqual(res.b7Aliases, [{ scope: "Dragon Ball", name: "Goku", alias: "Kakarot", inUniverse: 2, candidates: 2, onlyVia: 1 }]);
+});
+check("guarda do execute: candidato sem resolvedFranchise para tudo", () => {
+  assert.throws(() => assertAllHaveFranchise([{ sku: "X", resolvedFranchise: null }]), /sem resolvedFranchise/);
+  assert.throws(() => assertAllHaveFranchise([{ sku: "X", resolvedFranchise: "  " }]), /sem resolvedFranchise/);
 });
 check("formatDuration", () => {
   assert.equal(formatDuration(5.3 * 1000), "1 h 28 min");
@@ -250,8 +301,9 @@ check("applyApproval: PENDING → APPROVED com origem; revalida; idempotente", (
     ],
   };
   const r = applyApproval(fila, ["A", "B", "C", "D"], { origin: ORIGIN, now: "2026-11-04T10:00:00.000Z" });
-  assert.deepEqual(r.approved, ["A"]);
-  assert.deepEqual(r.dropped.map((d) => d.sku), ["B", "C", "D"]);
+  assert.deepEqual(r.approved, ["A", "C"]);
+  assert.deepEqual(r.dropped.map((d) => d.sku), ["B", "D"]);
+  assert.deepEqual(fila.items[2].metadata.deletedInAdmin, { at: "2026-10-01" }, "a marca de apagado fica");
   const a = fila.items[0];
   assert.equal(a.status, "APPROVED");
   assert.equal(a.shopifyStatus, "ACTIVE");
