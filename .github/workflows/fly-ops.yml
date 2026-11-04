@@ -9,6 +9,8 @@
 #   b1-execute    dry-run e depois --execute de B1, no mesmo job. Escreve só em ProductCharacter.
 #   b2-execute    dry-run e depois --execute de B2, no mesmo job, com filtro LOTR. Escreve só em ProductCharacter.
 #   candidates-dry    candidatos a personagem por universo, só leitura (28/10/2026). Saída ao arquiteto.
+#   approve-dry   aprovação por personagem (character-approve.js), dry-run só leitura (04/11/2026). Sem custos no log.
+#   revert-dry    reversão da aprovação por personagem, dry-run só leitura (04/11/2026).
 #   health-dry        portão de saúde (pre-pilot-verify) só leitura, com o detalhe por registo (29/10/2026).
 #   tags-dry      tags-cleanup.js sem --execute: contagem por tag fora da lista, só leitura (28/10/2026).
 #   tags-execute  tags-cleanup.js --execute: remove só TAGS_PARA_REMOVER; recusa se houver tags fora (28/10/2026).
@@ -45,6 +47,8 @@ on:
           - tags-dry
           - tags-execute
           - health-dry
+          - approve-dry
+          - revert-dry
 
 permissions:
   contents: read
@@ -58,7 +62,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Leitura usa production-read (sem required reviewers, mesmo FLY_API_TOKEN). Escrita fica em production.
-    environment: ${{ contains(fromJSON('["b1-dry","b2-dry","census-c","verify-base","candidates-dry","tags-dry","health-dry"]'), inputs.comando) && 'production-read' || 'production' }}
+    environment: ${{ contains(fromJSON('["b1-dry","b2-dry","census-c","verify-base","candidates-dry","tags-dry","health-dry","approve-dry","revert-dry"]'), inputs.comando) && 'production-read' || 'production' }}
     timeout-minutes: 60
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -89,6 +93,8 @@ jobs:
             # Continuam fora do log: custos, margens, variáveis de ambiente, URLs internas.
             # O repositório é público: handles e GIDs não entram no log. Só ficam as verificações e contagens.
             health-dry) CMD='node scripts/catalog/pre-pilot-verify.js' ;;
+            approve-dry) CMD='node scripts/catalog/character-approve.js' ;;
+            revert-dry) CMD='node scripts/catalog/character-approve-revert.js' ;;
             *) echo "comando desconhecido: $COMANDO" >&2; exit 64 ;;
           esac
           mkdir -p "$RUNNER_TEMP/fly-ops"
