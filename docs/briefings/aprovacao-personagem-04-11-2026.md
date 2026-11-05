@@ -62,3 +62,10 @@ O N = 2584 foi recusado. Correções antes do novo dry-run:
 1. **Epónimos dentro da frase da franquia.** Para Harry ("Harry Potter") e Naruto ("Naruto Shippuden", "Naruto Shippuuden"), retira-se uma vez a primeira ocorrência da frase e procura-se o nome no resto. Os outros nomes contam no título completo. Batman, Superman, Spider-Man, Stitch e Naruto sem Shippuden ficam como estão: o universo é o personagem. Constante `FRANCHISE_PHRASES`.
 2. **Têxtil.** Sai por palavra inteira no título (Tee, T-Shirt, Tshirt, Hoodie, Sweatshirt, Socks, Cap, Beanie) ou por tamanho no fim (XS, S, M, L, XL, XXL, XXXL). "POP & Tee" sai por "Tee". A Loungefly não é afetada. O dry-run conta os excluídos e mostra 10 títulos. "Tshirt" é acrescento à lista do arquiteto, como grafia do feed.
 3. **Tabelas no log.** Contagem por personagem com P1 e P2 separados, órfãos por personagem e, para The Lord of the Rings e Studio Ghibli, o motivo por personagem (âmbito, preço, têxtil, universo errado, sem universo). Sem custos.
+
+## Execute pelo fly-ops (05/11)
+
+- `approve-execute`: um só job. Seleção igual ao `approve-dry`, banda ±`band_pct` (omissão 2) sobre `reference_count`. Limites inteiros e inclusivos (2321 a 2 %: 2275 a 2367). Fora da banda, falha sem escrever. Dentro, aprova com o N atual e imprime aprovados, ignorados e falhados por motivo. No script, `--reference-count` e `--band-pct`; o `--confirm-count` exato continua para corridas manuais.
+- `revert-execute`: `character-approve-revert.js --execute --confirm-count N`, com N exato. Só com OK do arquiteto.
+- Ambos em `production`, com aprovação do Carlos. Os inputs só entram no comando depois de validados como número.
+- Produtos sem stock entram e aparecem como esgotados (decisão do Carlos, 05/11).

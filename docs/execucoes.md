@@ -32,6 +32,14 @@ Sem entrada, sem `--execute`.
   - Decisão 35 levantada pelo arquiteto depois desta verificação.
   - Anomalia no resumo: o execute diz apagados 64 e revertidos 64 para uma lista de 57. Confirmada: herança da tentativa de 09/09 (DBG-226). Ver a nota de 22/10 sobre a anomalia.
 
+- **2026-11-05, `approve-execute` da aprovação por personagem (workflow `fly-ops`, origem `character-import-2026-11-04`).**
+  - Comando: `comando=approve-execute`, `reference_count=2321`, `band_pct=2`, a partir de `main`. Dentro do runner: `node scripts/catalog/character-approve.js --execute --reference-count 2321 --band-pct 2`. Um só job: seleção, banda, escrita.
+  - Dry-run antes (run `42014818855`, 05/11 10:56Z, imagem do `52c9dbb`): 2321 candidatos (P1 1750, P2 571), 131 apagados no admin incluídos, 1055 sem stock (entram, decisão do Carlos), 246 órfãos fora, 431 têxtil fora, 0 pela regra do tamanho.
+  - Banda: ±2 % sobre 2321, 2275 a 2367. Fora da banda, o job falha sem escrever.
+  - Escreve só na fila: APPROVED, `metadata.approvedAt`, `metadata.importOrigin`. Não publica. Reversão: `revert-execute` com `confirm_count` exato, só com OK do arquiteto.
+  - OK do arquiteto: pedido consolidado de 05/11 (dry-run aceite, execute autorizado sem nova consulta dentro da banda). Aprovação do environment `production`: Carlos.
+  - Resultado: por preencher (run, N atual, aprovados, ignorados, falhados).
+
 ## Notas sem `--execute`
 
 - **2026-10-16, merge do #111 antes da decisão sobre os pendentes.** O merge do #111 em `main` (`bc76f06`) foi feito antes de o arquiteto decidir os pendentes de `37bab0e`. O deploy não correu nessa altura. O deploy de `main` só correu depois do #113 (`f32b065`), com aprovação do Carlos no environment `production`. Sem impacto em produção antes desse deploy. Sem `--execute` nesta nota.

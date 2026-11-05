@@ -65,8 +65,18 @@ check("todo comando da lista tem environment: leitura ou escrita (fica em produc
   assert.deepEqual(sem, []);
 });
 
-check("escrita: b1-execute, b2-execute, cycle-apply-once", () => {
-  assert.deepEqual([...escrita].sort(), ["b1-execute", "b2-execute", "cycle-apply-once", "tags-execute"]);
+check("escrita: b1-execute, b2-execute, cycle-apply-once, tags-execute, approve-execute, revert-execute", () => {
+  assert.deepEqual([...escrita].sort(), ["approve-execute", "b1-execute", "b2-execute", "cycle-apply-once", "revert-execute", "tags-execute"]);
+});
+
+check("approve-execute e revert-execute: inputs só entram no comando validados como número", () => {
+  const bloco = src.slice(src.indexOf("approve-execute)"), src.indexOf("*) echo \"comando desconhecido"));
+  assert.match(bloco, /\[\[ "\$REFERENCE_COUNT" =~ \^\[0-9\]\+\$ \]\] \|\| \{[^}]*exit 64; \}/, "falta validar reference_count");
+  assert.match(bloco, /\[\[ "\$\{BAND_PCT:-2\}" =~ /, "falta validar band_pct");
+  assert.match(bloco, /\[\[ "\$CONFIRM_COUNT" =~ \^\[0-9\]\+\$ \]\]/, "falta validar confirm_count");
+  assert.match(bloco, /character-approve\.js --execute --reference-count \$REFERENCE_COUNT --band-pct \$\{BAND_PCT:-2\}/);
+  assert.match(bloco, /character-approve-revert\.js --execute --confirm-count \$CONFIRM_COUNT/);
+  assert.ok(!/\$\{\{\s*inputs\./.test(bloco), "inputs não podem ser interpolados direto no script");
 });
 
 check("anotação: passo com if always() lê o saida.txt e não usa segredos nem variáveis de ambiente", () => {

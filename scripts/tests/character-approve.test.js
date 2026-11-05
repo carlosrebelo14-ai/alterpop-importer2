@@ -24,6 +24,8 @@ import {
   removeFirstPhrase,
   buildLogTables,
   FRANCHISE_PHRASES,
+  checkBand,
+  countByReason,
   ORIGIN,
   buildApprovalSummary,
   applyApproval,
@@ -439,6 +441,43 @@ check("regra do tamanho: lista completa só dos que não têm palavra de têxtil
   assert.ok(lines.some((l) => l.startsWith("regra do tamanho") && l.endsWith(": 2")));
   assert.ok(lines.some((l) => l.includes("Naruto Kakashi figure S (tamanho S)")));
   assert.equal(res.excluded.textil, 3);
+});
+
+console.log("banda do approve-execute");
+check("2321 a ±2 %: 2275 a 2367, limites inclusivos", () => {
+  const b = checkBand(2321, 2321, 2);
+  assert.equal(b.lo, 2275);
+  assert.equal(b.hi, 2367);
+  assert.equal(b.ok, true);
+});
+check("dentro da banda", () => {
+  assert.equal(checkBand(2300, 2321, 2).ok, true);
+  assert.equal(checkBand(2350, 2321, 2).ok, true);
+});
+check("limite exato entra; um a mais ou a menos sai", () => {
+  assert.equal(checkBand(2275, 2321, 2).ok, true);
+  assert.equal(checkBand(2367, 2321, 2).ok, true);
+  assert.equal(checkBand(2274, 2321, 2).ok, false);
+  assert.equal(checkBand(2368, 2321, 2).ok, false);
+});
+check("fora da banda dá diferença e percentagem", () => {
+  const b = checkBand(2000, 2321, 2);
+  assert.equal(b.ok, false);
+  assert.equal(b.diff, -321);
+  assert.equal(b.diffPct, -13.83);
+});
+check("limite exato sem erro de vírgula flutuante (100 a 2 %: 98 a 102)", () => {
+  const b = checkBand(98, 100, 2);
+  assert.equal(b.lo, 98);
+  assert.equal(b.hi, 102);
+  assert.equal(b.ok, true);
+});
+check("referência e banda inválidas lançam", () => {
+  assert.throws(() => checkBand(10, 0, 2));
+  assert.throws(() => checkBand(10, 100, -1));
+});
+check("countByReason agrupa motivos", () => {
+  assert.deepEqual(countByReason([{ reason: "estado REJECTED" }, { reason: "estado REJECTED" }, { status: "APPROVED" }]), { "estado REJECTED": 2, APPROVED: 1 });
 });
 
 console.log(failures ? `\nFALHOU — ${failures} falha(s)` : "\nOK — 0 falha(s)");
