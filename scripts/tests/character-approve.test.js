@@ -420,7 +420,25 @@ check("tabelas por personagem, órfãos e detalhe LOTR/Ghibli, sem custos", () =
   assert.ok(lines.some((l) => l === "  Totoro: 1 · 1 · 0 · 0 · 0 · 0 · 0 · 0"));
   assert.ok(lines.some((l) => l.startsWith("por personagem — P1")) && lines.some((l) => l.startsWith("por personagem — P2")));
   assert.equal(res.textileSamples.length, 1);
+  assert.deepEqual(res.sizeOnly, [], "POP & Tee sai pela palavra, não pelo tamanho");
   assert.ok(buildApprovalSummary(res).includes("## Têxtil"));
+});
+
+check("regra do tamanho: lista completa só dos que não têm palavra de têxtil", () => {
+  const rows = [
+    row({ title: "One Piece Luffy XL", resolvedFranchise: "One Piece" }),
+    row({ title: "Dragon Ball Goku Hoodie M", resolvedFranchise: "Dragon Ball" }),
+    row({ title: "Naruto Kakashi figure S", resolvedFranchise: "Naruto" }),
+    row({ title: "Loungefly Stitch bag L", originalTitle: "Loungefly Stitch bag L", resolvedFranchise: "Stitch", vendor: "LOUNGEFLY" }),
+  ];
+  const col = createApprovalCollector({ scopes: SCOPES, queueBySku: pending(...rows) });
+  for (const x of rows) col.addRow(x);
+  const res = col.finalize();
+  assert.deepEqual(res.sizeOnly.map((x) => x.title).sort(), ["Naruto Kakashi figure S", "One Piece Luffy XL"]);
+  const lines = buildLogTables(res);
+  assert.ok(lines.some((l) => l.startsWith("regra do tamanho") && l.endsWith(": 2")));
+  assert.ok(lines.some((l) => l.includes("Naruto Kakashi figure S (tamanho S)")));
+  assert.equal(res.excluded.textil, 3);
 });
 
 console.log(failures ? `\nFALHOU — ${failures} falha(s)` : "\nOK — 0 falha(s)");
