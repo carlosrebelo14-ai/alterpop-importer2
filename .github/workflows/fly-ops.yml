@@ -11,6 +11,11 @@
 #   candidates-dry    candidatos a personagem por universo, só leitura (28/10/2026). Saída ao arquiteto.
 #   approve-dry   aprovação por personagem (character-approve.js), dry-run só leitura (04/11/2026). Sem custos no log.
 #   revert-dry    reversão da aprovação por personagem, dry-run só leitura (04/11/2026).
+#   approve-execute   aprovação por personagem (05/11/2026). Um só job: seleção, banda ±band_pct sobre
+#                     reference_count; fora da banda falha sem escrever; dentro, aprova com o N atual.
+#                     Escreve na fila (APPROVED). Não publica. Environment production.
+#   revert-execute    reversão pela origem character-import-2026-11-04, com confirm_count exato.
+#                     Só com OK do arquiteto. Environment production.
 #   health-dry        portão de saúde (pre-pilot-verify) só leitura, com o detalhe por registo (29/10/2026).
 #   tags-dry      tags-cleanup.js sem --execute: contagem por tag fora da lista, só leitura (28/10/2026).
 #   tags-execute  tags-cleanup.js --execute: remove só TAGS_PARA_REMOVER; recusa se houver tags fora (28/10/2026).
@@ -49,6 +54,21 @@ on:
           - health-dry
           - approve-dry
           - revert-dry
+          - approve-execute
+          - revert-execute
+      reference_count:
+        description: "approve-execute: N do dry-run aceite (inteiro)"
+        type: string
+        required: false
+      band_pct:
+        description: "approve-execute: banda em % sobre reference_count"
+        type: string
+        required: false
+        default: "2"
+      confirm_count:
+        description: "revert-execute: número exato a reverter"
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -67,6 +87,9 @@ jobs:
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       COMANDO: ${{ inputs.comando }}
+      REFERENCE_COUNT: ${{ inputs.reference_count }}
+      BAND_PCT: ${{ inputs.band_pct }}
+      CONFIRM_COUNT: ${{ inputs.confirm_count }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,6 +118,14 @@ jobs:
             health-dry) CMD='node scripts/catalog/pre-pilot-verify.js' ;;
             approve-dry) CMD='node scripts/catalog/character-approve.js' ;;
             revert-dry) CMD='node scripts/catalog/character-approve-revert.js' ;;
+            # Os inputs só entram no comando depois de validados como número (o comando corre num shell remoto).
+            approve-execute)
+              [[ "$REFERENCE_COUNT" =~ ^[0-9]+$ ]] || { echo "reference_count obrigatório e inteiro (recebi '$REFERENCE_COUNT')" >&2; exit 64; }
+              [[ "${BAND_PCT:-2}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "band_pct tem de ser um número (recebi '$BAND_PCT')" >&2; exit 64; }
+              CMD="node scripts/catalog/character-approve.js --execute --reference-count $REFERENCE_COUNT --band-pct ${BAND_PCT:-2}" ;;
+            revert-execute)
+              [[ "$CONFIRM_COUNT" =~ ^[0-9]+$ ]] || { echo "confirm_count obrigatório e inteiro (recebi '$CONFIRM_COUNT')" >&2; exit 64; }
+              CMD="node scripts/catalog/character-approve-revert.js --execute --confirm-count $CONFIRM_COUNT" ;;
             *) echo "comando desconhecido: $COMANDO" >&2; exit 64 ;;
           esac
           mkdir -p "$RUNNER_TEMP/fly-ops"
@@ -109,7 +140,7 @@ jobs:
           f="$RUNNER_TEMP/fly-ops/saida.txt"
           [ -f "$f" ] || exit 0
           {
-            grep -E '^(ações|trava|produtos|-- |=== |aplicado|nada a aplicar|FORA|ERRO|  product-update |  (create|reactivate|update|set-draft) |  (✓|✗|!) )' "$f"
+            grep -E '^(ações|trava|produtos|-- |=== |aplicado|nada a aplicar|FORA|ERRO|banda|dentro da banda|PARADO|aprovados|ignorados|falhados|revertidos|  product-update |  (create|reactivate|update|set-draft) |  (✓|✗|!) )' "$f"
             sed -nE 's/^  ([a-z0-9-]+) · ([a-z]+): .*· (\+[0-9]+ -[0-9]+)$/  \1 · \2 \3/p; s/^  ([a-z0-9-]+) · status: .*depois=([A-Z]+)$/  \1 · status \2/p' "$f"
           } | while IFS= read -r linha; do
             echo "::notice title=${COMANDO}::${linha}"

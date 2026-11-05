@@ -17,6 +17,11 @@
  *                                    metadata.importOrigin = character-import-2026-11-04. Revalida cada SKU
  *                                    (PENDING; apagado no admin entra). Recusa candidato sem
  *                                    resolvedFranchise. Órfãos ficam fora. Idempotente.
+ *   --execute --reference-count R [--band-pct P]
+ *                                    Caminho do fly-ops approve-execute (arquiteto, 05/11). Em vez
+ *                                    do N exato, exige o N de agora dentro de ±P % (omissão 2) de R,
+ *                                    o N do dry-run aceite. Fora da banda, para sem escrever. Dentro,
+ *                                    executa com o N de agora. Exclusivo com --confirm-count.
  *   Reversão: scripts/catalog/character-approve-revert.js (mesma origem).
  *
  * FLAGS
@@ -43,6 +48,8 @@ import {
   buildOrphanCsv,
   assertAllHaveFranchise,
   ORIGIN,
+  checkBand,
+  countByReason,
   buildLogTables,
   buildApprovalSummary,
   applyApproval,
@@ -53,8 +60,8 @@ import {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
-const KNOWN_FLAGS = new Set(["--input", "--out", "--execute", "--confirm-count", "--shop"]);
-const FLAGS_WITH_VALUE = new Set(["--input", "--out", "--confirm-count", "--shop"]);
+const KNOWN_FLAGS = new Set(["--input", "--out", "--execute", "--confirm-count", "--reference-count", "--band-pct", "--shop"]);
+const FLAGS_WITH_VALUE = new Set(["--input", "--out", "--confirm-count", "--reference-count", "--band-pct", "--shop"]);
 const valOf = (f, d = null) => {
   const i = args.indexOf(f);
   return i >= 0 && args[i + 1] && !args[i + 1].startsWith("--") ? args[i + 1] : d;
@@ -92,8 +99,14 @@ function checkArgs() {
     if (!KNOWN_FLAGS.has(a)) die(`Flag desconhecida "${a}".`);
     if (FLAGS_WITH_VALUE.has(a) && (args[i + 1] == null || args[i + 1].startsWith("--"))) die(`${a} precisa de um valor.`);
   }
-  if (EXECUTE && valOf("--confirm-count") == null) die("--execute exige --confirm-count N (o total do dry-run).");
-  if (!EXECUTE && valOf("--confirm-count") != null) die("--confirm-count só se usa com --execute.");
+  const hasConfirm = valOf("--confirm-count") != null;
+  const hasRef = valOf("--reference-count") != null;
+  if (EXECUTE && !hasConfirm && !hasRef) die("--execute exige --confirm-count N (exato) ou --reference-count R [--band-pct P].");
+  if (hasConfirm && hasRef) die("--confirm-count e --reference-count são exclusivos.");
+  if (!EXECUTE && (hasConfirm || hasRef)) die("--confirm-count e --reference-count só se usam com --execute.");
+  if (valOf("--band-pct") != null && !hasRef) die("--band-pct só se usa com --reference-count.");
+  if (hasRef && !/^[0-9]+$/.test(valOf("--reference-count"))) die(`--reference-count tem de ser um inteiro (recebi "${valOf("--reference-count")}").`);
+  if (valOf("--band-pct") != null && !/^[0-9]+(\.[0-9]+)?$/.test(valOf("--band-pct"))) die(`--band-pct tem de ser um número (recebi "${valOf("--band-pct")}").`);
 }
 
 function loadData() {
@@ -200,7 +213,9 @@ async function runDryRun(data, scopes) {
 }
 
 async function runExecute(data, scopes) {
-  const confirm = Number(valOf("--confirm-count"));
+  const confirm = valOf("--confirm-count") == null ? null : Number(valOf("--confirm-count"));
+  const reference = valOf("--reference-count") == null ? null : Number(valOf("--reference-count"));
+  const bandPct = Number(valOf("--band-pct", "2"));
   console.log(`\n=== character-approve · EXECUTE (${SHOP}) — origem ${ORIGIN} ===`);
   await assertNoIndexingRunning("o worker trabalha sobre uma cópia da fila e desfazia a aprovação");
   const result = await select(scopes);
@@ -211,7 +226,17 @@ async function runExecute(data, scopes) {
     die(`PARADO: ${err.message}`);
   }
   const skus = result.candidates.map((c) => c.sku);
-  if (!Number.isInteger(confirm) || confirm !== skus.length) {
+  if (reference != null) {
+    let band;
+    try {
+      band = checkBand(skus.length, reference, bandPct);
+    } catch (err) {
+      die(`PARADO: ${err.message}. Nada escrito.`);
+    }
+    console.log(`\nbanda: N atual ${skus.length} · referência ${reference} · diferença ${band.diff >= 0 ? "+" : ""}${band.diff} (${band.diffPct} %) · aceite ${band.lo} a ${band.hi} (±${bandPct} %)`);
+    if (!band.ok) die(`PARADO: fora da banda. N atual ${skus.length}, referência ${reference}, diferença ${band.diff}. Nada escrito.`);
+    console.log(`dentro da banda: executa com N = ${skus.length}`);
+  } else if (!Number.isInteger(confirm) || confirm !== skus.length) {
     die(`PARADO: --confirm-count ${valOf("--confirm-count")} ≠ ${skus.length} candidatos de agora. Nada escrito. Revê o dry-run e volta a correr.`);
   }
   if (!skus.length) {
@@ -225,9 +250,11 @@ async function runExecute(data, scopes) {
     return { gravar: r.approved.length > 0, valor: r };
   });
 
-  console.log(`\naprovados agora: ${res.approved.length}`);
-  console.log(`já aprovados por esta origem: ${res.already.length}`);
-  console.log(`caíram na revalidação: ${res.dropped.length}`);
+  console.log(`\naprovados: ${res.approved.length}`);
+  console.log(`ignorados (já aprovados por esta origem): ${res.already.length}`);
+  for (const [k, v] of Object.entries(countByReason(res.already))) console.log(`  ${String(v).padStart(6)}  ${k}`);
+  console.log(`falhados (caíram na revalidação): ${res.dropped.length}`);
+  for (const [k, v] of Object.entries(countByReason(res.dropped))) console.log(`  ${String(v).padStart(6)}  ${k}`);
   for (const d of res.dropped) console.log(`  ✗ ${d.sku} — ${d.reason}`);
   console.log(`metadata.approvedAt = ${now} · metadata.importOrigin = ${ORIGIN}`);
   console.log(`publish estimado: ${formatDuration(res.approved.length * PUBLISH_SECONDS_PER_PRODUCT)}`);
