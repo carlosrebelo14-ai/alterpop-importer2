@@ -38,7 +38,9 @@ Sem entrada, sem `--execute`.
   - Banda: ±2 % sobre 2321, 2275 a 2367. Fora da banda, o job falha sem escrever.
   - Escreve só na fila: APPROVED, `metadata.approvedAt`, `metadata.importOrigin`. Não publica. Reversão: `revert-execute` com `confirm_count` exato, só com OK do arquiteto.
   - OK do arquiteto: pedido consolidado de 05/11 (dry-run aceite, execute autorizado sem nova consulta dentro da banda). Aprovação do environment `production`: Carlos.
-  - Resultado: por preencher (run, N atual, aprovados, ignorados, falhados).
+  - Deploy antes: `627c6d5` (merge do #180), run `42016740874`, imagem `deployment-01M6NPWZJVT9RKAJR83Y0FNHVW`, `catalog_health` 16 verdes, 0 vermelhas.
+  - Resultado: sucesso. Run `42018727338`, aprovação do environment `production`: Carlos. N atual 2319, referência 2321, diferença −2 (−0,09 %), dentro da banda 2275 a 2367. Aprovados 2319, ignorados 0, falhados 0. `metadata.approvedAt` = 2026-11-05T11:25:50.880Z.
+  - Verificação: `revert-dry` (run `42019093603`, só leitura) conta 2319 APPROVED com `metadata.importOrigin = character-import-2026-11-04`, 0 publicados ou noutro estado. A publicação é do Carlos, no painel.
 
 ## Notas sem `--execute`
 

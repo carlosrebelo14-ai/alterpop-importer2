@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-env node */
 /**
  * fly-ops — environment por comando (decisão do Carlos, 28/10/2026). Comandos de leitura usam
  * production-read (sem required reviewers); comandos com escrita usam production (aprovação).
