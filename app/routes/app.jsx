@@ -1,10 +1,11 @@
 /* global globalThis */
-import { Outlet, useFetchers, useLoaderData, useNavigation, useRouteError } from "react-router";
+import { Outlet, useFetchers, useLoaderData, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { AppProvider as PolarisAppProvider, Banner, InlineStack, Spinner, Text } from "@shopify/polaris";
 import enTranslations from "@shopify/polaris/locales/en.json";
 import { authenticateAdmin } from "../utils/authenticate.server";
+import { RouteErrorPanel } from "../components/RouteErrorPanel.jsx";
 import { readDbDegraded } from "../../lib/health/dbDegraded.js";
 
 export const loader = async ({ request }) => {
@@ -64,8 +65,9 @@ export default function App() {
   );
 }
 
+// D1: o boundary do Shopify mostrava só "200" no bounce de autenticação. Agora rota, estado e detalhe.
 export function ErrorBoundary() {
-  return boundary.error(useRouteError());
+  return <RouteErrorPanel />;
 }
 
 export const headers = (headersArgs) => {

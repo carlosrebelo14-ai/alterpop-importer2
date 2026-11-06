@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useFetcher, useLoaderData, useRouteError } from "react-router";
+import { useFetcher, useLoaderData, useNavigate, useRouteError } from "react-router";
 import {
   Page,
   Layout,
@@ -286,6 +286,7 @@ function buildProductsApiUrl({
 
 export default function CurationDashboard() {
   const loaderData = useLoaderData();
+  const navigate = useNavigate();
   const fetcher = useFetcher();
   const importFetcher = useFetcher();
   const marginFetcher = useFetcher();
@@ -1871,7 +1872,7 @@ export default function CurationDashboard() {
         />
 
         {(dashboardStats.totalSyncError || 0) > 0 && (
-          <Banner tone="warning" action={{ content: "Ver Logs de Erro", url: "/app/reports" }}>
+          <Banner tone="warning" action={{ content: "Ver Logs de Erro", onAction: () => navigate("/app/reports") }}>
             {`${dashboardStats.totalSyncError} produto(s) com erro de sincronização pendente.`}
           </Banner>
         )}
@@ -1901,7 +1902,7 @@ export default function CurationDashboard() {
         )}
 
         <Banner tone="info">
-          {`Filtro actual: ${listLoading ? "…" : (totalCount ?? 0).toLocaleString("pt-PT")} produtos mostrados | Aprovados (total): ${(dashboardStats?.totalApproved ?? 0).toLocaleString("pt-PT")} | Rejeitados (total): ${(dashboardStats?.totalRejected ?? 0).toLocaleString("pt-PT")} | Pendentes: ${(dashboardStats?.totalPending ?? 0).toLocaleString("pt-PT")}`}
+          {`Filtro actual: ${listLoading ? "…" : (totalCount ?? 0).toLocaleString("pt-PT")} produtos mostrados | Pendentes: ${(dashboardStats?.totalPending ?? 0).toLocaleString("pt-PT")} | Aprovados (total): ${(dashboardStats?.totalApproved ?? 0).toLocaleString("pt-PT")} | Rejeitados (total): ${(dashboardStats?.totalRejected ?? 0).toLocaleString("pt-PT")} | Publicados: ${(dashboardStats?.totalPublished ?? 0).toLocaleString("pt-PT")} | Erro de sync na fila: ${(dashboardStats?.totalQueueSyncError ?? 0).toLocaleString("pt-PT")} | Sem registo na fila: ${(dashboardStats?.withoutRecord ?? 0).toLocaleString("pt-PT")}${(dashboardStats?.totalOtherStates ?? 0) > 0 ? ` | Outros estados: ${dashboardStats.totalOtherStates.toLocaleString("pt-PT")}` : ""} | Total: ${(dashboardStats?.stateSum ?? dashboardStats?.totalIndexed ?? 0).toLocaleString("pt-PT")}`}
         </Banner>
 
         {indexingActive && (

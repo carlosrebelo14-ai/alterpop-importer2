@@ -173,16 +173,20 @@ export default function ReportsPage() {
                   Shopify Sync Health
                 </Text>
                 <Text as="p" variant="headingLg">
-                  {`${Math.round((dashboardStats.syncHealthRate || 0) * 100)}%`}
+                  {dashboardStats.syncHealthRate == null
+                    ? "sem produtos publicados"
+                    : `${Math.round(dashboardStats.syncHealthRate * 100)}%`}
                 </Text>
-                <ProgressBar
-                  progress={Math.round((dashboardStats.syncHealthRate || 0) * 100)}
-                  tone={(dashboardStats.syncHealthRate || 0) >= 0.8 ? "success" : "warning"}
-                />
-                {(dashboardStats.totalPublished || 0) === 0 && (dashboardStats.totalSyncError || 0) === 0 && (
-                  <Text as="p" tone="subdued" variant="bodySm">
-                    Ainda sem publicações — 100% é o valor por defeito, não uma medição real.
-                  </Text>
+                {dashboardStats.syncHealthRate != null && (
+                  <>
+                    <ProgressBar
+                      progress={Math.round(dashboardStats.syncHealthRate * 100)}
+                      tone={dashboardStats.syncHealthRate >= 0.8 ? "success" : "warning"}
+                    />
+                    <Text as="p" tone="subdued" variant="bodySm">
+                      {`${(dashboardStats.totalSyncError || 0).toLocaleString("pt-PT")} erro(s) ativo(s) em ${(dashboardStats.totalPublished || 0).toLocaleString("pt-PT")} publicados`}
+                    </Text>
+                  </>
                 )}
               </BlockStack>
             </Card>
