@@ -20,7 +20,7 @@ import {
 } from "../../lib/curation/atividadeApp.js";
 import { reservarPublicacaoEntreProcessos } from "../../lib/importer/shopify/publicacaoEmCurso.js";
 import { isShopifyResetRunning } from "../../lib/importer/shopify/shopifyResetJob.server.js";
-import { syncPublishedStockLevels } from "../../lib/importer/shopify/publishedStockSync.server.js";
+import { syncPublishedStockLevels, formatLookupSummary } from "../../lib/importer/shopify/publishedStockSync.server.js";
 import { isShopifySyncRunning } from "../../lib/importer/shopify/shopifySyncJob.server.js";
 import { listApprovedSkusForShopifySync } from "../../lib/curation/curationQueue.server.js";
 import { loadOfflineSessionForShop } from "../../lib/session/loadOfflineSessionForShop.server.js";
@@ -32,7 +32,7 @@ import { reconcileNewArrivalsCycle } from "../../lib/importer/shopify/newArrival
 import { reconcileLiveDriftCycle } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
 import { reconcileCharacterPagesCycle, characterCycleEnabled } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
 import { reconcileCollectionPublicationCycle } from "../../lib/importer/shopify/collectionPublicationReconcileCycle.server.js";
-import { persistSyncError } from "../../lib/importer/sync/syncErrorLog.server.js";
+import { persistSyncError, clearNotFoundErrorsForSkus } from "../../lib/importer/sync/syncErrorLog.server.js";
 import {
   reconcileMarginErosionCycle,
   markMarginErosionCycleSkipped,
@@ -361,6 +361,14 @@ export const action = async ({ request }) => {
           console.log(
             `[trigger-sync] stock de publicados: ${stockResult.checked} verificados, ${stockResult.updated} atualizados, ${stockResult.skipped} sem alteração, ${stockResult.failed} falhas.`
           );
+          console.log(`[trigger-sync] stock de publicados — ${formatLookupSummary(stockResult)}.`);
+          // C6: erros "não encontrado" antigos dos SKUs que a loja agora devolve deixam de estar ativos.
+          try {
+            const cleared = await clearNotFoundErrorsForSkus(shop, stockResult.foundSkus || []);
+            if (cleared > 0) console.log(`[trigger-sync] stock de publicados — ${cleared} erro(s) "não encontrado" desativado(s).`);
+          } catch (err) {
+            console.error("[trigger-sync] desativar erros antigos falhou:", err?.message || err);
+          }
           // stockResult.failures[] era calculado e nunca lido por ninguém — a falha
           // ficava só na contagem, sem SKU nem mensagem (achado 24/09). Grava no mesmo
           // registo de sync que a UI já lê, em vez de inventar um caminho novo.
