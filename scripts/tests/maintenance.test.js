@@ -129,7 +129,7 @@ case "$cmd" in
     if [ -n "$FAKE_PROBE_ERROR" ]; then echo "[check-no-indexing] não consegui ler"; exit 2; fi
     echo "[check-no-indexing] nenhuma indexação a decorrer."; exit 0;;
   *"npm run catalog:health"*)
-    printf '  ✓ V3  produtos APPROVED = 0\n  ✗ V5  total — esperado 8435450233067, obtido darth-vader\n  ! V11  gid://shopify/Product/123 a 9,99 €\n'; exit "\${FAKE_HEALTH_RC:-0}";;
+    printf '  ✓ V3  produtos APPROVED = 0\n  ✗ V5  total — esperado 8435450233067, obtido darth-vader\n  ! V11  gid://shopify/Product/123 a 9,99 €\n'; [ -n "$FAKE_NUMS" ] && printf '%s\n' "$FAKE_NUMS"; exit "\${FAKE_HEALTH_RC:-0}";;
   *"migrate diff"*)
     # Como o flyctl real: falha de ligação não tem "Process exited"; saída não-zero do comando remoto tem.
     if [ -n "\$FAKE_SSH_FAIL" ]; then echo "Error: failed to dial machine: connection refused"; exit 1; fi
@@ -294,6 +294,34 @@ check("estado da indexação ilegível: o portão não corre (falha fechada)", (
   const r = run("catalog_health", "dry-run", { FAKE_PROBE_ERROR: "1" });
   assert.equal(r.status, 2);
   assert.ok(!ran(r, "catalog:health"));
+});
+check("P1: esperado e obtido das vermelhas e amarelas saem só com números", () => {
+  const nums = [
+    "NUMS: V5 nivel=fail esperado=< 10% obtido=10.7% (23378)",
+    "NUMS: V12 nivel=fail esperado=0 obtido=70",
+    "NUMS: V18 nivel=warn esperado=0 obtido=2319, 41",
+  ].join("\n");
+  const r = run("catalog_health", "dry-run", { FAKE_HEALTH_RC: "1", FAKE_NUMS: nums });
+  assert.match(r.summaryText, /- V5 vermelha\. Esperado < 10%, obtido 10\.7% \(23378\)\./);
+  assert.match(r.summaryText, /- V12 vermelha\. Esperado 0, obtido 70\./);
+  assert.match(r.summaryText, /- V18 amarela\. Esperado 0, obtido 2319, 41\./);
+});
+check("P1: a segunda validação recusa SKUs, handles e GIDs mesmo que a Fly os imprima", () => {
+  const nums = [
+    "NUMS: V5 nivel=fail esperado=8435450233067 obtido=darth-vader",
+    "NUMS: V13 nivel=warn esperado=0 obtido=2 corrigido(s): 8435450233067.price",
+    "NUMS: V14 nivel=warn esperado=ok obtido=gid://shopify/Product/123456789",
+    "NUMS: lixo sem formato 8435450233067",
+  ].join("\n");
+  const r = run("catalog_health", "dry-run", { FAKE_HEALTH_RC: "1", FAKE_NUMS: nums });
+  assert.doesNotMatch(r.summaryText, /8435450233067|darth-vader|gid:\/\/|123456789|price/);
+  assert.match(r.summaryText, /- V5 vermelha\. Esperado n\/d, obtido n\/d\./);
+  assert.match(r.summaryText, /- V13 amarela\. Esperado 0, obtido n\/d\./);
+  assert.match(r.summaryText, /Linhas de números fora do formato, não mostradas: 1\./);
+});
+check("P1: sem linhas NUMS (código antigo na Fly) o resumo diz que só vem depois do deploy", () => {
+  const r = run("catalog_health", "dry-run", { FAKE_HEALTH_RC: "1" });
+  assert.match(r.summaryText, /Esperado e obtido por verificação: só depois do próximo deploy/);
 });
 check("portão vermelho → código 1 e vermelhas listadas no resumo, em português", () => {
   const r = run("catalog_health", "dry-run", { FAKE_HEALTH_RC: "1" });

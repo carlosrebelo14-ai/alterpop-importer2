@@ -126,6 +126,7 @@ import { descreverUltimaFalha } from "../../lib/importer/catalog/falhaIndexacao.
 import { listApprovedSkusForShopifySync } from "../../lib/curation/curationQueue.server.js";
 import { getLatestLifecycleReport, isLifecycleReportSuspect } from "../../lib/importer/catalog/skuLifecycle.server.js";
 import { fetchLiveVariantsBySku, diagnoseMissingLive } from "../../lib/importer/shopify/liveVariantsBySku.server.js";
+import { linhaNums } from "./healthNums.js";
 
 const GOVERNED_TEMPLATE_SUFFIXES = new Set([UNIVERSE_TEMPLATE_SUFFIX, LINE_TEMPLATE_SUFFIX]);
 
@@ -778,6 +779,12 @@ async function main() {
     );
   } else if (!escreveu) {
     console.log(`  (corrida vermelha — referência NÃO actualizada, continua a apontar ao último estado são)`);
+  }
+
+  // P1: esperado e obtido de cada verificação vermelha ou amarela, só com números (healthNums.js).
+  for (const r of results) {
+    const linha = linhaNums(r);
+    if (linha) console.log(linha);
   }
 
   if (warned.length) {

@@ -592,6 +592,32 @@ case "$TASK" in
     bullets="- Verificações: **$ok** verdes, **$bad** vermelhas, **$warn** avisos."
     if [ "$bad" -gt 0 ]; then bullets="$bullets"$'\n'"- Vermelhas: $(echo "$CLEAN" | grep '^  ✗' | sed -E 's/^  ✗ +([A-Za-z0-9]+).*/\1/' | paste -sd, - | sed 's/,/, /g')"; fi
     if [ "$warn" -gt 0 ]; then bullets="$bullets"$'\n'"- Avisos: $(echo "$CLEAN" | grep '^  !' | sed -E 's/^  ! +([A-Za-z0-9]+).*/\1/' | paste -sd, - | sed 's/,/, /g')"; fi
+    # P1: esperado e obtido de cada vermelha ou amarela, só números. A Fly já limita o texto (healthNums.js);
+    # aqui valida-se outra vez, só ASCII numérico e nunca 8 dígitos seguidos (SKUs, EAN, GTIN).
+    if [ "$((bad + warn))" -gt 0 ]; then
+      nums_total=$(count '^NUMS: ')
+      if [ "$nums_total" -eq 0 ]; then
+        bullets="$bullets"$'\n'"- Esperado e obtido por verificação: só depois do próximo deploy (a Fly ainda não imprime esta saída)."
+      else
+        nums_fora=0
+        while IFS= read -r nl; do
+          [ -z "$nl" ] && continue
+          nid="$(echo "$nl" | sed -nE 's/^NUMS: (V[0-9]{1,2}) nivel=(fail|warn) esperado=(.*) obtido=(.*)$/\1/p')"
+          nlv="$(echo "$nl" | sed -nE 's/^NUMS: (V[0-9]{1,2}) nivel=(fail|warn) esperado=(.*) obtido=(.*)$/\2/p')"
+          nes="$(echo "$nl" | sed -nE 's/^NUMS: (V[0-9]{1,2}) nivel=(fail|warn) esperado=(.*) obtido=(.*)$/\3/p')"
+          nob="$(echo "$nl" | sed -nE 's/^NUMS: (V[0-9]{1,2}) nivel=(fail|warn) esperado=(.*) obtido=(.*)$/\4/p')"
+          if [ -z "$nid" ]; then nums_fora=$((nums_fora + 1)); continue; fi
+          for campo in nes nob; do
+            v="${!campo}"
+            if [ "$v" = "n/d" ]; then continue; fi
+            if ! printf '%s' "$v" | LC_ALL=C grep -qE '^[0-9<>=.,;%/() -]+$' || printf '%s' "$v" | LC_ALL=C grep -qE '[0-9]{8,}'; then printf -v "$campo" '%s' "n/d"; fi
+          done
+          [ "$nlv" = "fail" ] && nlv_pt="vermelha" || nlv_pt="amarela"
+          bullets="$bullets"$'\n'"- $nid $nlv_pt. Esperado ${nes}, obtido ${nob}."
+        done < <(echo "$CLEAN" | grep -E '^NUMS: ' || true)
+        if [ "$nums_fora" -gt 0 ]; then bullets="$bullets"$'\n'"- Linhas de números fora do formato, não mostradas: $nums_fora."; fi
+      fi
+    fi
     if [ "$RC" -eq 75 ] || [ "$RC" -eq 2 ]; then bullets=""; KEY="não avaliado"; else KEY="$ok verdes, $bad vermelhas, $warn avisos"; fi
     ;;
   diagnose_theme)
