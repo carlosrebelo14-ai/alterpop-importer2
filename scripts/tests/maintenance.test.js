@@ -438,6 +438,36 @@ check("D3: a causa não diz 'autorização recusada' por causa de 401 ou 403 nas
   assert.doesNotMatch(r.summaryText, /autorização da Fly ou da Shopify recusada/);
   assert.match(r.summaryText, /recusa-se a correr com qualquer erro/);
 });
+function curlFalso(codigo) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "curl-falso-"));
+  fs.writeFileSync(path.join(dir, "curl"), `#!/bin/sh\n${codigo === "falha" ? "exit 7" : `printf '${codigo}'`}\n`, { mode: 0o755 });
+  return `${dir}:${process.env.PATH}`;
+}
+check("D3: com o repositório privado (404 da API pública) os 2 handles saem com as contagens", () => {
+  const r = run("character_pages_sync", "dry-run", { FAKE_CPS: CPS_ERROS, FAKE_RC: "1", GITHUB_REPOSITORY: "dono/repo", PATH: curlFalso("404") });
+  assert.match(r.summaryText, /Characters acima do limite \(handle e produtos\): spider-man \(403\), darth-vader \(129\)\./);
+});
+check("D3: repositório público (200), limite de pedidos (403) ou falha de rede nunca publicam handles", () => {
+  for (const codigo of ["200", "403", "falha", "000"]) {
+    const r = run("character_pages_sync", "dry-run", { FAKE_CPS: CPS_ERROS, FAKE_RC: "1", GITHUB_REPOSITORY: "dono/repo", PATH: curlFalso(codigo) });
+    assert.doesNotMatch(r.summaryText, /spider-man|darth-vader/, codigo);
+    assert.match(r.summaryText, /Nomes dos Characters acima do limite não publicados/, codigo);
+  }
+});
+check("D3: sem GITHUB_REPOSITORY, ou com valor fora do formato, nunca publica handles", () => {
+  for (const repo of [undefined, "", "sem barra", "a/b; rm -rf /"]) {
+    const env = { FAKE_CPS: CPS_ERROS, FAKE_RC: "1", PATH: curlFalso("404") };
+    if (repo !== undefined) env.GITHUB_REPOSITORY = repo;
+    const r = run("character_pages_sync", "dry-run", env);
+    assert.doesNotMatch(r.summaryText, /spider-man|darth-vader/, String(repo));
+  }
+});
+check("D3: handle fora do formato de handle não sai mesmo com o repositório privado", () => {
+  const mau = "  error      Spider Man; DROP  Marvel  5 produtos  ⚠ 140 produtos > limite de 128 (list.max) — nunca truncar";
+  const r = run("character_pages_sync", "dry-run", { FAKE_CPS: mau, FAKE_RC: "1", GITHUB_REPOSITORY: "dono/repo", PATH: curlFalso("404") });
+  assert.doesNotMatch(r.summaryText, /Spider|DROP/);
+  assert.match(r.summaryText, /nenhum com nome válido/);
+});
 check("D3: uma classe desconhecida conta como outra e sem texto", () => {
   const r = run("character_pages_sync", "dry-run", { FAKE_CPS: "  error      frodo   LOTR   5 produtos  ⚠ falha estranha com frodo", FAKE_RC: "1" });
   assert.match(r.summaryText, /Character acima do limite de produtos do metaobject \(list\.max, nunca truncar\) \*\*0\*\*, com sem contagem produtos \(limite \?\); outras classes \*\*1\*\*/);
