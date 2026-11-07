@@ -254,6 +254,32 @@ check("contrato: as marcas que o resumo lê são as que a app escreve", () => {
   assert.ok(degradado.includes("[dbDegraded] recusado: ${action}"), "falta a marca de recusa no dbDegraded");
 });
 
+check("PR C R1: última linha C8 e desativados (C6), com as causas só da lista fixa", () => {
+  const texto = [
+    jsonLinha(T(10, 0), "[trigger-sync] stock de publicados — procura por SKU: 10 found, 1 not_found, 2 error (retry_esgotado=2), de 13 verificados."),
+    jsonLinha(T(10, 1), '[trigger-sync] stock de publicados — 5 erro(s) "não encontrado" desativado(s).'),
+    jsonLinha(T(11, 0), "[trigger-sync] stock de publicados — procura por SKU: 12 found, 0 not_found, 1 error (timeout=1), de 13 verificados."),
+    jsonLinha(T(11, 1), '[trigger-sync] stock de publicados — 2 erro(s) "não encontrado" desativado(s).'),
+  ].join("\n");
+  const r = resumirLogs(texto);
+  assert.equal(r.STOCK_CICLOS, 2);
+  assert.equal(r.STOCK_FOUND, "12");
+  assert.equal(r.STOCK_ERROR_CAUSAS, "timeout:1");
+  assert.equal(r.STOCK_ULTIMO_TS, T(11, 0));
+  assert.equal(r.DESATIVADOS_SOMA, 7);
+  assert.equal(r.DESATIVADOS_ULTIMO, "2");
+});
+check("PR C R1: sem linha C8 o contador é 0, e uma causa desconhecida recusa a linha", () => {
+  assert.equal(resumirLogs(jsonLinha(T(10, 0), "app ok")).STOCK_CICLOS, 0);
+  const mau = jsonLinha(T(10, 0), "procura por SKU: 1 found, 0 not_found, 1 error (handle_x=1), de 2 verificados.");
+  assert.equal(resumirLogs(mau).STOCK_CICLOS, 0);
+});
+check("PR C R1: texto simples também serve", () => {
+  const r = resumirLogs("2026-11-07T10:00:00Z [trigger-sync] stock de publicados — procura por SKU: 3 found, 0 not_found, 0 error, de 3 verificados.");
+  assert.equal(r.STOCK_CICLOS, 1);
+  assert.equal(r.STOCK_ERROR_CAUSAS, "-");
+});
+
 if (failures) {
   console.error(`\n${failures} falha(s)`);
   process.exit(1);

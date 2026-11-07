@@ -57,7 +57,9 @@ check("o job execute: needs dry-run, environment production, só mode=execute na
   assert.match(job, /needs: dry-run/);
   assert.match(job, /environment: production/);
   assert.match(job, /inputs\.mode == 'execute'/);
-  assert.match(job, /\["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory"]/);
+  assert.match(job, /\["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory","catalog_health"]/);
+  // R3: o catalog_health chega ao execute mesmo com o dry-run vermelho, e só ele.
+  assert.match(job, /needs\.dry-run\.result == 'success' \|\| \(inputs\.task == 'catalog_health' && needs\.dry-run\.result == 'failure'\)/);
   assert.match(job, /maintenance\.sh "\$TASK" execute/);
 });
 check("nenhum texto livre vai para comandos; token só por secrets.FLY_API_TOKEN; sem flags de loja", () => {
@@ -201,7 +203,7 @@ check("character_pages_sync: dry-run sem --execute, execute com", () => {
   assert.ok(ran(r, "character-pages-sync.js --execute"));
 });
 check("tarefas só de leitura ignoram execute: nunca correm comandos de escrita", () => {
-  for (const task of ["catalog_health", "diagnose_theme", "diagnose_characters"]) {
+  for (const task of ["diagnose_theme", "diagnose_characters"]) {
     const r = run(task, "execute");
     assert.ok(!r.calls.some((c) => /--execute|db:push|migrate/.test(c)), task);
     assert.match(r.summaryText, /não se aplica a esta tarefa/);
@@ -322,6 +324,63 @@ check("P1: a segunda validação recusa SKUs, handles e GIDs mesmo que a Fly os 
 check("P1: sem linhas NUMS (código antigo na Fly) o resumo diz que só vem depois do deploy", () => {
   const r = run("catalog_health", "dry-run", { FAKE_HEALTH_RC: "1" });
   assert.match(r.summaryText, /Esperado e obtido por verificação: só depois do próximo deploy/);
+});
+console.log("PR C · catalog_health execute (--aceitar-base) e logs_recent com o resumo C8");
+const BASE_ACEITE = "  (--aceitar-base: base nova em 23752 / 12.3%, histórico reiniciado. Esta corrida mantém o resultado que deu; é a seguinte que compara com a base nova.)";
+check("R3: execute com dry-run avaliado corre --aceitar-base e diz a base aceite, só números", () => {
+  const r = run("catalog_health", "execute", { DRY_RUN_KEY: "13 verdes, 3 vermelhas, 0 avisos", FAKE_HEALTH_RC: "1", FAKE_NUMS: BASE_ACEITE });
+  assert.ok(ran(r, "npm run catalog:health -- --aceitar-base"));
+  assert.equal(r.status, 0, "a base aceite é o objetivo do execute, mesmo com vermelhas por tratar");
+  assert.match(r.summaryText, /execute \(escreve\)/);
+  assert.match(r.summaryText, /Base nova aceite: 23752 produtos, rácio 12\.3%/);
+  assert.match(r.summaryText, /Escrito só o health-gate-state\.json/);
+});
+check("R3: execute sem dry-run avaliado recusa e não toca na Fly", () => {
+  for (const key of [undefined, "", "não avaliado", "sem linha de resumo"]) {
+    const env = { FAKE_HEALTH_RC: "1" };
+    if (key !== undefined) env.DRY_RUN_KEY = key;
+    const r = run("catalog_health", "execute", env);
+    assert.equal(r.status, 64, String(key));
+    assert.ok(!ran(r, "--aceitar-base") && !ran(r, "catalog:health"), String(key));
+    assert.match(r.summaryText, /Base não aceite/);
+  }
+});
+check("R3: execute sem a linha de confirmação não diz que aceitou a base", () => {
+  const r = run("catalog_health", "execute", { DRY_RUN_KEY: "13 verdes, 3 vermelhas, 0 avisos", FAKE_HEALTH_RC: "1" });
+  assert.notEqual(r.status, 0);
+  assert.match(r.summaryText, /Base não aceite: a linha de confirmação do --aceitar-base não apareceu/);
+  assert.doesNotMatch(r.summaryText, /Base nova aceite/);
+});
+check("R3: o dry-run do catalog_health nunca usa --aceitar-base", () => {
+  const r = run("catalog_health", "dry-run", { FAKE_HEALTH_RC: "1" });
+  assert.ok(ran(r, "npm run catalog:health'"));
+  assert.ok(!ran(r, "--aceitar-base"));
+});
+check("R3: o execute com indexação a decorrer não corre o --aceitar-base", () => {
+  const r = run("catalog_health", "execute", { DRY_RUN_KEY: "13 verdes, 3 vermelhas, 0 avisos", FAKE_INDEXING_CALLS: "99" });
+  assert.equal(r.status, 75);
+  assert.ok(!ran(r, "--aceitar-base"));
+});
+const CICLO_STOCK = [
+  JSON.stringify({ timestamp: "2026-11-07T10:30:00Z", message: "[trigger-sync] stock de publicados — procura por SKU: 2400 found, 0 not_found, 46 error (retry_esgotado=40, timeout=6), de 2446 verificados." }),
+  JSON.stringify({ timestamp: "2026-11-07T10:30:01Z", message: '[trigger-sync] stock de publicados — 1289 erro(s) "não encontrado" desativado(s).' }),
+].join("\n");
+check("R1: logs_recent publica a linha C8 e os desativados, só números e causas fixas", () => {
+  const r = run("logs_recent", "dry-run", { FAKE_LOGS: CICLO_STOCK.replace(/\n/g, "\\n") });
+  assert.equal(r.status, 0);
+  assert.match(r.summaryText, /procura por SKU \*\*2400\*\* found, \*\*0\*\* not_found, \*\*46\*\* error \(causas: retry_esgotado:40,timeout:6\), de \*\*2446\*\* verificados/);
+  assert.match(r.summaryText, /último ciclo \*\*1289\*\*, soma no buffer \*\*1289\*\* em \*\*1\*\* ciclo\(s\)/);
+});
+check("R2: sem ciclo de stock no buffer diz isso e mostra a janela coberta", () => {
+  const r = run("logs_recent", "dry-run", { FAKE_LOGS: JSON.stringify({ timestamp: "2026-11-07T09:00:00Z", message: "app ok" }) });
+  assert.match(r.summaryText, /Sem ciclo de stock dos publicados no buffer da Fly/);
+  assert.match(r.summaryText, /Janela coberta: de 2026-11-07T09:00:00\.000Z a 2026-11-07T09:00:00\.000Z/);
+});
+check("R1: causa fora da lista fixa ou texto na linha não passa para o resumo", () => {
+  const mau = JSON.stringify({ timestamp: "2026-11-07T10:30:00Z", message: "[trigger-sync] stock de publicados — procura por SKU: 1 found, 0 not_found, 1 error (darth_vader=1), de 2 verificados." });
+  const r = run("logs_recent", "dry-run", { FAKE_LOGS: mau });
+  assert.doesNotMatch(r.summaryText, /darth_vader/);
+  assert.match(r.summaryText, /Sem ciclo de stock dos publicados no buffer/);
 });
 check("portão vermelho → código 1 e vermelhas listadas no resumo, em português", () => {
   const r = run("catalog_health", "dry-run", { FAKE_HEALTH_RC: "1" });
@@ -943,9 +1002,11 @@ check("reset: as tarefas do workflow são as que o maintenance.sh aceita (menos 
 });
 check("reset: o job execute e o WRITES do maintenance.sh falam das mesmas tarefas que escrevem", () => {
   const writes = sh.match(/^case "\$TASK" in (.*?)\) WRITES=true/m)[1].split("|").map((t) => t.trim()).sort();
-  const lista = JSON.parse(code.match(/contains\(fromJSON\('(\[[^\]]*\])'\), inputs\.task\)/)[1]);
+  const lista = JSON.parse(code.match(/contains\(fromJSON\('(\[[^\]]*\])'\), inputs\.task\)/)[1]).filter((t) => t !== "catalog_health");
   if (/inputs\.task == 'reset_execute'/.test(code)) lista.push("reset_execute");
   assert.deepEqual(lista.sort(), writes);
+  // R3: o catalog_health escreve só em execute, por linha própria.
+  assert.match(sh, /if \[ "\$TASK" = "catalog_health" \] && \[ "\$PHASE" = "execute" \]; then WRITES=true; fi/);
   assert.ok(writes.includes("reset_execute") && !writes.includes("reset_dry_run"));
 });
 
