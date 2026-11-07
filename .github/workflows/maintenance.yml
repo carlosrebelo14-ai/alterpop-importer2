@@ -113,7 +113,9 @@ jobs:
   execute:
     name: "2 · execute (environment production)"
     needs: dry-run
-    if: github.ref == 'refs/heads/main' && inputs.mode == 'execute' && (contains(fromJSON('["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory"]'), inputs.task) || inputs.task == 'reset_execute')
+    # R3: o catalog_health só chega aqui depois de um dry-run que avaliou o portão, mesmo vermelho (o --aceitar-base serve
+    # justamente a um portão vermelho por descida legítima). O maintenance.sh recusa se a linha do dry-run não for "N verdes, N vermelhas, N avisos".
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && inputs.mode == 'execute' && (needs.dry-run.result == 'success' || (inputs.task == 'catalog_health' && needs.dry-run.result == 'failure')) && (contains(fromJSON('["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory","catalog_health"]'), inputs.task) || inputs.task == 'reset_execute') }}
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 40

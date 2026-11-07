@@ -298,7 +298,7 @@ await check("active_vs_queue nas opções da tarefa, logo a seguir a restore_dry
 await check("o job de escrita (execute) não a inclui: a lista de tarefas que escrevem é a mesma", () => {
   const job = ymlCodigo.slice(ymlCodigo.indexOf("  execute:"));
   assert.doesNotMatch(job, /active_vs_queue/);
-  assert.match(job, /contains\(fromJSON\('\["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory"\]'\), inputs\.task\)/);
+  assert.match(job, /contains\(fromJSON\('\["volume_snapshot","tags_cleanup","character_pages_sync","db_push","scale_memory","catalog_health"\]'\), inputs\.task\)/);
 });
 await check("o job dry-run corre só dry-run (sem environment e sem execute)", () => {
   const job = ymlCodigo.slice(ymlCodigo.indexOf("  dry-run:"), ymlCodigo.indexOf("  execute:"));

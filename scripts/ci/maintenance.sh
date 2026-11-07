@@ -74,6 +74,8 @@ esac
 
 WRITES=false
 case "$TASK" in volume_snapshot | tags_cleanup | character_pages_sync | db_push | scale_memory | reset_execute) WRITES=true ;; esac
+# R3 (PR C): o catalog_health só escreve em execute, e o que escreve é só o health-gate-state.json (--aceitar-base).
+if [ "$TASK" = "catalog_health" ] && [ "$PHASE" = "execute" ]; then WRITES=true; fi
 EFFECTIVE="$PHASE"
 if [ "$WRITES" = false ]; then EFFECTIVE="dry-run"; fi
 
@@ -204,14 +206,29 @@ KEY=""
 RESULT_OVERRIDE=""
 case "$TASK" in
   catalog_health)
-    DESC="Corre o portão de saúde do catálogo (V3, V5–V19). Só lê."
-    wait_for_indexing
-    case $? in
-      1) NOTE="Catálogo a indexar, repetir. A indexação continuava a decorrer ao fim de ${WAITED_MIN} min: o portão não foi avaliado, porque V5, V6, V7 e V17 medem um catálogo a meio."
-         RESULT_OVERRIDE="⏳ Catálogo a indexar, repetir (portão não avaliado)"; RC=75 ;;
-      2) NOTE="Não consegui ler o estado da indexação. O portão não correu." ; RC=2 ;;
-    esac
-    if [ "$RC" -eq 0 ]; then remote "npm run catalog:health"; RC=$?; fi
+    HEALTH_ACCEPT=false
+    if [ "$PHASE" = "execute" ]; then
+      HEALTH_ACCEPT=true
+      DESC="Aceita a base nova do portão de saúde (--aceitar-base): reescreve só o health-gate-state.json na Fly, com o total e o rácio de agora, e reinicia o histórico. Não toca na loja, na fila nem na BD. O resultado do portão não muda: continua a avaliar as outras verificações."
+      # Só depois de um dry-run que avaliou o portão (verdes e vermelhas contadas). Um dry-run não avaliado (indexação, ssh) não autoriza.
+      if ! echo "${DRY_RUN_KEY:-}" | grep -qE '^[0-9]+ verdes, [0-9]+ vermelhas, [0-9]+ avisos$'; then
+        NOTE="O dry-run não avaliou o portão, por isso a base não foi aceite."
+        RESULT_OVERRIDE="⛔ Base não aceite (dry-run sem avaliação do portão)"; RC=64
+      fi
+    else
+      DESC="Corre o portão de saúde do catálogo (V3, V5–V19). Só lê."
+    fi
+    if [ "$RC" -eq 0 ]; then
+      wait_for_indexing
+      case $? in
+        1) NOTE="Catálogo a indexar, repetir. A indexação continuava a decorrer ao fim de ${WAITED_MIN} min: o portão não foi avaliado, porque V5, V6, V7 e V17 medem um catálogo a meio."
+           RESULT_OVERRIDE="⏳ Catálogo a indexar, repetir (portão não avaliado)"; RC=75 ;;
+        2) NOTE="Não consegui ler o estado da indexação. O portão não correu." ; RC=2 ;;
+      esac
+    fi
+    if [ "$RC" -eq 0 ]; then
+      if [ "$HEALTH_ACCEPT" = true ]; then remote "npm run catalog:health -- --aceitar-base"; RC=$?; else remote "npm run catalog:health"; RC=$?; fi
+    fi
     ;;
   esperar_indexacao)
     DESC="Espera até 15 min que a indexação do catálogo acabe, com a mesma sonda do catalog_health. Só lê. O scripts/deploy.sh usa-a antes do flyctl deploy; também serve para uso manual."
@@ -618,7 +635,18 @@ case "$TASK" in
         if [ "$nums_fora" -gt 0 ]; then bullets="$bullets"$'\n'"- Linhas de números fora do formato, não mostradas: $nums_fora."; fi
       fi
     fi
-    if [ "$RC" -eq 75 ] || [ "$RC" -eq 2 ]; then bullets=""; KEY="não avaliado"; else KEY="$ok verdes, $bad vermelhas, $warn avisos"; fi
+    if [ "$RC" -eq 75 ] || [ "$RC" -eq 2 ] || [ "$RC" -eq 64 ]; then bullets=""; KEY="não avaliado"; else KEY="$ok verdes, $bad vermelhas, $warn avisos"; fi
+    if [ "${HEALTH_ACCEPT:-false}" = true ] && [ "$RC" -ne 64 ] && [ "$RC" -ne 75 ] && [ "$RC" -ne 2 ]; then
+      # R3: a prova de que a base foi aceite é a linha que o pre-pilot-verify imprime. Só números.
+      base_nova="$(echo "$CLEAN" | sed -nE 's/^  \(--aceitar-base: base nova em ([0-9]{1,7}) \/ ([0-9]{1,3}(\.[0-9]{1,2})?)%, histórico reiniciado.*$/\1 produtos, rácio \2%/p' | head -1)"
+      if [ -n "$base_nova" ]; then
+        bullets="$bullets"$'\n'"- Base nova aceite: $base_nova. Escrito só o health-gate-state.json. O histórico recomeça nesta corrida e a seguinte compara com esta base."
+        RESULT_OVERRIDE="✅ Base nova aceite"; RC=0
+      else
+        bullets="$bullets"$'\n'"- Base não aceite: a linha de confirmação do --aceitar-base não apareceu."
+        CAUSE="o --aceitar-base não confirmou a gravação do estado."
+      fi
+    fi
     ;;
   diagnose_theme)
     total=$(first_num 'scope\(s\) concedido' '[0-9]+')
@@ -734,6 +762,13 @@ case "$TASK" in
       bullets="$bullets"$'\n'"- Reinícios do worker (saiu sem concluir): **$(kn REINICIOS)**. Arranques recusados pela guarda de atividade: **$(kn INDEX_RECUSADAS)**. Ciclos que não publicaram: **$(kn CICLOS_SALTADOS)**."
       bullets="$bullets"$'\n'"- Linhas de OOM (memória esgotada: \"Out of memory\" ou \"oom\") nas linhas lidas: **$(kn OOM_LINHAS)**."
       bullets="$bullets"$'\n'"- Lote de fila mais lento: **$(kv FILA_LOTE_MAX_MS)** ms, em **$(kn FILA_LOTES)** lotes."
+      # R1/R2: resumo C8 do ciclo de stock dos publicados e erros "não encontrado" desativados (C6).
+      if [ "$(kn STOCK_CICLOS)" -gt 0 ]; then
+        bullets="$bullets"$'\n'"- Ciclo de stock dos publicados (último no buffer, às $(kv STOCK_ULTIMO_TS); $(kn STOCK_CICLOS) no buffer): procura por SKU **$(kv STOCK_FOUND)** found, **$(kv STOCK_NOT_FOUND)** not_found, **$(kv STOCK_ERROR)** error (causas: $(kv STOCK_ERROR_CAUSAS)), de **$(kv STOCK_VERIFICADOS)** verificados."
+        bullets="$bullets"$'\n'"- Erros \"não encontrado\" desativados (C6): último ciclo **$(kv DESATIVADOS_ULTIMO)**, soma no buffer **$(kn DESATIVADOS_SOMA)** em **$(kn DESATIVADOS_CICLOS)** ciclo(s)."
+      else
+        bullets="$bullets"$'\n'"- Sem ciclo de stock dos publicados no buffer da Fly com a linha \"procura por SKU\". Janela coberta: de $(kv JANELA_INICIO) a $(kv JANELA_FIM). O ciclo corre a cada cerca de 45 min e o buffer pode não o cobrir."
+      fi
       if [ "$(kv INDEX_ULTIMA_CAUSA)" != "-" ] && [ -n "$(kv INDEX_ULTIMA_CAUSA)" ]; then
         bullets="$bullets"$'\n'"- Último fim de indexação: causa **$(kv INDEX_ULTIMA_CAUSA)**, estado **$(kv INDEX_ULTIMA_ESTADO)**, duração **$(kv INDEX_ULTIMA_DURACAO_S)** s, às $(kv INDEX_ULTIMO_FIM_TS)."
       fi

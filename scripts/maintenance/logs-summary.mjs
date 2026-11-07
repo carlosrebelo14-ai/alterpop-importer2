@@ -15,11 +15,14 @@
  *   [indexacao] recusada (causa=<script|pasta|leitura|ilegivel|sem_pid|publicacao_ou_reset>)  → arranque recusado (PR 5); o painel escreve a mesma marca com prefixo [painel]
  *   [trigger-sync] ciclo saltado: <motivo> | ciclo parado antes da publicação: <motivo> → o ciclo não publicou (PR 5)
  *   [dbDegraded] recusado: <ação>                                      → escrita recusada
+ *   [trigger-sync] stock de publicados — procura por SKU: N found, N not_found, N error[ (causa=N, ...)], de N verificados   → resumo C8 do ciclo de stock
+ *   [trigger-sync] stock de publicados — N erro(s) "não encontrado" desativado(s)                                            → C6, erros antigos desativados
  *
  * Uso: node scripts/maintenance/logs-summary.mjs <ficheiro>
  */
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
+import { LOOKUP_ERROR_CAUSES } from "../../lib/importer/lib/resolveSku.js";
 
 const CAUSAS = ["painel", "ciclo", "script", "desconhecida"];
 const INICIO_RE = /\[indexacao\] inicio causa=(\w+) modo=(\w+)/;
@@ -32,15 +35,43 @@ const RECUSA_INDEXACAO_RE = /\[indexacao\] recusada \(causa=/;
 // aprovados saltada pela reserva, para o contador bater com "Ciclos que não publicaram" (rodada 9).
 const CICLO_SALTADO_RE =
   /\[trigger-sync\] ciclo (saltado|parado antes da publicação)|\[ciclo\] publicação recusada|\[trigger-sync\] indexação excedeu o tempo limite|\[trigger-sync\] publicação de aprovados saltada/;
+// P R C (R1): resumo C8 do ciclo de stock e erros "não encontrado" desativados (C6). Só números e as causas fixas de LOOKUP_ERROR_CAUSES.
+const STOCK_RE =
+  /procura por SKU: (\d{1,7}) found, (\d{1,7}) not_found, (\d{1,7}) error(?: \(([a-z0-9_]+=\d{1,7}(?:, [a-z0-9_]+=\d{1,7})*)\))?, de (\d{1,7}) verificados/;
+const DESATIVADOS_RE = /(\d{1,7}) erro\(s\) \\?"não encontrado\\?" desativado\(s\)/;
+const CAUSAS_DE_ERRO = new Set(Object.values(LOOKUP_ERROR_CAUSES));
 const ISO_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/;
 // Memória esgotada: a Fly ou o kernel escrevem "Out of memory", ou "oom" como palavra (também "oom_killed"). Não casa com "room".
 const OOM_RE = /Out of memory|(?:^|[^a-z])oom(?![a-z])/i;
+
+/** Texto da mensagem: o campo `message` de uma entrada JSON da Fly, ou a linha inteira em texto simples. */
+export function mensagemDe(linha) {
+  try {
+    const obj = JSON.parse(linha);
+    if (obj && typeof obj === "object" && typeof obj.message === "string") return obj.message;
+  } catch {
+    /* texto simples */
+  }
+  return linha;
+}
 
 /** Marca de tempo em ISO, ou null se não for uma data válida. */
 export function tsValido(valor) {
   if (valor == null) return null;
   const d = typeof valor === "number" ? new Date(valor) : new Date(String(valor));
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/**
+ * Causas do resumo C8, só as de LOOKUP_ERROR_CAUSES. Qualquer outra chave ou valor fora de formato recusa a lista inteira.
+ * @param {string | undefined} bruto ex.: "retry_esgotado=2, timeout=1"
+ * @returns {string | null} "retry_esgotado:2,timeout:1", ou null
+ */
+export function causasPublicaveis(bruto) {
+  if (!bruto) return "-";
+  const pares = bruto.split(", ").map((p) => p.split("="));
+  if (!pares.every(([k, v]) => CAUSAS_DE_ERRO.has(k) && /^\d{1,7}$/.test(v))) return null;
+  return pares.map(([k, v]) => `${k}:${v}`).join(",");
 }
 
 /**
@@ -115,6 +146,33 @@ export function resumirLogs(texto) {
     }
   }
 
+  // R1/R2: última linha do resumo C8 e erros antigos desativados (C6). Sem ciclo de stock no buffer, STOCK_CICLOS=0.
+  let stockCiclos = 0;
+  let stockUltimo = null;
+  let desativadosCiclos = 0;
+  let desativadosSoma = 0;
+  let desativadosUltimo = null;
+  let tsAnt = null;
+  for (const e of entradas) {
+    const ts = e.ts ?? tsAnt;
+    if (e.ts) tsAnt = e.ts;
+    const msg = mensagemDe(e.linha);
+    const st = msg.match(STOCK_RE);
+    if (st) {
+      const causas = causasPublicaveis(st[4]);
+      if (causas !== null) {
+        stockCiclos += 1;
+        stockUltimo = { found: st[1], notFound: st[2], error: st[3], causas, verificados: st[5], ts };
+      }
+    }
+    const de = msg.match(DESATIVADOS_RE);
+    if (de) {
+      desativadosCiclos += 1;
+      desativadosSoma += Number(de[1]);
+      desativadosUltimo = { n: de[1], ts };
+    }
+  }
+
   const tempos = entradas.map((e) => e.ts).filter(Boolean).sort();
   const dbd = contagem(/DbDegradedError/);
   const degr = contagem(/modo degradado/i);
@@ -148,6 +206,17 @@ export function resumirLogs(texto) {
     INDEX_ULTIMO_FIM_TS: ultimoFim?.ts ?? "-",
     FILA_LOTES: lotesFila,
     FILA_LOTE_MAX_MS: loteFilaMaxMs ?? "-",
+    STOCK_CICLOS: stockCiclos,
+    STOCK_ULTIMO_TS: stockUltimo?.ts ?? "-",
+    STOCK_FOUND: stockUltimo?.found ?? "-",
+    STOCK_NOT_FOUND: stockUltimo?.notFound ?? "-",
+    STOCK_ERROR: stockUltimo?.error ?? "-",
+    STOCK_ERROR_CAUSAS: stockUltimo?.causas ?? "-",
+    STOCK_VERIFICADOS: stockUltimo?.verificados ?? "-",
+    DESATIVADOS_CICLOS: desativadosCiclos,
+    DESATIVADOS_SOMA: desativadosSoma,
+    DESATIVADOS_ULTIMO: desativadosUltimo?.n ?? "-",
+    DESATIVADOS_ULTIMO_TS: desativadosUltimo?.ts ?? "-",
   };
 }
 
