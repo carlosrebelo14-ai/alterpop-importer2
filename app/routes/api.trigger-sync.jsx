@@ -32,6 +32,8 @@ import { reconcileNewArrivalsCycle } from "../../lib/importer/shopify/newArrival
 import { reconcileLiveDriftCycle } from "../../lib/importer/shopify/liveDriftReconcileCycle.server.js";
 import { reconcileCharacterPagesCycle, characterCycleEnabled } from "../../lib/importer/shopify/characterPagesReconcileCycle.server.js";
 import { reconcileCollectionPublicationCycle } from "../../lib/importer/shopify/collectionPublicationReconcileCycle.server.js";
+import { writeStockSyncSummary, buildStockSyncSummary } from "../../lib/importer/shopify/stockSyncSummary.js";
+import { resolveCurationDataDir } from "../../lib/curation/dataDir.js";
 import { persistSyncError, clearNotFoundErrorsForSkus } from "../../lib/importer/sync/syncErrorLog.server.js";
 import {
   reconcileMarginErosionCycle,
@@ -363,11 +365,18 @@ export const action = async ({ request }) => {
           );
           console.log(`[trigger-sync] stock de publicados — ${formatLookupSummary(stockResult)}.`);
           // C6: erros "não encontrado" antigos dos SKUs que a loja agora devolve deixam de estar ativos.
+          let desativados = 0;
           try {
-            const cleared = await clearNotFoundErrorsForSkus(shop, stockResult.foundSkus || []);
-            if (cleared > 0) console.log(`[trigger-sync] stock de publicados — ${cleared} erro(s) "não encontrado" desativado(s).`);
+            desativados = await clearNotFoundErrorsForSkus(shop, stockResult.foundSkus || []);
+            if (desativados > 0) console.log(`[trigger-sync] stock de publicados — ${desativados} erro(s) "não encontrado" desativado(s).`);
           } catch (err) {
             console.error("[trigger-sync] desativar erros antigos falhou:", err?.message || err);
+          }
+          // D1 (PR D): o resumo fica em ficheiro, porque o buffer de logs da Fly não cobre o intervalo do ciclo. Só números.
+          try {
+            writeStockSyncSummary(resolveCurationDataDir(), buildStockSyncSummary(stockResult, desativados));
+          } catch (err) {
+            console.error("[trigger-sync] gravar o resumo do stock falhou:", err?.message || err);
           }
           // stockResult.failures[] era calculado e nunca lido por ninguém — a falha
           // ficava só na contagem, sem SKU nem mensagem (achado 24/09). Grava no mesmo

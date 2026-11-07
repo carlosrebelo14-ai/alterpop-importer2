@@ -144,7 +144,8 @@ case "$cmd" in
     printf 'PC: regra_servidor=LEGACY\\nPC: impostos_incluidos=true\\nPC: publicados=57\\nPC: conformes_net=0\\nPC: a_atualizar=50\\nPC: sobem=0\\nPC: descem=50\\nPC: mediana_diff_pct=-17.4\\nPC: banda_ate_1=0\\nPC: banda_1_a_5=2\\nPC: banda_5_a_15=3\\nPC: banda_acima_15=45\\nPC: fora_preco_manual=4\\nPC: manual_override=3\\nPC: manual_detetado=1\\nPC: trancados=0\\nPC: sem_registo=1\\nPC: outros_ignorados=0\\nPC: falhados=1\\nPC: nao_encontrados=1\\n'; exit "\${FAKE_RC:-0}";;
   *tags-cleanup*)
     printf 'produtos lidos: 57 · limpos: 0 · a limpar: 57 (179 tag(s)) · sync_locked de fora: 0\ntags distintas fora da lista: 2\n    57  new-arrival\n    40  Funko\n  star-wars-darth-vader SKU 8435450233067 9,99 €\nreleitura: 57 produto(s) · com tags fora da lista (sem contar sync_locked excluídos): 0\n'; exit "\${FAKE_RC:-0}";;
-  *character-pages-sync*) printf '  update     darth-vader  Star Wars  24 produtos\n  create     grogu  Star Wars  7 produtos gid://shopify/Metaobject/1\nalterpop.character escrito em 31 produto(s)\n'; exit "\${FAKE_RC:-0}";;
+  *print-stock-sync-summary*) printf '%s\n' "$FAKE_SSS"; exit "\${FAKE_SSS_RC:-0}";;
+  *character-pages-sync*) printf '  update     darth-vader  Star Wars  24 produtos\n  create     grogu  Star Wars  7 produtos gid://shopify/Metaobject/1\nalterpop.character escrito em 31 produto(s)\n'; [ -n "$FAKE_CPS" ] && printf '%s\n' "$FAKE_CPS"; exit "\${FAKE_RC:-0}";;
   *print-access-scopes*) printf '[print-access-scopes] 15 scope(s) concedido(s) em loja-secreta.myshopify.com:\n  - read_themes\n[print-access-scopes] read_themes: concedido\n'; exit "\${FAKE_RC:-0}";;
   *theme-contract-status*) printf '{"ok":true,"enforced":true,"status":"ok","blocking":0,"warnings":1,"checkedAt":"2026-10-13T00:00:00Z","erro":false}\n'; exit "\${FAKE_RC:-0}";;
   *character-cycle-summary*) printf '{"status":"yellow","ranAt":"2026-10-09T10:00:00Z","toApply_n":8}\n'; exit "\${FAKE_RC:-0}";;
@@ -381,6 +382,70 @@ check("R1: causa fora da lista fixa ou texto na linha não passa para o resumo",
   const r = run("logs_recent", "dry-run", { FAKE_LOGS: mau });
   assert.doesNotMatch(r.summaryText, /darth_vader/);
   assert.match(r.summaryText, /Sem ciclo de stock dos publicados no buffer/);
+});
+console.log("PR D · resumo do ciclo de stock em ficheiro (D2) e erros do character_pages_sync por classe (D3)");
+const sssOk = (min = 7) =>
+  `SSS: estado=ok ranAt=${new Date(Date.now() - min * 60000).toISOString()} checked=2446 found=2400 notFound=0 error=46 causas=retry_esgotado:40,timeout:6 desativados=1289`;
+const logsSemC8 = JSON.stringify({ timestamp: "2026-11-07T09:00:00Z", message: "app ok" });
+check("D2: sem a linha no buffer lê o ficheiro e mostra a idade", () => {
+  const r = run("logs_recent", "dry-run", { FAKE_LOGS: logsSemC8, FAKE_SSS: sssOk(7) });
+  assert.equal(r.status, 0);
+  assert.ok(ran(r, "node scripts/maintenance/print-stock-sync-summary.mjs"));
+  assert.match(r.summaryText, /Último resumo do ciclo de stock \(gravado às [0-9TZ:.-]+, há [67] min\): procura por SKU \*\*2400\*\* found, \*\*0\*\* not_found, \*\*46\*\* error \(causas: retry_esgotado:40,timeout:6\), de \*\*2446\*\* verificados\. Erros "não encontrado" desativados: \*\*1289\*\*/);
+});
+check("D2: com a linha no buffer não vai à Fly buscar o ficheiro", () => {
+  const r = run("logs_recent", "dry-run", { FAKE_LOGS: CICLO_STOCK.replace(/\n/g, "\\n"), FAKE_SSS: sssOk(7) });
+  assert.ok(!ran(r, "print-stock-sync-summary"));
+  assert.doesNotMatch(r.summaryText, /Último resumo do ciclo de stock \(gravado/);
+});
+check("D2: ficheiro ausente diz que nenhum ciclo correu com esta versão", () => {
+  const r = run("logs_recent", "dry-run", { FAKE_LOGS: logsSemC8, FAKE_SSS: "SSS: estado=ausente" });
+  assert.match(r.summaryText, /Último resumo do ciclo de stock: \*\*ausente\*\*/);
+});
+check("D2: ficheiro inválido na Fly não mostra nada dele", () => {
+  const r = run("logs_recent", "dry-run", { FAKE_LOGS: logsSemC8, FAKE_SSS: "SSS: estado=invalido" });
+  assert.match(r.summaryText, /\*\*inválido ou fora do formato\*\*, não mostrado/);
+});
+check("D2: ficheiro adulterado com SKU, handle ou causa livre recusado também no runner", () => {
+  const ts = new Date(Date.now() - 60000).toISOString();
+  for (const mau of [
+    `SSS: estado=ok ranAt=${ts} checked=10 found=9 notFound=1 error=0 causas=- desativados=8435450233067`,
+    `SSS: estado=ok ranAt=${ts} checked=10 found=9 notFound=0 error=1 causas=darth_vader:1 desativados=0`,
+    `SSS: estado=ok ranAt=${ts} checked=10 found=9 notFound=0 error=1 causas=timeout:1 desativados=0 sku=8435450233067`,
+    `SSS: estado=ok ranAt=gid://shopify/Product/1 checked=10 found=9 notFound=0 error=0 causas=- desativados=0`,
+  ]) {
+    const r = run("logs_recent", "dry-run", { FAKE_LOGS: logsSemC8, FAKE_SSS: mau });
+    assert.doesNotMatch(r.summaryText, /8435450233067|darth_vader|gid:\/\//);
+    assert.match(r.summaryText, /inválido ou fora do formato/);
+  }
+});
+check("D2: a Fly sem esta versão (sem linha SSS) diz que não houve leitura", () => {
+  const r = run("logs_recent", "dry-run", { FAKE_LOGS: logsSemC8, FAKE_SSS: "Error: Cannot find module" });
+  assert.match(r.summaryText, /sem leitura \(a Fly ainda não tem esta versão/);
+});
+const CPS_ERROS = [
+  "  error      spider-man           Marvel          403 produtos  ⚠ 403 produtos > limite de 128 (list.max) — nunca truncar",
+  "  error      darth-vader          Star Wars       129 produtos  ⚠ 129 produtos > limite de 128 (list.max) — nunca truncar",
+].join("\n");
+check("D3: erros do character_pages_sync saem por classe, só números, sem handles", () => {
+  const r = run("character_pages_sync", "dry-run", { FAKE_CPS: CPS_ERROS, FAKE_RC: "1" });
+  assert.match(r.summaryText, /2 com erro/);
+  assert.match(r.summaryText, /Erros por classe: Character acima do limite de produtos do metaobject \(list\.max, nunca truncar\) \*\*2\*\*, com 129, 403 produtos \(limite 128\); outras classes \*\*0\*\*/);
+  assert.doesNotMatch(r.summaryText, /spider-man|darth-vader|Marvel|Star Wars/);
+});
+check("D3: a causa não diz 'autorização recusada' por causa de 401 ou 403 nas contagens", () => {
+  const r = run("character_pages_sync", "dry-run", { FAKE_CPS: CPS_ERROS, FAKE_RC: "1" });
+  assert.doesNotMatch(r.summaryText, /autorização da Fly ou da Shopify recusada/);
+  assert.match(r.summaryText, /recusa-se a correr com qualquer erro/);
+});
+check("D3: uma classe desconhecida conta como outra e sem texto", () => {
+  const r = run("character_pages_sync", "dry-run", { FAKE_CPS: "  error      frodo   LOTR   5 produtos  ⚠ falha estranha com frodo", FAKE_RC: "1" });
+  assert.match(r.summaryText, /Character acima do limite de produtos do metaobject \(list\.max, nunca truncar\) \*\*0\*\*, com sem contagem produtos \(limite \?\); outras classes \*\*1\*\*/);
+  assert.doesNotMatch(r.summaryText, /frodo|estranha/);
+});
+check("D3: sem erros o resumo não tem a linha de classes", () => {
+  const r = run("character_pages_sync", "dry-run");
+  assert.doesNotMatch(r.summaryText, /Erros por classe/);
 });
 check("portão vermelho → código 1 e vermelhas listadas no resumo, em português", () => {
   const r = run("catalog_health", "dry-run", { FAKE_HEALTH_RC: "1" });
