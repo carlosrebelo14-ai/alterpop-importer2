@@ -322,6 +322,9 @@ case "$TASK" in
       CAUSE="não consegui ler os logs da Fly."
     else
       LOG_SUM="$(node "$ROOT/scripts/maintenance/logs-summary.mjs" "$LOGS" 2>>"$OUT")"; RC=$?
+      # D2 (PR D): o buffer da Fly cobre cerca de 10 min e o ciclo de stock corre a cada cerca de 45. Sem a linha no
+      # buffer, lê-se o último resumo gravado pelo ciclo. A leitura é só de um ficheiro de números, validado na Fly e aqui.
+      if [ "$RC" -eq 0 ] && [ "$(kn STOCK_CICLOS)" -eq 0 ]; then remote "node scripts/maintenance/print-stock-sync-summary.mjs" || true; fi
       if [ "$RC" -ne 0 ]; then
         CAUSE="não consegui resumir os logs (scripts/maintenance/logs-summary.mjs)."
       elif [ "$(kn DBD)" -gt 0 ] || [ "$(kn MODO_DEGRADADO)" -gt 0 ]; then
@@ -718,6 +721,18 @@ case "$TASK" in
   character_pages_sync)
     cr=$(count '^\s+create\s'); up=$(count '^\s+update\s'); ra=$(count '^\s+reactivate\s'); sd=$(count '^\s+set-draft\s'); er=$(count '^\s+error\s')
     bullets="- Ações: $cr criar, $up atualizar, $ra reativar, $sd rascunho, $er com erro."
+    # D3 (PR D): erros por classe, vocabulário fixo e só números. A única classe conhecida é o Character acima do limite
+    # de produtos do metaobject (list.max, "nunca truncar"). Handles e nomes nunca saem.
+    if [ "$er" -gt 0 ]; then
+      lim_re='[^0-9]([0-9]{1,7}) produtos > limite de ([0-9]{1,7}) \(list\.max\)'
+      cl=$(echo "$CLEAN" | grep -E '^\s+error\s' | grep -cE "$lim_re" || true)
+      cl_nums=$(echo "$CLEAN" | grep -E '^\s+error\s' | sed -nE "s/.*${lim_re}.*/\1/p" | sort -n | paste -sd, - | sed 's/,/, /g')
+      cl_lim=$(echo "$CLEAN" | grep -E '^\s+error\s' | sed -nE "s/.*${lim_re}.*/\2/p" | head -1)
+      bullets="$bullets"$'\n'"- Erros por classe: Character acima do limite de produtos do metaobject (list.max, nunca truncar) **$cl**, com ${cl_nums:-sem contagem} produtos (limite ${cl_lim:-?}); outras classes **$((er - cl))**."
+      if [ "$RC" -ne 0 ] && [ -z "$CAUSE" ]; then
+        CAUSE="há Characters com erro de classe conhecida (ver acima). O --execute recusa-se a correr com qualquer erro, por isso nada é aplicado enquanto houver um."
+      fi
+    fi
     pw=$(first_num 'alterpop.character escrito em' '[0-9]+'); cw=$(first_num 'alterpop.characters escrito em' '[0-9]+')
     if [ -n "$pw" ] || [ -n "$cw" ]; then bullets="$bullets"$'\n'"- Escritos: ${pw:-0} produto(s), ${cw:-0} coleção(ões)."; fi
     KEY="$((cr + up + ra + sd)) ações"
@@ -768,6 +783,23 @@ case "$TASK" in
         bullets="$bullets"$'\n'"- Erros \"não encontrado\" desativados (C6): último ciclo **$(kv DESATIVADOS_ULTIMO)**, soma no buffer **$(kn DESATIVADOS_SOMA)** em **$(kn DESATIVADOS_CICLOS)** ciclo(s)."
       else
         bullets="$bullets"$'\n'"- Sem ciclo de stock dos publicados no buffer da Fly com a linha \"procura por SKU\". Janela coberta: de $(kv JANELA_INICIO) a $(kv JANELA_FIM). O ciclo corre a cada cerca de 45 min e o buffer pode não o cobrir."
+        # D2: último resumo gravado pelo ciclo (stock-sync-summary.json). Só números e as causas fixas, validados outra vez aqui.
+        sss_causas='(retry_esgotado|timeout|http_401_403|http_4xx|http_5xx|rede|graphql|resposta_invalida|outra)'
+        sss_re="^SSS: estado=ok ranAt=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,3})?Z) checked=([0-9]{1,7}) found=([0-9]{1,7}) notFound=([0-9]{1,7}) error=([0-9]{1,7}) causas=(-|${sss_causas}:[0-9]{1,7}(,${sss_causas}:[0-9]{1,7})*) desativados=([0-9]{1,7})\$"
+        sss_line="$(echo "$CLEAN" | grep -E '^SSS: estado=' | tail -1)"
+        if [ -z "$sss_line" ]; then
+          bullets="$bullets"$'\n'"- Último resumo do ciclo de stock: sem leitura (a Fly ainda não tem esta versão, ou a leitura falhou)."
+        elif echo "$sss_line" | grep -qE '^SSS: estado=ausente$'; then
+          bullets="$bullets"$'\n'"- Último resumo do ciclo de stock: **ausente**. Nenhum ciclo correu ainda com a versão que o grava."
+        elif echo "$sss_line" | LC_ALL=C grep -qE "$sss_re"; then
+          sss_get() { echo "$sss_line" | sed -nE "s/.* $1=([^ ]+).*/\1/p"; }
+          sss_ts="$(sss_get ranAt)"
+          sss_epoch="$(date -u -d "$sss_ts" +%s 2>/dev/null || true)"
+          if [ -n "$sss_epoch" ]; then sss_idade="há $(( ($(date -u +%s) - sss_epoch) / 60 )) min"; else sss_idade="idade desconhecida"; fi
+          bullets="$bullets"$'\n'"- Último resumo do ciclo de stock (gravado às ${sss_ts}, ${sss_idade}): procura por SKU **$(sss_get found)** found, **$(sss_get notFound)** not_found, **$(sss_get error)** error (causas: $(sss_get causas)), de **$(sss_get checked)** verificados. Erros \"não encontrado\" desativados: **$(sss_get desativados)**."
+        else
+          bullets="$bullets"$'\n'"- Último resumo do ciclo de stock: **inválido ou fora do formato**, não mostrado."
+        fi
       fi
       if [ "$(kv INDEX_ULTIMA_CAUSA)" != "-" ] && [ -n "$(kv INDEX_ULTIMA_CAUSA)" ]; then
         bullets="$bullets"$'\n'"- Último fim de indexação: causa **$(kv INDEX_ULTIMA_CAUSA)**, estado **$(kv INDEX_ULTIMA_ESTADO)**, duração **$(kv INDEX_ULTIMA_DURACAO_S)** s, às $(kv INDEX_ULTIMO_FIM_TS)."
