@@ -89,6 +89,15 @@ prisma_causa() {
   else echo "outro (ver o log da app na Fly)"; fi
 }
 
+# repo_privado: 0 só quando a API pública do GitHub responde 404 para este repositório (é privado). Qualquer outra resposta,
+# limite de pedidos ou falha de rede conta como público. Falha fechada: na dúvida, os handles não saem.
+repo_privado() {
+  [[ "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://api.github.com/repos/${GITHUB_REPOSITORY}" 2>/dev/null || true)"
+  [ "$code" = "404" ]
+}
+
 # remote <comando fixo>: corre na Fly, a partir de /app. A saída vai só para $OUT, nunca para o log.
 remote() {
   "$FLYCTL" ssh console -a "$APP" -C "sh -lc 'cd /app && $1'" >>"$OUT" 2>&1
@@ -729,6 +738,16 @@ case "$TASK" in
       cl_nums=$(echo "$CLEAN" | grep -E '^\s+error\s' | sed -nE "s/.*${lim_re}.*/\1/p" | sort -n | paste -sd, - | sed 's/,/, /g')
       cl_lim=$(echo "$CLEAN" | grep -E '^\s+error\s' | sed -nE "s/.*${lim_re}.*/\2/p" | head -1)
       bullets="$bullets"$'\n'"- Erros por classe: Character acima do limite de produtos do metaobject (list.max, nunca truncar) **$cl**, com ${cl_nums:-sem contagem} produtos (limite ${cl_lim:-?}); outras classes **$((er - cl))**."
+      # Os nomes dos Characters acima do limite só saem com o repositório privado (decisão do Carlos, 07/11/2026). Num repositório
+      # público os logs são públicos e a regra é nunca publicar handles.
+      if [ "$cl" -gt 0 ]; then
+        if repo_privado; then
+          cl_handles=$(echo "$CLEAN" | grep -E '^\s+error\s' | sed -nE "s/^\s+error\s+([a-z0-9][a-z0-9-]{0,59})\s.*[^0-9]([0-9]{1,7}) produtos > limite de [0-9]{1,7} \(list\.max\).*/\1 (\2)/p" | paste -sd, - | sed 's/,/, /g')
+          bullets="$bullets"$'\n'"- Characters acima do limite (handle e produtos): ${cl_handles:-nenhum com nome válido}."
+        else
+          bullets="$bullets"$'\n'"- Nomes dos Characters acima do limite não publicados: o repositório é público ou a visibilidade não foi confirmada."
+        fi
+      fi
       if [ "$RC" -ne 0 ] && [ -z "$CAUSE" ]; then
         CAUSE="há Characters com erro de classe conhecida (ver acima). O --execute recusa-se a correr com qualquer erro, por isso nada é aplicado enquanto houver um."
       fi
